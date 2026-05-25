@@ -213,9 +213,17 @@ function renderRoutesLedger() {
         const folderBadge = route.folder_name ? `<span class="folder-badge">${escapeHTML(route.folder_name)}</span>` : '';
         
         const dateObj = new Date(route.created_at + 'Z');
-        const formattedDate = dateObj.toLocaleDateString(undefined, { 
-            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
-        });
+        const formatOptions = { 
+            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+            hour12: false
+        };
+        if (route.timezone) {
+            formatOptions.timeZone = route.timezone;
+        }
+        let formattedDate = dateObj.toLocaleDateString(undefined, formatOptions);
+        if (route.timezone_abbr) {
+            formattedDate += ` ${route.timezone_abbr}`;
+        }
 
         return `
             <div class="timeline-item ${activeClass}" onclick="selectRoute(${route.id})">
@@ -626,18 +634,24 @@ async function exportVideo() {
     const resVal = resSelect ? resSelect.value : '1080';
     let width = 1920;
     let height = 1080;
+    let videoBitrate = 12000000; // 12 Mbps default for 1080p
+    
     if (resVal === '720') {
         width = 1280;
         height = 720;
+        videoBitrate = 6000000; // 6 Mbps for 720p
     } else if (resVal === '2160') {
         width = 3840;
         height = 2160;
+        videoBitrate = 50000000; // 50 Mbps for 4K UHD
     }
 
     const canvas = document.getElementById('export-canvas');
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     
     // Scale factor for drawing vectors and fonts relative to baseline 1080p
     const scaleFactor = height / 1080;
@@ -717,12 +731,18 @@ async function exportVideo() {
     const stream = canvas.captureStream(fps);
     let recorder;
     
-    // WebM options
+    // WebM options configured with the resolution-appropriate high bitrate
     try {
-        recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+        recorder = new MediaRecorder(stream, { 
+            mimeType: 'video/webm;codecs=vp9',
+            videoBitsPerSecond: videoBitrate
+        });
     } catch (e) {
         try {
-            recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+            recorder = new MediaRecorder(stream, { 
+                mimeType: 'video/webm',
+                videoBitsPerSecond: videoBitrate
+            });
         } catch (e2) {
             alert('MediaRecorder is not supported in this browser.');
             modal.classList.add('hidden');
@@ -737,21 +757,34 @@ async function exportVideo() {
 
     recorder.onstop = () => {
         statusText.textContent = 'Saving video file...';
-        const blob = new Blob(recordedChunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-animation.webm`;
-        a.click();
-        
-        // Hide Modal
-        modal.classList.add('hidden');
+        const rawBlob = new Blob(recordedChunks, { type: 'video/webm' });
+        const recordedDuration = Date.now() - recordStartTime;
+
+        const downloadBlob = (blobToDownload) => {
+            const url = URL.createObjectURL(blobToDownload);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-animation.webm`;
+            a.click();
+            // Hide Modal
+            modal.classList.add('hidden');
+        };
+
+        if (typeof ysFixWebmDuration === 'function') {
+            statusText.textContent = 'Optimizing video duration metadata...';
+            ysFixWebmDuration(rawBlob, recordedDuration, (fixedBlob) => {
+                downloadBlob(fixedBlob);
+            });
+        } else {
+            downloadBlob(rawBlob);
+        }
     };
 
-    // Calculate total frames for a beautiful 12-second animation video
-    const targetVideoDuration = 12; // 12 seconds length
+    // Calculate target video duration based on the activity total duration and the selected speed multiplier
+    const targetVideoDuration = totalDuration / speedMultiplier;
     const totalFrames = targetVideoDuration * fps;
     
+    const recordStartTime = Date.now();
     recorder.start();
 
     // Map GPX coords to Canvas pixels
@@ -765,15 +798,15 @@ async function exportVideo() {
     }
 
     let currentFrame = 0;
+    const startTime = performance.now();
 
     function drawFrame() {
-        if (currentFrame > totalFrames) {
-            recorder.stop();
-            return;
+        const elapsedRealTime = (performance.now() - startTime) / 1000;
+        let ratio = elapsedRealTime / targetVideoDuration;
+        if (ratio > 1.0) {
+            ratio = 1.0;
         }
 
-        // Calculate progress ratio
-        const ratio = currentFrame / totalFrames;
         const playbackTime = ratio * totalDuration;
 
         // Calculate current active point on path
@@ -895,10 +928,19 @@ async function exportVideo() {
         currentFrame++;
         const totalProgress = 30 + Math.round(ratio * 70); // 30-100% progress
         fill.style.width = `${totalProgress}%`;
-        statusText.textContent = `Rendering frame ${currentFrame} / ${totalFrames}...`;
+        statusText.textContent = `Rendering frame ${currentFrame} at ${(elapsedRealTime).toFixed(1)}s / ${targetVideoDuration}s...`;
 
-        // Request next frame
-        setTimeout(drawFrame, 1000 / fps);
+        if (elapsedRealTime >= targetVideoDuration) {
+            recorder.stop();
+            return;
+        }
+
+        // Schedule next frame to match the target frame intervals
+        const targetNextFrameTime = ((currentFrame + 1) * 1000) / fps;
+        const actualElapsedMs = performance.now() - startTime;
+        const delay = Math.max(0, targetNextFrameTime - actualElapsedMs);
+
+        setTimeout(drawFrame, delay);
     }
 
     // Start drawing loops

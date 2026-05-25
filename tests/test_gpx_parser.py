@@ -112,6 +112,9 @@ def test_parse_single_track():
     
     assert len(result['waypoints']) == 1
     assert result['waypoints'][0]['name'] == "Start Point"
+    
+    assert result['timezone'] == 'Europe/Berlin'
+    assert result['start_time'] == '2026-05-25 13:00:00'
 
 def test_parse_multi_track():
     result = parse_gpx(GPX_MULTI_TRACK)
@@ -141,3 +144,5 @@ def test_parse_no_data():
     assert stats['avg_speed'] == 0.0
     assert stats['avg_moving_speed'] == 0.0
     assert stats['max_speed'] == 0.0
+    assert result['timezone'] == 'Europe/Berlin'
+    assert result['start_time'] is None

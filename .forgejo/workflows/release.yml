@@ -1,0 +1,28 @@
+name: Generate Automated Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers workflows only when a tag starting with 'v' is pushed
+
+jobs:
+  release:
+    runs-on: node-22
+    container:
+      image: ubuntu:latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches all history so the changelog tool can see past commits
+
+      - name: Create Forgejo Release
+        uses: actions/create-release@v1 # Or a Gitea/Forgejo specific release action
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }} # A token with write access to releases
+        with:
+          tag_name: ${{ gitea.ref }}
+          release_name: Release ${{ gitea.ref }}
+          body_from_changelog: true # This tells Forgejo to automatically compile the commit/MR summary
+          draft: false
+          prerelease: false

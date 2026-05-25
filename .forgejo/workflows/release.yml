@@ -21,8 +21,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }} # A token with write access to releases
         with:
-          tag_name: ${{ gitea.ref }}
-          release_name: Release ${{ gitea.ref }}
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
           body_from_changelog: true # This tells Forgejo to automatically compile the commit/MR summary
           draft: false
           prerelease: false

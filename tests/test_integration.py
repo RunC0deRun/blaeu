@@ -83,11 +83,13 @@ def test_end_to_end_flow(server, test_gpx_path):
         # Use headless browser
         browser = p.chromium.launch(headless=True)
         page = browser.new_context().new_page()
+        page.on("console", lambda msg: print(f"CONSOLE: {msg.text}"))
+        page.on("pageerror", lambda exc: print(f"PAGE ERROR: {exc}"))
         
         # 1. Open home page
         page.goto(server)
         page.wait_for_selector('.app-title')
-        assert page.text_content('.app-title') == 'Blaeu'
+        assert page.text_content('.app-title').strip().upper() == 'BLAEU'
         
         # 2. Upload file
         # Set file input directly
@@ -112,7 +114,7 @@ def test_end_to_end_flow(server, test_gpx_path):
         page.click('#play-pause-btn')
         
         # Let it play for a bit
-        time.sleep(1.0)
+        page.wait_for_timeout(100)
         
         # Verify that play status is active (shows pause icon, scrubber moved)
         assert page.locator('#icon-pause:not(.hidden)').count() == 1

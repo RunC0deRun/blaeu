@@ -1,5 +1,17 @@
 import os
 import sqlite3
+from datetime import datetime, timezone as tz
+from zoneinfo import ZoneInfo
+
+def get_timezone_abbr(created_at_str, timezone_name):
+    if not created_at_str or not timezone_name:
+        return None
+    try:
+        dt_utc = datetime.strptime(created_at_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=tz.utc)
+        dt_local = dt_utc.astimezone(ZoneInfo(timezone_name))
+        return dt_local.tzname()
+    except Exception:
+        return None
 
 DATA_DIR = os.getenv('DATA_DIR', './data')
 DB_PATH = os.path.join(DATA_DIR, 'blaeu.db')
@@ -35,6 +47,7 @@ def init_db():
         file_path TEXT NOT NULL,
         folder_id INTEGER,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        timezone TEXT,
         total_distance REAL,
         elevation_gain REAL,
         elevation_loss REAL,
@@ -49,6 +62,15 @@ def init_db():
         FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
     );
     """)
+
+    # Ensure timezone column exists (migration for existing DBs)
+    cursor.execute("PRAGMA table_info(routes);")
+    columns = [row['name'] for row in cursor.fetchall()]
+    if 'timezone' not in columns:
+        try:
+            cursor.execute("ALTER TABLE routes ADD COLUMN timezone TEXT;")
+        except sqlite3.OperationalError:
+            pass
     
     # Create Tags Table
     cursor.execute("""
@@ -69,6 +91,38 @@ def init_db():
     );
     """)
     
+    # Backfill timezone and start_time for existing routes where timezone is NULL
+    cursor.execute("SELECT id, file_path, created_at FROM routes WHERE timezone IS NULL;")
+    routes_to_backfill = [dict(row) for row in cursor.fetchall()]
+    
+    if routes_to_backfill:
+        from gpx_parser import parse_gpx
+        for r in routes_to_backfill:
+            route_id = r['id']
+            file_path = r['file_path']
+            if file_path and os.path.exists(file_path):
+                try:
+                    with open(file_path, 'rb') as f:
+                        content = f.read()
+                    parsed = parse_gpx(content)
+                    timezone = parsed.get('timezone') or 'UTC'
+                    start_time = parsed.get('start_time')
+                    
+                    if start_time:
+                        cursor.execute("""
+                            UPDATE routes 
+                            SET timezone = ?, created_at = ? 
+                            WHERE id = ?
+                        """, (timezone, start_time, route_id))
+                    else:
+                        cursor.execute("""
+                            UPDATE routes 
+                            SET timezone = ? 
+                            WHERE id = ?
+                        """, (timezone, route_id))
+                except Exception as e:
+                    print(f"Error backfilling route {route_id}: {e}")
+                    
     conn.commit()
     conn.close()
 
@@ -76,14 +130,22 @@ def init_db():
 def add_route(route_metadata, stats):
     conn = get_db()
     cursor = conn.cursor()
+    
+    timezone = route_metadata.get('timezone')
+    created_at = route_metadata.get('created_at')
+    if created_at is None:
+        from datetime import datetime, timezone as tz
+        created_at = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+
     try:
         cursor.execute("""
         INSERT INTO routes (
             name, description, filename, file_hash, file_path, folder_id,
             total_distance, elevation_gain, elevation_loss, duration,
             avg_speed, avg_moving_speed, max_speed,
-            waypoints_count, tracks_count, segments_count, points_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            waypoints_count, tracks_count, segments_count, points_count,
+            timezone, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             route_metadata['name'],
             route_metadata.get('description'),
@@ -101,7 +163,9 @@ def add_route(route_metadata, stats):
             stats['waypoints_count'],
             stats['tracks_count'],
             stats['segments_count'],
-            stats['points_count']
+            stats['points_count'],
+            timezone,
+            created_at
         ))
         route_id = cursor.lastrowid
         conn.commit()
@@ -140,6 +204,7 @@ def get_routes(folder_id=None):
             WHERE rt.route_id = ?
         """, (route['id'],))
         route['tags'] = [tag_row['name'] for tag_row in cursor.fetchall()]
+        route['timezone_abbr'] = get_timezone_abbr(route.get('created_at'), route.get('timezone'))
         routes.append(route)
         
     conn.close()
@@ -167,6 +232,7 @@ def get_route(route_id):
         WHERE rt.route_id = ?
     """, (route_id,))
     route['tags'] = [tag_row['name'] for tag_row in cursor.fetchall()]
+    route['timezone_abbr'] = get_timezone_abbr(route.get('created_at'), route.get('timezone'))
     conn.close()
     return route
 

@@ -1,0 +1,14 @@
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - blaeu_data:/data
+    environment:
+      - DATA_DIR=/data
+    restart: unless-stopped
+
+volumes:
+  blaeu_data:
+    driver: local

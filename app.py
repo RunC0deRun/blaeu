@@ -88,7 +88,9 @@ def upload_gpx():
             'filename': file_name,
             'file_hash': file_hash,
             'file_path': file_path,
-            'folder_id': folder_id
+            'folder_id': folder_id,
+            'timezone': parsed.get('timezone'),
+            'created_at': parsed.get('start_time')
         }
         
         route_id = add_route(route_metadata, parsed['statistics'])

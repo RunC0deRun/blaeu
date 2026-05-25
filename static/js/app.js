@@ -213,9 +213,17 @@ function renderRoutesLedger() {
         const folderBadge = route.folder_name ? `<span class="folder-badge">${escapeHTML(route.folder_name)}</span>` : '';
         
         const dateObj = new Date(route.created_at + 'Z');
-        const formattedDate = dateObj.toLocaleDateString(undefined, { 
-            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
-        });
+        const formatOptions = { 
+            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+            hour12: false
+        };
+        if (route.timezone) {
+            formatOptions.timeZone = route.timezone;
+        }
+        let formattedDate = dateObj.toLocaleDateString(undefined, formatOptions);
+        if (route.timezone_abbr) {
+            formattedDate += ` ${route.timezone_abbr}`;
+        }
 
         return `
             <div class="timeline-item ${activeClass}" onclick="selectRoute(${route.id})">

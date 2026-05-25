@@ -45,7 +45,68 @@ def parse_gpx(file_content):
     for elem in root.iter():
         if '}' in elem.tag:
             elem.tag = elem.tag.split('}', 1)[1]
-            
+
+    # Find start coordinates and time for timezone lookup and activity start time
+    start_lat = None
+    start_lon = None
+    start_time_str = None
+
+    # Find first trackpoint with valid time
+    for trkpt in root.findall('.//trkpt'):
+        try:
+            lat = float(trkpt.get('lat'))
+            lon = float(trkpt.get('lon'))
+            if start_lat is None:
+                start_lat = lat
+                start_lon = lon
+            time_elem = trkpt.find('time')
+            if time_elem is not None and time_elem.text:
+                val = time_elem.text.strip()
+                if parse_iso_datetime(val) is not None:
+                    start_time_str = val
+                    # If we found coordinates and time, we can stop
+                    break
+        except (TypeError, ValueError):
+            continue
+
+    # Fallback to waypoints if no start time/coords found
+    if start_lat is None or start_time_str is None:
+        for wpt in root.findall('.//wpt'):
+            try:
+                lat = float(wpt.get('lat'))
+                lon = float(wpt.get('lon'))
+                if start_lat is None:
+                    start_lat = lat
+                    start_lon = lon
+                time_elem = wpt.find('time')
+                if time_elem is not None and time_elem.text:
+                    val = time_elem.text.strip()
+                    if parse_iso_datetime(val) is not None:
+                        start_time_str = val
+                        break
+            except (TypeError, ValueError):
+                continue
+
+    # Timezone lookup
+    timezone_name = None
+    if start_lat is not None and start_lon is not None:
+        try:
+            from timezonefinder import TimezoneFinder
+            tf = TimezoneFinder()
+            timezone_name = tf.timezone_at(lng=start_lon, lat=start_lat)
+        except Exception:
+            pass
+
+    # Standardize start_time_str to UTC formatted string if valid
+    start_time_utc_str = None
+    if start_time_str:
+        dt = parse_iso_datetime(start_time_str)
+        if dt:
+            if dt.tzinfo is not None:
+                from datetime import timezone
+                dt = dt.astimezone(timezone.utc)
+            start_time_utc_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+
     # Counts
     waypoints_count = len(root.findall('.//wpt'))
     tracks_count = len(root.findall('.//trk'))
@@ -191,5 +252,7 @@ def parse_gpx(file_content):
             'points_count': points_count
         },
         'tracks': tracks_data,
-        'waypoints': waypoints_data
+        'waypoints': waypoints_data,
+        'timezone': timezone_name,
+        'start_time': start_time_utc_str
     }

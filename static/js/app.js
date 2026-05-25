@@ -626,18 +626,24 @@ async function exportVideo() {
     const resVal = resSelect ? resSelect.value : '1080';
     let width = 1920;
     let height = 1080;
+    let videoBitrate = 12000000; // 12 Mbps default for 1080p
+    
     if (resVal === '720') {
         width = 1280;
         height = 720;
+        videoBitrate = 6000000; // 6 Mbps for 720p
     } else if (resVal === '2160') {
         width = 3840;
         height = 2160;
+        videoBitrate = 50000000; // 50 Mbps for 4K UHD
     }
 
     const canvas = document.getElementById('export-canvas');
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     
     // Scale factor for drawing vectors and fonts relative to baseline 1080p
     const scaleFactor = height / 1080;
@@ -717,12 +723,18 @@ async function exportVideo() {
     const stream = canvas.captureStream(fps);
     let recorder;
     
-    // WebM options
+    // WebM options configured with the resolution-appropriate high bitrate
     try {
-        recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+        recorder = new MediaRecorder(stream, { 
+            mimeType: 'video/webm;codecs=vp9',
+            videoBitsPerSecond: videoBitrate
+        });
     } catch (e) {
         try {
-            recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+            recorder = new MediaRecorder(stream, { 
+                mimeType: 'video/webm',
+                videoBitsPerSecond: videoBitrate
+            });
         } catch (e2) {
             alert('MediaRecorder is not supported in this browser.');
             modal.classList.add('hidden');

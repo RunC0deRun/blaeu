@@ -1,3 +1,0 @@
-# blaeu
-
-A GPX cartographer

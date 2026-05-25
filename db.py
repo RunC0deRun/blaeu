@@ -1,0 +1,291 @@
+import os
+import sqlite3
+
+DATA_DIR = os.getenv('DATA_DIR', './data')
+DB_PATH = os.path.join(DATA_DIR, 'blaeu.db')
+
+def get_db():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Create Folders Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+    
+    # Create Routes Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS routes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        filename TEXT NOT NULL,
+        file_hash TEXT NOT NULL UNIQUE,
+        file_path TEXT NOT NULL,
+        folder_id INTEGER,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        total_distance REAL,
+        elevation_gain REAL,
+        elevation_loss REAL,
+        duration REAL,
+        avg_speed REAL,
+        avg_moving_speed REAL,
+        max_speed REAL,
+        waypoints_count INTEGER,
+        tracks_count INTEGER,
+        segments_count INTEGER,
+        points_count INTEGER,
+        FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
+    );
+    """)
+    
+    # Create Tags Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE
+    );
+    """)
+    
+    # Create Route-Tags Association Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS route_tags (
+        route_id INTEGER,
+        tag_id INTEGER,
+        PRIMARY KEY (route_id, tag_id),
+        FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
+        FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+    );
+    """)
+    
+    conn.commit()
+    conn.close()
+
+# Helper Functions for Routes
+def add_route(route_metadata, stats):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+        INSERT INTO routes (
+            name, description, filename, file_hash, file_path, folder_id,
+            total_distance, elevation_gain, elevation_loss, duration,
+            avg_speed, avg_moving_speed, max_speed,
+            waypoints_count, tracks_count, segments_count, points_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            route_metadata['name'],
+            route_metadata.get('description'),
+            route_metadata['filename'],
+            route_metadata['file_hash'],
+            route_metadata['file_path'],
+            route_metadata.get('folder_id'),
+            stats['total_distance'],
+            stats['elevation_gain'],
+            stats['elevation_loss'],
+            stats['duration'],
+            stats['avg_speed'],
+            stats['avg_moving_speed'],
+            stats['max_speed'],
+            stats['waypoints_count'],
+            stats['tracks_count'],
+            stats['segments_count'],
+            stats['points_count']
+        ))
+        route_id = cursor.lastrowid
+        conn.commit()
+        return route_id
+    except sqlite3.IntegrityError as e:
+        conn.close()
+        raise ValueError(f"Route already exists or validation failed: {e}")
+    finally:
+        conn.close()
+
+def get_routes(folder_id=None):
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    query = """
+        SELECT r.*, f.name AS folder_name 
+        FROM routes r
+        LEFT JOIN folders f ON r.folder_id = f.id
+    """
+    params = []
+    if folder_id is not None:
+        query += " WHERE r.folder_id = ?"
+        params.append(folder_id)
+        
+    query += " ORDER BY r.created_at DESC, r.id DESC"
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    
+    routes = []
+    for row in rows:
+        route = dict(row)
+        # Fetch tags
+        cursor.execute("""
+            SELECT t.name FROM tags t
+            JOIN route_tags rt ON t.id = rt.tag_id
+            WHERE rt.route_id = ?
+        """, (route['id'],))
+        route['tags'] = [tag_row['name'] for tag_row in cursor.fetchall()]
+        routes.append(route)
+        
+    conn.close()
+    return routes
+
+def get_route(route_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT r.*, f.name AS folder_name 
+        FROM routes r
+        LEFT JOIN folders f ON r.folder_id = f.id
+        WHERE r.id = ?
+    """, (route_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    
+    route = dict(row)
+    # Fetch tags
+    cursor.execute("""
+        SELECT t.name FROM tags t
+        JOIN route_tags rt ON t.id = rt.tag_id
+        WHERE rt.route_id = ?
+    """, (route_id,))
+    route['tags'] = [tag_row['name'] for tag_row in cursor.fetchall()]
+    conn.close()
+    return route
+
+def update_route(route_id, name=None, description=None, folder_id=None, tags=None):
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    try:
+        # Update details
+        updates = []
+        params = []
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        # We explicitly allow folder_id to be set to None/null to remove folder grouping
+        if folder_id is not None:
+            if folder_id == -1 or folder_id == 'null' or folder_id == '':
+                updates.append("folder_id = NULL")
+            else:
+                updates.append("folder_id = ?")
+                params.append(folder_id)
+                
+        if updates:
+            params.append(route_id)
+            cursor.execute(f"UPDATE routes SET {', '.join(updates)} WHERE id = ?", params)
+            
+        # Update tags if provided
+        if tags is not None:
+            # Clear current tags
+            cursor.execute("DELETE FROM route_tags WHERE route_id = ?", (route_id,))
+            for tag_name in tags:
+                tag_name = tag_name.strip().lower()
+                if not tag_name:
+                    continue
+                # Ensure tag exists
+                cursor.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag_name,))
+                cursor.execute("SELECT id FROM tags WHERE name = ?", (tag_name,))
+                tag_id = cursor.fetchone()['id']
+                # Associate
+                cursor.execute("INSERT OR IGNORE INTO route_tags (route_id, tag_id) VALUES (?, ?)", (route_id, tag_id))
+                
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def delete_route(route_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT file_path FROM routes WHERE id = ?", (route_id,))
+        row = cursor.fetchone()
+        file_path = row['file_path'] if row else None
+        
+        cursor.execute("DELETE FROM routes WHERE id = ?", (route_id,))
+        conn.commit()
+        
+        # Try to delete the physical file
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Error removing route file {file_path}: {e}")
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# Helper Functions for Folders
+def create_folder(name):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO folders (name) VALUES (?)", (name.strip(),))
+        folder_id = cursor.lastrowid
+        conn.commit()
+        return folder_id
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise ValueError("Folder already exists")
+    finally:
+        conn.close()
+
+def get_folders():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM folders ORDER BY name ASC")
+    rows = cursor.fetchall()
+    folders = [dict(row) for row in rows]
+    conn.close()
+    return folders
+
+def delete_folder(folder_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM folders WHERE id = ?", (folder_id,))
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# Helper Functions for Tags
+def get_all_tags():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tags ORDER BY name ASC")
+    rows = cursor.fetchall()
+    tags = [dict(row) for row in rows]
+    conn.close()
+    return tags

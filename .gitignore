@@ -1,0 +1,19 @@
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Application Data & Persistence Volume
+data/
+blaeu_data/
+
+# OS specific files
+.DS_Store
+Thumbs.db

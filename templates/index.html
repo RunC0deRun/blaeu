@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blaeu: A GPX Cartographer</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- SVG Favicon (Modern Neon Compass) -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='none' stroke='%2300f0ff' stroke-width='6'/><path d='M50 12 L54 48 L50 50 L46 48 Z' fill='%2300f0ff'/><path d='M50 88 L54 52 L50 50 L46 52 Z' fill='%237000ff'/></svg>">
+    
+    <!-- Local Leaflet Assets -->
+    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+    <script src="/static/vendor/leaflet/leaflet.js"></script>
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar: Dashboard Controls -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-wrapper">
+                    <svg class="hud-logo-icon" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="42" fill="none" stroke="var(--primary)" stroke-width="2" stroke-dasharray="8,4"/>
+                        <circle cx="50" cy="50" r="30" fill="none" stroke="var(--primary-glow)" stroke-width="1"/>
+                        <path d="M50 15 L53 47 L50 50 L47 47 Z" fill="var(--primary)"/>
+                        <path d="M50 85 L53 53 L50 50 L47 53 Z" fill="var(--secondary)"/>
+                    </svg>
+                </div>
+                <h1 class="app-title">BLAEU</h1>
+                <p class="app-subtitle">GPX Cartographer</p>
+            </div>
+
+            <!-- Upload Card -->
+            <div class="card upload-card">
+                <h3 class="card-title">Import GPX Activity</h3>
+                <form id="upload-form" enctype="multipart/form-data">
+                    <div class="file-dropzone" id="dropzone">
+                        <input type="file" id="file-input" name="file" accept=".gpx" required>
+                        <div class="dropzone-inner">
+                            <svg class="icon-upload" viewBox="0 0 24 24" width="28" height="28">
+                                <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" fill="currentColor"/>
+                            </svg>
+                            <p class="dropzone-text">Drag & Drop file here</p>
+                            <p class="dropzone-subtext">Supports standard .gpx files</p>
+                        </div>
+                        <p class="file-name-display" id="file-name-display"></p>
+                    </div>
+                    <div class="form-group">
+                        <label for="upload-name">Activity Name</label>
+                        <input type="text" id="upload-name" name="name" placeholder="Title defaults to GPX track name">
+                    </div>
+                    <div class="form-group">
+                        <label for="upload-desc">Notes & Description</label>
+                        <textarea id="upload-desc" name="description" placeholder="Add custom notes about this activity"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="upload-folder">Folder</label>
+                        <select id="upload-folder" name="folder_id">
+                            <option value="">-- No Folder --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="upload-tags">Tags (Comma separated)</label>
+                        <input type="text" id="upload-tags" name="tags" placeholder="e.g. speedrun, training, morning">
+                    </div>
+                    <button type="submit" class="btn btn-primary" id="upload-btn">Process Activity</button>
+                </form>
+            </div>
+
+            <!-- Filter Controls -->
+            <div class="filter-controls">
+                <div class="form-group">
+                    <select id="folder-filter">
+                        <option value="">All Folders</option>
+                    </select>
+                </div>
+                <div class="tags-container" id="tags-filter-list">
+                    <!-- Tags dynamic -->
+                </div>
+            </div>
+
+            <!-- Routes Ledger Timeline -->
+            <div class="ledger-section">
+                <div class="section-header">
+                    <h3>Activities Log</h3>
+                    <button class="btn btn-sm btn-outline" id="manage-folders-btn">Folders</button>
+                </div>
+                <div class="routes-timeline" id="routes-timeline">
+                    <div class="timeline-empty">Log is empty. Import a GPX log.</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Panel: Map & Route Details -->
+        <main class="main-panel">
+            <div class="route-details-panel hidden" id="route-details-panel">
+                <div class="route-header">
+                    <div class="route-title-area">
+                        <h2 class="route-title" id="route-title">Activity Title</h2>
+                        <p class="route-desc" id="route-desc">Activity notes...</p>
+                        <div class="route-meta-tags" id="route-meta-tags">
+                            <!-- Folder & tag badges -->
+                        </div>
+                    </div>
+                    <div class="route-actions">
+                        <button class="btn btn-outline" id="edit-route-btn">Edit</button>
+                        <button class="btn btn-danger" id="delete-route-btn">Delete</button>
+                    </div>
+                </div>
+
+                <!-- Stats Grid (11 Required Metrics) -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-label">Distance</span>
+                        <span class="stat-value" id="stat-distance">0.00 km</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Elev Gain</span>
+                        <span class="stat-value" id="stat-gain">0 m</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Elev Loss</span>
+                        <span class="stat-value" id="stat-loss">0 m</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Duration</span>
+                        <span class="stat-value" id="stat-duration">00:00:00</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Avg Speed</span>
+                        <span class="stat-value" id="stat-avg-speed">0.0 km/h</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Moving Speed</span>
+                        <span class="stat-value" id="stat-avg-moving-speed">0.0 km/h</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Max Speed</span>
+                        <span class="stat-value" id="stat-max-speed">0.0 km/h</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Waypoints</span>
+                        <span class="stat-value" id="stat-waypoints">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Tracks</span>
+                        <span class="stat-value" id="stat-tracks">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Segments</span>
+                        <span class="stat-value" id="stat-segments">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Data Points</span>
+                        <span class="stat-value" id="stat-points">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Map Viewport -->
+            <div class="map-viewport">
+                <div id="map"></div>
+                <div class="vignette"></div>
+                
+                <!-- HUD borders for high-tech overlay -->
+                <div class="hud-border hud-border-t"></div>
+                <div class="hud-border hud-border-b"></div>
+
+                <!-- Custom HUD Compass Indicator -->
+                <div class="map-compass" id="map-compass">
+                    <svg viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="44" fill="rgba(15, 23, 42, 0.75)" stroke="var(--primary)" stroke-width="1.5"/>
+                        <circle cx="50" cy="50" r="40" fill="none" stroke="var(--primary-glow)" stroke-width="0.5" stroke-dasharray="4,4"/>
+                        <text x="50" y="22" class="compass-dir-text" text-anchor="middle">N</text>
+                        <text x="50" y="86" class="compass-dir-text" text-anchor="middle">S</text>
+                        <text x="82" y="54" class="compass-dir-text" text-anchor="middle">E</text>
+                        <text x="18" y="54" class="compass-dir-text" text-anchor="middle">W</text>
+                        <!-- Neon HUD Pointer needle -->
+                        <polygon points="50,15 53,47 50,50 47,47" fill="var(--primary)" filter="drop-shadow(0 0 3px var(--primary-glow))"/>
+                        <polygon points="50,85 53,53 50,50 47,53" fill="var(--secondary)" filter="drop-shadow(0 0 3px var(--secondary-glow))"/>
+                        <circle cx="50" cy="50" r="2.5" fill="#ffffff"/>
+                    </svg>
+                </div>
+
+                <!-- Playback / Animation Controller Overlay -->
+                <div class="animation-controller-overlay hidden" id="animation-controller-overlay">
+                    <div class="control-row">
+                        <button class="btn-ctrl" id="play-pause-btn" title="Play/Pause">
+                            <svg viewBox="0 0 24 24" class="icon-play" id="icon-play"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+                            <svg viewBox="0 0 24 24" class="icon-pause hidden" id="icon-pause"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" fill="currentColor"/></svg>
+                        </button>
+                        <button class="btn-ctrl" id="stop-btn" title="Stop">
+                            <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z" fill="currentColor"/></svg>
+                        </button>
+                        
+                        <div class="scrubber-container">
+                            <input type="range" id="animation-scrubber" min="0" max="100" value="0">
+                            <div class="time-display" id="animation-time-display">00:00:00 / 00:00:00</div>
+                        </div>
+
+                        <div class="control-group">
+                            <label for="speed-select">Speed</label>
+                            <select id="speed-select">
+                                <option value="1">1x</option>
+                                <option value="5">5x</option>
+                                <option value="10">10x</option>
+                                <option value="50">50x</option>
+                                <option value="100">100x</option>
+                                <option value="200" selected>200x</option>
+                                <option value="500">500x</option>
+                            </select>
+                        </div>
+
+                        <div class="control-group">
+                            <label for="fps-select">FPS</label>
+                            <select id="fps-select">
+                                <option value="24">24</option>
+                                <option value="25">25</option>
+                                <option value="30" selected>30</option>
+                                <option value="50">50</option>
+                                <option value="60">60</option>
+                            </select>
+                        </div>
+
+                        <div class="control-group">
+                            <label for="res-select">Res</label>
+                            <select id="res-select">
+                                <option value="720">720p</option>
+                                <option value="1080" selected>1080p</option>
+                                <option value="2160">2160p</option>
+                            </select>
+                        </div>
+
+                        <button class="btn btn-sm btn-primary" id="export-video-btn">
+                            <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: middle; margin-right: 4px;"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/></svg>
+                            Export Video
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <!-- Folder Management Modal -->
+    <div class="modal hidden" id="folders-modal">
+        <div class="modal-content card">
+            <h3 class="card-title">Manage Folders</h3>
+            <div class="modal-body">
+                <form id="create-folder-form">
+                    <div class="form-group inline-form">
+                        <input type="text" id="new-folder-name" placeholder="Folder Name" required>
+                        <button type="submit" class="btn btn-primary">Create</button>
+                    </div>
+                </form>
+                <ul class="modal-list" id="folders-modal-list">
+                    <!-- Dynamic folders list -->
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" id="close-folders-modal-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Route Details Modal -->
+    <div class="modal hidden" id="edit-route-modal">
+        <div class="modal-content card">
+            <h3 class="card-title">Edit Details</h3>
+            <div class="modal-body">
+                <form id="edit-route-form">
+                    <div class="form-group">
+                        <label for="edit-name">Title</label>
+                        <input type="text" id="edit-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-desc">Notes & Description</label>
+                        <textarea id="edit-desc" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-folder">Folder</label>
+                        <select id="edit-folder">
+                            <option value="">-- No Folder --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-tags">Tags (comma separated)</label>
+                        <input type="text" id="edit-tags" placeholder="e.g. speed, sprint">
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+                        <button type="button" class="btn btn-outline" id="cancel-edit-btn">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Exporting Modal -->
+    <div class="modal hidden" id="export-modal" style="z-index: 2000;">
+        <div class="modal-content card" style="max-width: 400px; text-align: center;">
+            <h3 class="card-title" id="export-status-title">Generating Video</h3>
+            <div class="modal-body">
+                <div class="export-spinner-container">
+                    <div class="compass-spinner">
+                        <svg viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(0, 240, 255, 0.2)" stroke-width="2"/>
+                            <polygon points="50,15 54,48 50,52 46,48" fill="var(--primary)"/>
+                            <polygon points="50,85 54,52 50,48 46,52" fill="var(--secondary)"/>
+                        </svg>
+                    </div>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="export-progress-fill" style="width: 0%;"></div>
+                </div>
+                <p id="export-status-text">Preparing frames...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Canvas for video generation (Hidden) -->
+    <canvas id="export-canvas" width="1280" height="720" style="display:none;"></canvas>
+
+    <!-- Main Frontend Script -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

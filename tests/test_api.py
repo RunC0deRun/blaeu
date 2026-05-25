@@ -78,6 +78,9 @@ def test_upload_route(client):
     assert json_data['total_distance'] > 0
     assert json_data['avg_speed'] > 0
     assert json_data['avg_moving_speed'] > 0
+    assert json_data['timezone'] == 'Europe/Berlin'
+    assert json_data['created_at'] == '2026-05-25 13:00:00'
+    assert json_data['timezone_abbr'] == 'CEST'
 
 def test_upload_duplicate(client):
     data1 = {

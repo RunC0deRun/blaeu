@@ -1,6 +1,7 @@
 import os
 import hashlib
 import requests
+import json
 from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
 from db import (
     init_db, add_route, get_routes, get_route, update_route, delete_route,
@@ -90,7 +91,8 @@ def upload_gpx():
             'file_path': file_path,
             'folder_id': folder_id,
             'timezone': parsed.get('timezone'),
-            'created_at': parsed.get('start_time')
+            'created_at': parsed.get('start_time'),
+            'simplified_path': json.dumps(parsed.get('simplified_path', []))
         }
         
         route_id = add_route(route_metadata, parsed['statistics'])

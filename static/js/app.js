@@ -538,23 +538,23 @@ function drawRouteMiniature(canvas, coords) {
     // Reset shadow for dots
     ctx.shadowBlur = 0;
     
-    // Draw Start Point (Neon Cyan/White)
+    // Draw Start Point (Neon Green)
     const startXY = getCanvasCoords(coords[0][0], coords[0][1]);
     ctx.beginPath();
     ctx.arc(startXY[0], startXY[1], 4, 0, 2 * Math.PI);
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = '#10b981';
     ctx.fill();
-    ctx.strokeStyle = '#00f0ff';
+    ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.5;
     ctx.stroke();
     
-    // Draw End Point (Neon Purple)
+    // Draw End Point (Neon Red)
     const endXY = getCanvasCoords(coords[coords.length - 1][0], coords[coords.length - 1][1]);
     ctx.beginPath();
     ctx.arc(endXY[0], endXY[1], 4, 0, 2 * Math.PI);
-    ctx.fillStyle = '#9333ea';
+    ctx.fillStyle = '#ef4444';
     ctx.fill();
-    ctx.strokeStyle = '#00f0ff';
+    ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.5;
     ctx.stroke();
 }
@@ -748,6 +748,48 @@ function drawRouteOnMap() {
         .bindPopup(`<strong>${escapeHTML(wpt.name || 'Waypoint')}</strong><br>${escapeHTML(wpt.desc || '')}`)
         .addTo(waypointMarkersGroup);
     });
+
+    // Start and Finish custom SVG Icons
+    const startIcon = L.divIcon({
+        html: `
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="9" fill="#064e3b" stroke="#10b981" stroke-width="2" style="filter: drop-shadow(0 0 3px #10b981);"/>
+            <path d="M10 8.5L15.5 12L10 15.5V8.5Z" fill="#ffffff"/>
+          </svg>
+        `,
+        className: 'custom-map-marker',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+
+    const finishIcon = L.divIcon({
+        html: `
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="9" fill="#7f1d1d" stroke="#ef4444" stroke-width="2" style="filter: drop-shadow(0 0 3px #ef4444);"/>
+            <rect x="9" y="9" width="3" height="3" fill="#ffffff"/>
+            <rect x="12" y="9" width="3" height="3" fill="#111827"/>
+            <rect x="9" y="12" width="3" height="3" fill="#111827"/>
+            <rect x="12" y="12" width="3" height="3" fill="#ffffff"/>
+          </svg>
+        `,
+        className: 'custom-map-marker',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+
+    // Draw Start and Finish Markers
+    if (trackCoordinates.length > 0) {
+        const startPoint = trackCoordinates[0];
+        const finishPoint = trackCoordinates[trackCoordinates.length - 1];
+
+        L.marker(startPoint, { icon: startIcon, zIndexOffset: 1000 })
+            .bindPopup('<strong>Start Point</strong>')
+            .addTo(waypointMarkersGroup);
+
+        L.marker(finishPoint, { icon: finishIcon, zIndexOffset: 1000 })
+            .bindPopup('<strong>Finish Point</strong>')
+            .addTo(waypointMarkersGroup);
+    }
 
     // Zoom Map to Route Bounds
     map.fitBounds(routePolyline.getBounds(), { padding: [30, 30] });
@@ -1327,6 +1369,58 @@ async function exportVideo() {
             ctx.fill();
             ctx.stroke();
         });
+
+        // 4b. Draw Start and Finish markers on Canvas
+        if (animationPoints.length > 0) {
+            // Draw Start Marker (Neon Green circle with white play triangle)
+            const startPt = animationPoints[0];
+            const startPos = latLngToCanvasPx(startPt.lat, startPt.lon);
+            
+            ctx.beginPath();
+            ctx.arc(startPos.x, startPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#064e3b';
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            // Draw Play Triangle
+            ctx.beginPath();
+            const sz = 3.5 * scaleFactor;
+            ctx.moveTo(startPos.x - sz * 0.6, startPos.y - sz);
+            ctx.lineTo(startPos.x + sz, startPos.y);
+            ctx.lineTo(startPos.x - sz * 0.6, startPos.y + sz);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            // Draw Finish Marker (Neon Red circle with 2x2 Checkerboard pattern in center)
+            const finishPt = animationPoints[animationPoints.length - 1];
+            const finishPos = latLngToCanvasPx(finishPt.lat, finishPt.lon);
+            
+            ctx.beginPath();
+            ctx.arc(finishPos.x, finishPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#7f1d1d';
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            // Draw 2x2 Checkerboard in center
+            const sq = 3 * scaleFactor;
+            // Top-left
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x - sq, finishPos.y - sq, sq, sq);
+            // Top-right
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x, finishPos.y - sq, sq, sq);
+            // Bottom-left
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x - sq, finishPos.y, sq, sq);
+            // Bottom-right
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x, finishPos.y, sq, sq);
+        }
 
         // 5. Draw Active Neon Indicator Marker
         ctx.beginPath();

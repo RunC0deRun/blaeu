@@ -23,79 +23,90 @@
     <div class="app-container">
         <!-- Sidebar: Dashboard Controls -->
         <aside class="sidebar">
-            <div class="sidebar-header">
-                <div class="logo-wrapper">
-                    <svg class="hud-logo-icon" viewBox="0 0 100 100">
-                        <circle cx="50" cy="50" r="42" fill="none" stroke="var(--primary)" stroke-width="2" stroke-dasharray="8,4"/>
-                        <circle cx="50" cy="50" r="30" fill="none" stroke="var(--primary-glow)" stroke-width="1"/>
-                        <path d="M50 15 L53 47 L50 50 L47 47 Z" fill="var(--primary)"/>
-                        <path d="M50 85 L53 53 L50 50 L47 53 Z" fill="var(--secondary)"/>
-                    </svg>
+            <div class="sidebar-content">
+                <div class="sidebar-header">
+                    <div class="logo-wrapper">
+                        <svg class="hud-logo-icon" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="42" fill="none" stroke="var(--primary)" stroke-width="2" stroke-dasharray="8,4"/>
+                            <circle cx="50" cy="50" r="30" fill="none" stroke="var(--primary-glow)" stroke-width="1"/>
+                            <path d="M50 15 L53 47 L50 50 L47 47 Z" fill="var(--primary)"/>
+                            <path d="M50 85 L53 53 L50 50 L47 53 Z" fill="var(--secondary)"/>
+                        </svg>
+                    </div>
+                    <h1 class="app-title">BLAEU</h1>
+                    <p class="app-subtitle">GPX Cartographer</p>
                 </div>
-                <h1 class="app-title">BLAEU</h1>
-                <p class="app-subtitle">GPX Cartographer</p>
-            </div>
 
-            <!-- Upload Card -->
-            <div class="card upload-card">
-                <h3 class="card-title">Import GPX Activity</h3>
-                <form id="upload-form" enctype="multipart/form-data">
-                    <div class="file-dropzone" id="dropzone">
-                        <input type="file" id="file-input" name="file" accept=".gpx" required>
-                        <div class="dropzone-inner">
-                            <svg class="icon-upload" viewBox="0 0 24 24" width="28" height="28">
-                                <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" fill="currentColor"/>
-                            </svg>
-                            <p class="dropzone-text">Drag & Drop file here</p>
-                            <p class="dropzone-subtext">Supports standard .gpx files</p>
+                <!-- Upload Card -->
+                <div class="card upload-card">
+                    <h3 class="card-title">Import GPX Activity</h3>
+                    <form id="upload-form" enctype="multipart/form-data">
+                        <div class="file-dropzone" id="dropzone">
+                            <input type="file" id="file-input" name="file" accept=".gpx" required>
+                            <div class="dropzone-inner">
+                                <svg class="icon-upload" viewBox="0 0 24 24" width="28" height="28">
+                                    <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" fill="currentColor"/>
+                                </svg>
+                                <p class="dropzone-text">Drag & Drop file here</p>
+                                <p class="dropzone-subtext">Supports standard .gpx files</p>
+                            </div>
+                            <p class="file-name-display" id="file-name-display"></p>
                         </div>
-                        <p class="file-name-display" id="file-name-display"></p>
-                    </div>
+                        <div class="form-group">
+                            <label for="upload-name">Activity Name</label>
+                            <input type="text" id="upload-name" name="name" placeholder="Title defaults to GPX track name">
+                        </div>
+                        <div class="form-group">
+                            <label for="upload-desc">Notes & Description</label>
+                            <textarea id="upload-desc" name="description" placeholder="Add custom notes about this activity"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="upload-folder">Folder</label>
+                            <select id="upload-folder" name="folder_id">
+                                <option value="">-- No Folder --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="upload-tags">Tags (Comma separated)</label>
+                            <input type="text" id="upload-tags" name="tags" placeholder="e.g. speedrun, training, morning">
+                        </div>
+                        <button type="submit" class="btn btn-primary" id="upload-btn">Process Activity</button>
+                    </form>
+                </div>
+
+                <!-- Filter Controls -->
+                <div class="filter-controls">
                     <div class="form-group">
-                        <label for="upload-name">Activity Name</label>
-                        <input type="text" id="upload-name" name="name" placeholder="Title defaults to GPX track name">
-                    </div>
-                    <div class="form-group">
-                        <label for="upload-desc">Notes & Description</label>
-                        <textarea id="upload-desc" name="description" placeholder="Add custom notes about this activity"></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label for="upload-folder">Folder</label>
-                        <select id="upload-folder" name="folder_id">
-                            <option value="">-- No Folder --</option>
+                        <select id="folder-filter">
+                            <option value="">All Folders</option>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label for="upload-tags">Tags (Comma separated)</label>
-                        <input type="text" id="upload-tags" name="tags" placeholder="e.g. speedrun, training, morning">
+                    <div class="tags-container" id="tags-filter-list">
+                        <!-- Tags dynamic -->
                     </div>
-                    <button type="submit" class="btn btn-primary" id="upload-btn">Process Activity</button>
-                </form>
+                </div>
+
+                <!-- Routes Ledger Timeline -->
+                <div class="ledger-section" id="sidebar-ledger-container">
+                    <div class="section-header">
+                        <h3>Activities Log</h3>
+                        <button class="btn btn-sm btn-outline" id="manage-folders-btn">Folders</button>
+                    </div>
+                    <div class="routes-timeline" id="routes-timeline">
+                        <div class="timeline-empty">Log is empty. Import a GPX log.</div>
+                    </div>
+                </div>
             </div>
 
-            <!-- Filter Controls -->
-            <div class="filter-controls">
-                <div class="form-group">
-                    <select id="folder-filter">
-                        <option value="">All Folders</option>
-                    </select>
-                </div>
-                <div class="tags-container" id="tags-filter-list">
-                    <!-- Tags dynamic -->
-                </div>
-            </div>
-
-            <!-- Routes Ledger Timeline -->
-            <div class="ledger-section" id="sidebar-ledger-container">
-                <div class="section-header">
-                    <h3>Activities Log</h3>
-                    <button class="btn btn-sm btn-outline" id="manage-folders-btn">Folders</button>
-                </div>
-                <div class="routes-timeline" id="routes-timeline">
-                    <div class="timeline-empty">Log is empty. Import a GPX log.</div>
-                </div>
+            <!-- Sidebar Footer with Settings Button -->
+            <div class="sidebar-footer">
+                <button class="btn btn-outline" id="settings-btn">
+                    <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align: middle; margin-right: 6px; position: relative; top: -1px;"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" fill="currentColor"/></svg>
+                    Settings
+                </button>
             </div>
         </aside>
+
 
         <!-- Main Panel: Map & Route Details -->
         <main class="main-panel">
@@ -247,26 +258,6 @@
                             </select>
                         </div>
 
-                        <div class="control-group">
-                            <label for="fps-select">FPS</label>
-                            <select id="fps-select">
-                                <option value="24">24</option>
-                                <option value="25">25</option>
-                                <option value="30" selected>30</option>
-                                <option value="50">50</option>
-                                <option value="60">60</option>
-                            </select>
-                        </div>
-
-                        <div class="control-group">
-                            <label for="res-select">Res</label>
-                            <select id="res-select">
-                                <option value="720">720p</option>
-                                <option value="1080" selected>1080p</option>
-                                <option value="2160">2160p</option>
-                            </select>
-                        </div>
-
                         <button class="btn btn-sm btn-primary" id="export-video-btn">
                             <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: middle; margin-right: 4px;"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/></svg>
                             Export Video
@@ -326,6 +317,44 @@
                     <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
                         <button type="button" class="btn btn-outline" id="cancel-edit-btn">Cancel</button>
                         <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Export Settings Modal -->
+    <div class="modal hidden" id="settings-modal">
+        <div class="modal-content card">
+            <h3 class="card-title">Video Settings</h3>
+            <div class="modal-body">
+                <form id="settings-form" onsubmit="event.preventDefault();">
+                    <div class="form-group">
+                        <label for="res-select">Resolution</label>
+                        <select id="res-select">
+                            <option value="720">720p</option>
+                            <option value="1080" selected>1080p</option>
+                            <option value="2160">2160p</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="fps-select">Framerate (FPS)</label>
+                        <select id="fps-select">
+                            <option value="24">24</option>
+                            <option value="25">25</option>
+                            <option value="30" selected>30</option>
+                            <option value="50">50</option>
+                            <option value="60">60</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="format-select">File Format</label>
+                        <select id="format-select">
+                            <!-- Populated dynamically via JS -->
+                        </select>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+                        <button type="button" class="btn btn-primary" id="close-settings-btn">Save & Close</button>
                     </div>
                 </form>
             </div>

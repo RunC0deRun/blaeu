@@ -124,6 +124,44 @@ function initAppEvents() {
     // Video Export
     document.getElementById('export-video-btn').addEventListener('click', exportVideo);
 
+    // Settings Modal
+    document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
+    document.getElementById('close-settings-btn').addEventListener('click', closeSettingsModal);
+    
+    // Load and bind Resolution Settings
+    const resSelect = document.getElementById('res-select');
+    const savedRes = localStorage.getItem('blaeu_video_res');
+    if (savedRes && resSelect) {
+        resSelect.value = savedRes;
+    }
+    if (resSelect) {
+        resSelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_video_res', e.target.value);
+        });
+    }
+
+    // Load and bind FPS Settings
+    const fpsSelect = document.getElementById('fps-select');
+    const savedFps = localStorage.getItem('blaeu_video_fps');
+    if (savedFps && fpsSelect) {
+        fpsSelect.value = savedFps;
+    }
+    if (fpsSelect) {
+        fpsSelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_video_fps', e.target.value);
+        });
+    }
+
+    // Bind Format Settings (loading happens inside initSettingsFormats)
+    const formatSelect = document.getElementById('format-select');
+    if (formatSelect) {
+        formatSelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_video_format', e.target.value);
+        });
+    }
+
+    initSettingsFormats();
+
     // Back to Dashboard
     document.getElementById('back-to-dashboard-btn').addEventListener('click', deselectRoute);
 }
@@ -1045,27 +1083,46 @@ async function exportVideo() {
     const fpsSelect = document.getElementById('fps-select');
     const fps = fpsSelect ? parseInt(fpsSelect.value, 10) : 30;
 
+    const formatSelect = document.getElementById('format-select');
+    const selectedFormat = formatSelect ? formatSelect.value : 'video/webm';
+    const isWebM = selectedFormat.includes('webm');
+    const fileExt = isWebM ? 'webm' : 'mp4';
+    const mimeType = isWebM ? 'video/webm' : 'video/mp4';
+
     const stream = canvas.captureStream(fps);
     let recorder;
     
-    // WebM options configured with the resolution-appropriate high bitrate
+    // MediaRecorder configured with the resolution-appropriate high bitrate and selected format
     try {
         recorder = new MediaRecorder(stream, { 
-            mimeType: 'video/webm;codecs=vp9',
+            mimeType: selectedFormat,
             videoBitsPerSecond: videoBitrate
         });
     } catch (e) {
         try {
+            // fallback
             recorder = new MediaRecorder(stream, { 
-                mimeType: 'video/webm',
+                mimeType: mimeType,
                 videoBitsPerSecond: videoBitrate
             });
         } catch (e2) {
-            alert('MediaRecorder is not supported in this browser.');
-            modal.classList.add('hidden');
-            return;
+            try {
+                recorder = new MediaRecorder(stream, { 
+                    videoBitsPerSecond: videoBitrate
+                });
+            } catch (e3) {
+                alert('MediaRecorder is not supported in this browser.');
+                modal.classList.add('hidden');
+                return;
+            }
         }
     }
+
+    recorder.onerror = (event) => {
+        console.error("MediaRecorder error:", event.error);
+        alert(`Video recording error: ${event.error.message || event.error.name || 'Unknown error'}`);
+        modal.classList.add('hidden');
+    };
 
     const recordedChunks = [];
     recorder.ondataavailable = (e) => {
@@ -1074,20 +1131,20 @@ async function exportVideo() {
 
     recorder.onstop = () => {
         statusText.textContent = 'Saving video file...';
-        const rawBlob = new Blob(recordedChunks, { type: 'video/webm' });
+        const rawBlob = new Blob(recordedChunks, { type: mimeType });
         const recordedDuration = Date.now() - recordStartTime;
 
         const downloadBlob = (blobToDownload) => {
             const url = URL.createObjectURL(blobToDownload);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-animation.webm`;
+            a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-animation.${fileExt}`;
             a.click();
             // Hide Modal
             modal.classList.add('hidden');
         };
 
-        if (typeof ysFixWebmDuration === 'function') {
+        if (isWebM && typeof ysFixWebmDuration === 'function') {
             statusText.textContent = 'Optimizing video duration metadata...';
             ysFixWebmDuration(rawBlob, recordedDuration, (fixedBlob) => {
                 downloadBlob(fixedBlob);
@@ -1248,7 +1305,16 @@ async function exportVideo() {
         statusText.textContent = `Rendering frame ${currentFrame} at ${(elapsedRealTime).toFixed(1)}s / ${targetVideoDuration}s...`;
 
         if (elapsedRealTime >= targetVideoDuration) {
-            recorder.stop();
+            try {
+                if (recorder && recorder.state !== 'inactive') {
+                    recorder.stop();
+                } else {
+                    modal.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error("Error stopping recorder:", err);
+                modal.classList.add('hidden');
+            }
             return;
         }
 
@@ -1299,6 +1365,88 @@ async function renderFoldersList() {
 
 function closeFoldersModal() {
     document.getElementById('folders-modal').classList.add('hidden');
+}
+
+// Settings Modal Operations
+function openSettingsModal() {
+    document.getElementById('settings-modal').classList.remove('hidden');
+}
+
+function closeSettingsModal() {
+    document.getElementById('settings-modal').classList.add('hidden');
+}
+
+function initSettingsFormats() {
+    const formatSelect = document.getElementById('format-select');
+    if (!formatSelect) return;
+    
+    formatSelect.innerHTML = '';
+    
+    // Test WebM support (video-only codecs for canvas streams)
+    let webmSupported = false;
+    const webmTypes = [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm;codecs=h264',
+        'video/webm'
+    ];
+    for (const type of webmTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+            webmSupported = true;
+            const opt = document.createElement('option');
+            opt.value = type;
+            opt.textContent = 'WebM (.webm)';
+            formatSelect.appendChild(opt);
+            break;
+        }
+    }
+    if (!webmSupported && MediaRecorder.isTypeSupported('video/webm')) {
+        const opt = document.createElement('option');
+        opt.value = 'video/webm';
+        opt.textContent = 'WebM (.webm)';
+        formatSelect.appendChild(opt);
+    }
+
+    // Test MP4 support (video-only codecs for canvas streams)
+    let mp4Supported = false;
+    const mp4Types = [
+        'video/mp4;codecs=h264',
+        'video/mp4;codecs=vp9',
+        'video/mp4'
+    ];
+    for (const type of mp4Types) {
+        if (MediaRecorder.isTypeSupported(type)) {
+            mp4Supported = true;
+            const opt = document.createElement('option');
+            opt.value = type;
+            opt.textContent = 'MP4 (.mp4)';
+            formatSelect.appendChild(opt);
+            break;
+        }
+    }
+    if (!mp4Supported && MediaRecorder.isTypeSupported('video/mp4')) {
+        const opt = document.createElement('option');
+        opt.value = 'video/mp4';
+        opt.textContent = 'MP4 (.mp4)';
+        formatSelect.appendChild(opt);
+    }
+    
+    // Fallback if none of the above are recognized
+    if (formatSelect.children.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = 'video/webm';
+        opt.textContent = 'WebM (.webm)';
+        formatSelect.appendChild(opt);
+    }
+
+    // Restore saved format preference if it is supported/exists in options
+    const savedFormat = localStorage.getItem('blaeu_video_format');
+    if (savedFormat) {
+        const hasOption = Array.from(formatSelect.options).some(opt => opt.value === savedFormat);
+        if (hasOption) {
+            formatSelect.value = savedFormat;
+        }
+    }
 }
 
 async function handleCreateFolder(e) {

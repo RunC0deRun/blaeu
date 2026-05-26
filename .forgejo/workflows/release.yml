@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0 # Fetches all history so the changelog tool can see past commits
 
       - name: Create Forgejo Release
-        uses: actions/create-release@v1 # Or a Gitea/Forgejo specific release action
+        uses: https://github.com/actions/create-release@v1 # Or a Gitea/Forgejo specific release action
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }} # A token with write access to releases
         with:

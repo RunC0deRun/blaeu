@@ -196,3 +196,82 @@ def test_folder_crud(client):
     # Verify folder list is empty
     folders_empty = json.loads(client.get('/api/folders').data)
     assert len(folders_empty) == 0
+
+def test_convert_video_endpoint(client, monkeypatch):
+    import subprocess
+    from unittest.mock import MagicMock
+    
+    # Mock subprocess.run
+    mock_run = MagicMock()
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    
+    # Simulates ffmpeg writing to the output file path
+    def side_effect(cmd, *args, **kwargs):
+        out_path = cmd[-1]
+        with open(out_path, 'wb') as f:
+            f.write(b"mock_mp4_content")
+        return MagicMock()
+    mock_run.side_effect = side_effect
+
+    data = {
+        'file': (io.BytesIO(b"mock_webm_content"), 'test.webm'),
+        'fps': '30'
+    }
+    response = client.post('/api/convert-video', data=data, content_type='multipart/form-data')
+    assert response.status_code == 200
+    assert response.data == b"mock_mp4_content"
+    assert response.mimetype == 'video/mp4'
+    assert mock_run.called
+    
+    # Verify the command arguments
+    call_args = mock_run.call_args[0][0]
+    assert 'ffmpeg' in call_args
+    assert '-filter:v' in call_args
+    assert 'setpts=N/(30*TB)' in call_args
+    assert '-r' in call_args
+    assert '30' in call_args
+    assert '-crf' in call_args
+    assert '20' in call_args
+
+def test_convert_video_webm_endpoint(client, monkeypatch):
+    import subprocess
+    from unittest.mock import MagicMock
+    
+    # Mock subprocess.run
+    mock_run = MagicMock()
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    
+    # Simulates ffmpeg writing to the output file path
+    def side_effect(cmd, *args, **kwargs):
+        out_path = cmd[-1]
+        with open(out_path, 'wb') as f:
+            f.write(b"mock_webm_content")
+        return MagicMock()
+    mock_run.side_effect = side_effect
+
+    data = {
+        'file': (io.BytesIO(b"mock_webm_content"), 'test.webm'),
+        'fps': '60',
+        'format': 'webm',
+        'bitrate': '12000000'
+    }
+    response = client.post('/api/convert-video', data=data, content_type='multipart/form-data')
+    assert response.status_code == 200
+    assert response.data == b"mock_webm_content"
+    assert response.mimetype == 'video/webm'
+    assert mock_run.called
+    
+    # Verify the command arguments for WebM
+    call_args = mock_run.call_args[0][0]
+    assert 'ffmpeg' in call_args
+    assert '-filter:v' in call_args
+    assert 'setpts=N/(60*TB)' in call_args
+    assert '-r' in call_args
+    assert '60' in call_args
+    assert '-c:v' in call_args
+    assert 'libvpx' in call_args
+    assert '-crf' in call_args
+    assert '4' in call_args
+    assert '-b:v' in call_args
+    assert '12000000' in call_args
+

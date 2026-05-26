@@ -86,7 +86,7 @@
             </div>
 
             <!-- Routes Ledger Timeline -->
-            <div class="ledger-section">
+            <div class="ledger-section" id="sidebar-ledger-container">
                 <div class="section-header">
                     <h3>Activities Log</h3>
                     <button class="btn btn-sm btn-outline" id="manage-folders-btn">Folders</button>
@@ -99,6 +99,35 @@
 
         <!-- Main Panel: Map & Route Details -->
         <main class="main-panel">
+            <!-- Central Dashboard View -->
+            <div class="dashboard-view" id="dashboard-view">
+                <div class="dashboard-header-section">
+                    <div class="dashboard-header-main">
+                        <h2 class="dashboard-headline">Activities Dashboard</h2>
+                        <p class="dashboard-subtitle" id="dashboard-activity-count">0 Activities Loaded</p>
+                    </div>
+                    <!-- Aggregate Statistics Banner -->
+                    <div class="dashboard-summary-banner">
+                        <div class="summary-stat-item">
+                            <span class="summary-label">Total Distance</span>
+                            <span class="summary-value" id="summary-total-distance">0.00 km</span>
+                        </div>
+                        <div class="summary-stat-item">
+                            <span class="summary-label">Total Elev Gain</span>
+                            <span class="summary-value" id="summary-total-gain">0 m</span>
+                        </div>
+                        <div class="summary-stat-item">
+                            <span class="summary-label">Total Duration</span>
+                            <span class="summary-value" id="summary-total-duration">00:00:00</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Dashboard Grid -->
+                <div class="dashboard-grid" id="dashboard-grid">
+                    <!-- Dynamic Activity Cards will be populated here -->
+                </div>
+            </div>
+
             <div class="route-details-panel hidden" id="route-details-panel">
                 <div class="route-header">
                     <div class="route-title-area">
@@ -109,6 +138,7 @@
                         </div>
                     </div>
                     <div class="route-actions">
+                        <button class="btn btn-outline" id="back-to-dashboard-btn">← Dashboard</button>
                         <button class="btn btn-outline" id="edit-route-btn">Edit</button>
                         <button class="btn btn-danger" id="delete-route-btn">Delete</button>
                     </div>

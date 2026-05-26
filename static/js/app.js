@@ -123,6 +123,9 @@ function initAppEvents() {
 
     // Video Export
     document.getElementById('export-video-btn').addEventListener('click', exportVideo);
+
+    // Back to Dashboard
+    document.getElementById('back-to-dashboard-btn').addEventListener('click', deselectRoute);
 }
 
 // ----------------------------------------------------
@@ -184,6 +187,13 @@ async function loadRoutes() {
         const res = await fetch('/api/routes');
         routesList = await res.json();
         renderRoutesLedger();
+        renderDashboardGrid();
+        
+        if (currentRoute) {
+            showDashboardView(false);
+        } else {
+            showDashboardView(true);
+        }
     } catch (err) {
         console.error("Error loading routes", err);
     }
@@ -240,6 +250,312 @@ function renderRoutesLedger() {
     }).join('');
 }
 
+// Manage transitions between Dashboard Mode and Map Mode
+function showDashboardView(show) {
+    const dashboardView = document.getElementById('dashboard-view');
+    const mapViewport = document.querySelector('.map-viewport');
+    const routeDetailsPanel = document.getElementById('route-details-panel');
+    const sidebarLedger = document.getElementById('sidebar-ledger-container');
+    const animationHUD = document.getElementById('animation-controller-overlay');
+    
+    if (show) {
+        dashboardView.classList.remove('hidden');
+        mapViewport.classList.add('hidden');
+        routeDetailsPanel.classList.add('hidden');
+        sidebarLedger.classList.add('hidden');
+        animationHUD.classList.add('hidden');
+        currentRoute = null;
+        // Clean active classes on timeline items
+        const activeItems = document.querySelectorAll('.timeline-item.active');
+        activeItems.forEach(item => item.classList.remove('active'));
+    } else {
+        dashboardView.classList.add('hidden');
+        mapViewport.classList.remove('hidden');
+        sidebarLedger.classList.remove('hidden');
+        
+        // Fix Leaflet sizing after DOM display update
+        if (map) {
+            setTimeout(() => {
+                map.invalidateSize();
+            }, 100);
+        }
+    }
+}
+
+// Deselect selected route and return to dashboard
+function deselectRoute() {
+    stopAnimation();
+    if (routePolyline) map.removeLayer(routePolyline);
+    if (animatedPolyline) map.removeLayer(animatedPolyline);
+    if (animationMarker) map.removeLayer(animationMarker);
+    waypointMarkersGroup.clearLayers();
+    
+    currentRoute = null;
+    showDashboardView(true);
+    renderRoutesLedger();
+    renderDashboardGrid();
+}
+
+// Render Dashboard View grid and aggregate statistics banner
+function renderDashboardGrid() {
+    const gridContainer = document.getElementById('dashboard-grid');
+    const activityCountEl = document.getElementById('dashboard-activity-count');
+    
+    // Apply filters
+    let filtered = routesList;
+    if (activeFolderFilter) {
+        filtered = filtered.filter(r => r.folder_id == activeFolderFilter);
+    }
+    if (activeTagFilter) {
+        filtered = filtered.filter(r => r.tags && r.tags.includes(activeTagFilter));
+    }
+    
+    // Update count
+    activityCountEl.textContent = filtered.length === 1 ? '1 Activity Loaded' : `${filtered.length} Activities Loaded`;
+    
+    // Calculate aggregate statistics
+    let totalDist = 0;
+    let totalGain = 0;
+    let totalDur = 0;
+    
+    filtered.forEach(r => {
+        totalDist += r.total_distance || 0;
+        totalGain += r.elevation_gain || 0;
+        totalDur += r.duration || 0;
+    });
+    
+    document.getElementById('summary-total-distance').textContent = formatDistance(totalDist);
+    document.getElementById('summary-total-gain').textContent = `${Math.round(totalGain)} m`;
+    document.getElementById('summary-total-duration').textContent = formatDuration(totalDur);
+    
+    if (filtered.length === 0) {
+        gridContainer.innerHTML = '<div class="timeline-empty" style="grid-column: 1/-1;">No activities match the current filters. Import a GPX file to get started.</div>';
+        return;
+    }
+    
+    gridContainer.innerHTML = filtered.map(route => {
+        const folderBadge = route.folder_name ? `<span class="folder-badge">${escapeHTML(route.folder_name)}</span>` : '';
+        const distanceStr = formatDistance(route.total_distance);
+        const durationStr = formatDuration(route.duration);
+        const gainStr = `${Math.round(route.elevation_gain || 0)} m`;
+        const avgSpeedStr = formatSpeed(route.avg_speed);
+        
+        const dateObj = new Date(route.created_at + 'Z');
+        const formatOptions = { 
+            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+            hour12: false
+        };
+        if (route.timezone) {
+            formatOptions.timeZone = route.timezone;
+        }
+        let formattedDate = dateObj.toLocaleDateString(undefined, formatOptions);
+        if (route.timezone_abbr) {
+            formattedDate += ` ${route.timezone_abbr}`;
+        }
+        
+        const tagsHtml = route.tags ? route.tags.map(t => `<span class="tag-badge" onclick="event.stopPropagation(); toggleTagFilter('${t}')">#${escapeHTML(t)}</span>`).join('') : '';
+
+        return `
+            <div class="activity-card" onclick="selectRoute(${route.id})">
+                <div class="activity-card-preview">
+                    <canvas class="activity-mini-canvas" data-route-id="${route.id}"></canvas>
+                </div>
+                <div class="activity-card-body">
+                    <div class="activity-card-time">${formattedDate}</div>
+                    <h3 class="activity-card-title" title="${escapeHTML(route.name)}">${escapeHTML(route.name)}</h3>
+                    <p class="activity-card-desc">${escapeHTML(route.description || 'No description provided.')}</p>
+                    <div class="activity-card-stats-grid">
+                        <div class="activity-card-stat">
+                            <span class="stat-label">Distance</span>
+                            <span class="stat-value">${distanceStr}</span>
+                        </div>
+                        <div class="activity-card-stat">
+                            <span class="stat-label">Elev Gain</span>
+                            <span class="stat-value">${gainStr}</span>
+                        </div>
+                        <div class="activity-card-stat">
+                            <span class="stat-label">Duration</span>
+                            <span class="stat-value">${durationStr}</span>
+                        </div>
+                        <div class="activity-card-stat">
+                            <span class="stat-label">Avg Speed</span>
+                            <span class="stat-value">${avgSpeedStr}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="activity-card-footer">
+                    <div class="activity-card-tags">
+                        ${folderBadge}
+                        ${tagsHtml}
+                    </div>
+                    <div class="activity-card-actions">
+                        <button class="btn-icon" onclick="editRouteFromDashboard(${route.id}, event)" title="Edit details">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                        <button class="btn-icon" onclick="deleteRouteFromDashboard(${route.id}, '${escapeHTML(route.name)}', event)" title="Delete activity">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    // Draw miniature canvases
+    const canvases = gridContainer.querySelectorAll('.activity-mini-canvas');
+    canvases.forEach(canvas => {
+        const routeId = parseInt(canvas.getAttribute('data-route-id'), 10);
+        const route = filtered.find(r => r.id === routeId);
+        if (route && route.simplified_path) {
+            drawRouteMiniature(canvas, route.simplified_path);
+        }
+    });
+}
+
+// Draw a glowing neon route path miniature on a card canvas
+function drawRouteMiniature(canvas, coords) {
+    const ctx = canvas.getContext('2d');
+    
+    // Set actual canvas size to match layout size
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+    
+    if (!coords || coords.length < 2) {
+        // Draw centered placeholder text
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '12px Outfit';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('No route path available', canvas.width / 2, canvas.height / 2);
+        return;
+    }
+    
+    // Find bounds
+    let minLat = Infinity, maxLat = -Infinity;
+    let minLon = Infinity, maxLon = -Infinity;
+    
+    coords.forEach(pt => {
+        const lat = pt[0];
+        const lon = pt[1];
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+    });
+    
+    const latRange = maxLat - minLat;
+    const lonRange = maxLon - minLon;
+    
+    const padding = 30;
+    const w = canvas.width - padding;
+    const h = canvas.height - padding;
+    
+    // Scale factor keeping aspect ratio (correct for mercator aspect ratio approx)
+    const latCos = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180);
+    const lonWidth = lonRange * latCos;
+    const latHeight = latRange;
+    
+    const scaleX = w / (lonWidth || 0.0001);
+    const scaleY = h / (latHeight || 0.0001);
+    const scale = Math.min(scaleX, scaleY);
+    
+    // Center translation
+    const offsetX = (canvas.width - lonWidth * scale) / 2;
+    const offsetY = (canvas.height - latHeight * scale) / 2;
+    
+    // Helper to convert lat/lon to canvas x/y
+    function getCanvasCoords(lat, lon) {
+        const x = offsetX + (lon - minLon) * latCos * scale;
+        // Invert Y axis
+        const y = canvas.height - (offsetY + (lat - minLat) * scale);
+        return [x, y];
+    }
+    
+    // Draw route path
+    ctx.beginPath();
+    const startPoint = getCanvasCoords(coords[0][0], coords[0][1]);
+    ctx.moveTo(startPoint[0], startPoint[1]);
+    
+    for (let i = 1; i < coords.length; i++) {
+        const pt = getCanvasCoords(coords[i][0], coords[i][1]);
+        ctx.lineTo(pt[0], pt[1]);
+    }
+    
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    // High-tech neon glow
+    ctx.shadowColor = 'rgba(0, 240, 255, 0.7)';
+    ctx.shadowBlur = 6;
+    ctx.stroke();
+    
+    // Reset shadow for dots
+    ctx.shadowBlur = 0;
+    
+    // Draw Start Point (Neon Cyan/White)
+    const startXY = getCanvasCoords(coords[0][0], coords[0][1]);
+    ctx.beginPath();
+    ctx.arc(startXY[0], startXY[1], 4, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    
+    // Draw End Point (Neon Purple)
+    const endXY = getCanvasCoords(coords[coords.length - 1][0], coords[coords.length - 1][1]);
+    ctx.beginPath();
+    ctx.arc(endXY[0], endXY[1], 4, 0, 2 * Math.PI);
+    ctx.fillStyle = '#9333ea';
+    ctx.fill();
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+}
+
+// Delete route shortcut from dashboard card
+async function deleteRouteFromDashboard(routeId, routeName, event) {
+    if (event) event.stopPropagation(); // Prevent opening map
+    if (!confirm(`Are you sure you want to delete "${routeName}"? This action is permanent.`)) return;
+
+    try {
+        const res = await fetch(`/api/routes/${routeId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete route');
+        
+        // If the currently selected route on map was this one, clear it
+        if (currentRoute && currentRoute.id === routeId) {
+            deselectRoute();
+        } else {
+            await loadTags();
+            await loadRoutes();
+        }
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+// Edit route shortcut from dashboard card
+function editRouteFromDashboard(routeId, event) {
+    if (event) event.stopPropagation(); // Prevent opening map
+    
+    // Find route in list
+    const route = routesList.find(r => r.id === routeId);
+    if (!route) return;
+    
+    // Temporarily set currentRoute so the existing modal logic works
+    currentRoute = route;
+    
+    openEditRouteModal();
+}
+
 // Handle GPX File Upload
 async function handleUpload() {
     const form = document.getElementById('upload-form');
@@ -294,6 +610,7 @@ async function handleUpload() {
 // Select a route and load its full details
 async function selectRoute(routeId) {
     stopAnimation();
+    showDashboardView(false); // Switch to Map Mode
 
     try {
         const res = await fetch(`/api/routes/${routeId}`);
@@ -1062,8 +1379,12 @@ async function handleEditRoute(e) {
         await loadTags();
         await loadRoutes();
         
-        // Refresh details
-        await selectRoute(currentRoute.id);
+        // Refresh details if in Map Mode, otherwise clear temp selection
+        if (document.getElementById('dashboard-view').classList.contains('hidden')) {
+            await selectRoute(currentRoute.id);
+        } else {
+            currentRoute = null;
+        }
     } catch (err) {
         alert(err.message);
     }

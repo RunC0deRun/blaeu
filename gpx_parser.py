@@ -28,6 +28,29 @@ def haversine_distance(p1, p2):
     a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return 6371000 * c
+def simplify_coords(tracks, max_points=100):
+    # Extract all coordinate pairs in sequence from all tracks/segments
+    coords = []
+    for track in tracks:
+        for segment in track.get('segments', []):
+            for pt in segment:
+                coords.append([pt['lat'], pt['lon']])
+                
+    if not coords:
+        return []
+        
+    n = len(coords)
+    if n <= max_points:
+        return coords
+        
+    # Downsample keeping start and end points
+    step = (n - 1) / (max_points - 1)
+    simplified = []
+    for i in range(max_points):
+        idx = int(round(i * step))
+        if idx < n:
+            simplified.append(coords[idx])
+    return simplified
 
 def parse_gpx(file_content):
     """
@@ -254,5 +277,6 @@ def parse_gpx(file_content):
         'tracks': tracks_data,
         'waypoints': waypoints_data,
         'timezone': timezone_name,
-        'start_time': start_time_utc_str
+        'start_time': start_time_utc_str,
+        'simplified_path': simplify_coords(tracks_data)
     }

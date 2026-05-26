@@ -929,6 +929,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
     border: 1px solid var(--border) !important;
 }
 
+.custom-map-marker {
+    background: transparent !important;
+    border: none !important;
+}
+
 /* Utility classes */
 .hidden {
     display: none !important;

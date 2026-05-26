@@ -238,6 +238,110 @@ def get_map_tile(z, x, y):
             return jsonify({'error': f"Failed to fetch tile from OSM: {response.status_code}"}), response.status_code
     except Exception as e:
         return jsonify({'error': f"Tile proxy error: {str(e)}"}), 500
+@app.route('/api/convert-video', methods=['POST'])
+def convert_video():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file uploaded'}), 400
+        
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'Empty filename'}), 400
+        
+    import subprocess
+    import tempfile
+    
+    temp_in_path = None
+    temp_out_path = None
+    
+    try:
+        # Create unique temp file paths
+        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_in:
+            temp_in_path = temp_in.name
+        # Get and validate target format ('mp4' or 'webm')
+        out_format = request.form.get('format', 'mp4')
+        if out_format not in ['mp4', 'webm']:
+            out_format = 'mp4'
+
+        with tempfile.NamedTemporaryFile(suffix=f'.{out_format}', delete=False) as temp_out:
+            temp_out_path = temp_out.name
+            
+        # Save input webm to temp file
+        file.save(temp_in_path)
+        
+        # Get and validate FPS from request
+        fps = request.form.get('fps', '30')
+        try:
+            fps_val = int(fps)
+            if fps_val <= 0 or fps_val > 120:
+                fps_val = 30
+        except ValueError:
+            fps_val = 30
+
+        # Get and validate Bitrate from request
+        bitrate = request.form.get('bitrate', '12000000')
+        try:
+            bitrate_val = int(bitrate)
+            if bitrate_val <= 0:
+                bitrate_val = 12000000
+        except ValueError:
+            bitrate_val = 12000000
+
+        # Transcode WebM to target format using ffmpeg.
+        # Use setpts to rewrite timestamps based on the frame index and the configured FPS,
+        # forcing a constant framerate and preventing slow-motion/timecode mismatch.
+        if out_format == 'webm':
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', temp_in_path,
+                '-filter:v', f"setpts=N/({fps_val}*TB)",
+                '-r', str(fps_val),
+                '-c:v', 'libvpx',
+                '-cpu-used', '5',
+                '-crf', '4',
+                '-b:v', f"{bitrate_val}",
+                temp_out_path
+            ]
+        else:
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', temp_in_path,
+                '-filter:v', f"setpts=N/({fps_val}*TB)",
+                '-r', str(fps_val),
+                '-c:v', 'libx264',
+                '-crf', '20',
+                '-pix_fmt', 'yuv420p',
+                temp_out_path
+            ]
+        
+        # Run conversion
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        
+        # Return converted video file
+        mimetype = 'video/mp4' if out_format == 'mp4' else 'video/webm'
+        return send_file(
+            temp_out_path,
+            mimetype=mimetype,
+            as_attachment=True,
+            download_name=f'animation.{out_format}'
+        )
+        
+    except subprocess.CalledProcessError as e:
+        stderr_msg = e.stderr.decode('utf-8', errors='ignore') if e.stderr else 'No stderr output'
+        return jsonify({'error': f"ffmpeg conversion failed: {stderr_msg}"}), 500
+    except Exception as e:
+        return jsonify({'error': f"Conversion failed: {str(e)}"}), 500
+    finally:
+        # Clean up temp files
+        if temp_in_path and os.path.exists(temp_in_path):
+            try:
+                os.unlink(temp_in_path)
+            except Exception:
+                pass
+        if temp_out_path and os.path.exists(temp_out_path):
+            try:
+                os.unlink(temp_out_path)
+            except Exception:
+                pass
 
 
 if __name__ == '__main__':

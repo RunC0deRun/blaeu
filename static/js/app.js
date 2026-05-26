@@ -1084,37 +1084,51 @@ async function exportVideo() {
     const fps = fpsSelect ? parseInt(fpsSelect.value, 10) : 30;
 
     const formatSelect = document.getElementById('format-select');
-    const selectedFormat = formatSelect ? formatSelect.value : 'video/webm';
-    const isWebM = selectedFormat.includes('webm');
-    const fileExt = isWebM ? 'webm' : 'mp4';
-    const mimeType = isWebM ? 'video/webm' : 'video/mp4';
+    const userSelectedFormat = formatSelect ? formatSelect.value : 'video/webm'; // 'video/webm' or 'video/mp4'
+    
+    let recorderMimeType = 'video/webm';
+    if (userSelectedFormat === 'video/mp4') {
+        if (MediaRecorder.isTypeSupported('video/mp4;codecs=h264')) {
+            recorderMimeType = 'video/mp4;codecs=h264';
+        } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+            recorderMimeType = 'video/mp4';
+        } else {
+            // No native MP4 support (Chrome/Firefox): record WebM and convert on server
+            if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+                recorderMimeType = 'video/webm;codecs=vp9';
+            } else {
+                recorderMimeType = 'video/webm';
+            }
+        }
+    } else { // WebM
+        if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+            recorderMimeType = 'video/webm;codecs=vp9';
+        } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+            recorderMimeType = 'video/webm;codecs=vp8';
+        } else {
+            recorderMimeType = 'video/webm';
+        }
+    }
 
     const stream = canvas.captureStream(fps);
     let recorder;
     
-    // MediaRecorder configured with the resolution-appropriate high bitrate and selected format
+    // MediaRecorder configured with the resolution-appropriate high bitrate and resolved format
     try {
         recorder = new MediaRecorder(stream, { 
-            mimeType: selectedFormat,
+            mimeType: recorderMimeType,
             videoBitsPerSecond: videoBitrate
         });
     } catch (e) {
         try {
             // fallback
             recorder = new MediaRecorder(stream, { 
-                mimeType: mimeType,
                 videoBitsPerSecond: videoBitrate
             });
         } catch (e2) {
-            try {
-                recorder = new MediaRecorder(stream, { 
-                    videoBitsPerSecond: videoBitrate
-                });
-            } catch (e3) {
-                alert('MediaRecorder is not supported in this browser.');
-                modal.classList.add('hidden');
-                return;
-            }
+            alert('MediaRecorder is not supported in this browser.');
+            modal.classList.add('hidden');
+            return;
         }
     }
 
@@ -1129,35 +1143,70 @@ async function exportVideo() {
         if (e.data.size > 0) recordedChunks.push(e.data);
     };
 
+    // Calculate target video duration based on the activity total duration and the selected speed multiplier
+    const targetVideoDuration = totalDuration / speedMultiplier;
+    const totalFrames = Math.ceil(targetVideoDuration * fps);
+
+    // We always use virtual time to guarantee every frame is captured at the configured FPS.
+    // The server-side transcoding fixes timestamps and duration to match real-time playback.
+    const useVirtualTime = true;
+
     recorder.onstop = () => {
         statusText.textContent = 'Saving video file...';
-        const rawBlob = new Blob(recordedChunks, { type: mimeType });
-        const recordedDuration = Date.now() - recordStartTime;
+        
+        // Determine the actual recorded MIME type
+        const actualMimeType = recorder.mimeType || recorderMimeType;
+        const isActuallyWebM = actualMimeType.includes('webm');
+        
+        const rawBlob = new Blob(recordedChunks, { type: isActuallyWebM ? 'video/webm' : 'video/mp4' });
 
-        const downloadBlob = (blobToDownload) => {
+        const downloadBlob = (blobToDownload, ext) => {
             const url = URL.createObjectURL(blobToDownload);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-animation.${fileExt}`;
+            a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-animation.${ext}`;
             a.click();
             // Hide Modal
             modal.classList.add('hidden');
         };
 
-        if (isWebM && typeof ysFixWebmDuration === 'function') {
-            statusText.textContent = 'Optimizing video duration metadata...';
-            ysFixWebmDuration(rawBlob, recordedDuration, (fixedBlob) => {
-                downloadBlob(fixedBlob);
-            });
-        } else {
-            downloadBlob(rawBlob);
-        }
+        const fallbackDownload = () => {
+            if (isActuallyWebM && typeof ysFixWebmDuration === 'function') {
+                statusText.textContent = 'Optimizing video duration metadata...';
+                ysFixWebmDuration(rawBlob, targetVideoDuration * 1000, (fixedBlob) => {
+                    downloadBlob(fixedBlob, 'webm');
+                });
+            } else {
+                downloadBlob(rawBlob, isActuallyWebM ? 'webm' : 'mp4');
+            }
+        };
+
+        statusText.textContent = 'Processing video on server...';
+        const formData = new FormData();
+        const ext = userSelectedFormat === 'video/mp4' ? 'mp4' : 'webm';
+        formData.append('file', rawBlob, `animation.${isActuallyWebM ? 'webm' : 'mp4'}`);
+        formData.append('fps', fps);
+        formData.append('format', ext);
+        formData.append('bitrate', videoBitrate);
+        
+        fetch('/api/convert-video', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => {
+            if (!res.ok) throw new Error('Transcoding failed');
+            return res.blob();
+        })
+        .then(processedBlob => {
+            downloadBlob(processedBlob, ext);
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Server processing failed. Downloading original video instead.');
+            fallbackDownload();
+        });
     };
 
-    // Calculate target video duration based on the activity total duration and the selected speed multiplier
-    const targetVideoDuration = totalDuration / speedMultiplier;
-    const totalFrames = targetVideoDuration * fps;
-    
     const recordStartTime = Date.now();
     recorder.start();
 
@@ -1172,11 +1221,9 @@ async function exportVideo() {
     }
 
     let currentFrame = 0;
-    const startTime = performance.now();
 
     function drawFrame() {
-        const elapsedRealTime = (performance.now() - startTime) / 1000;
-        let ratio = elapsedRealTime / targetVideoDuration;
+        let ratio = currentFrame / totalFrames;
         if (ratio > 1.0) {
             ratio = 1.0;
         }
@@ -1302,9 +1349,11 @@ async function exportVideo() {
         currentFrame++;
         const totalProgress = 30 + Math.round(ratio * 70); // 30-100% progress
         fill.style.width = `${totalProgress}%`;
-        statusText.textContent = `Rendering frame ${currentFrame} at ${(elapsedRealTime).toFixed(1)}s / ${targetVideoDuration}s...`;
+        
+        const displayTime = ratio * targetVideoDuration;
+        statusText.textContent = `Rendering frame ${currentFrame}/${totalFrames} at ${displayTime.toFixed(1)}s / ${targetVideoDuration.toFixed(1)}s...`;
 
-        if (elapsedRealTime >= targetVideoDuration) {
+        if (currentFrame > totalFrames) {
             try {
                 if (recorder && recorder.state !== 'inactive') {
                     recorder.stop();
@@ -1318,12 +1367,8 @@ async function exportVideo() {
             return;
         }
 
-        // Schedule next frame to match the target frame intervals
-        const targetNextFrameTime = ((currentFrame + 1) * 1000) / fps;
-        const actualElapsedMs = performance.now() - startTime;
-        const delay = Math.max(0, targetNextFrameTime - actualElapsedMs);
-
-        setTimeout(drawFrame, delay);
+        // Schedule next frame
+        setTimeout(drawFrame, 10);
     }
 
     // Start drawing loops
@@ -1382,64 +1427,19 @@ function initSettingsFormats() {
     
     formatSelect.innerHTML = '';
     
-    // Test WebM support (video-only codecs for canvas streams)
-    let webmSupported = false;
-    const webmTypes = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm;codecs=h264',
-        'video/webm'
-    ];
-    for (const type of webmTypes) {
-        if (MediaRecorder.isTypeSupported(type)) {
-            webmSupported = true;
-            const opt = document.createElement('option');
-            opt.value = type;
-            opt.textContent = 'WebM (.webm)';
-            formatSelect.appendChild(opt);
-            break;
-        }
-    }
-    if (!webmSupported && MediaRecorder.isTypeSupported('video/webm')) {
-        const opt = document.createElement('option');
-        opt.value = 'video/webm';
-        opt.textContent = 'WebM (.webm)';
-        formatSelect.appendChild(opt);
-    }
+    // Always offer WebM (.webm)
+    const optWebm = document.createElement('option');
+    optWebm.value = 'video/webm';
+    optWebm.textContent = 'WebM (.webm)';
+    formatSelect.appendChild(optWebm);
 
-    // Test MP4 support (video-only codecs for canvas streams)
-    let mp4Supported = false;
-    const mp4Types = [
-        'video/mp4;codecs=h264',
-        'video/mp4;codecs=vp9',
-        'video/mp4'
-    ];
-    for (const type of mp4Types) {
-        if (MediaRecorder.isTypeSupported(type)) {
-            mp4Supported = true;
-            const opt = document.createElement('option');
-            opt.value = type;
-            opt.textContent = 'MP4 (.mp4)';
-            formatSelect.appendChild(opt);
-            break;
-        }
-    }
-    if (!mp4Supported && MediaRecorder.isTypeSupported('video/mp4')) {
-        const opt = document.createElement('option');
-        opt.value = 'video/mp4';
-        opt.textContent = 'MP4 (.mp4)';
-        formatSelect.appendChild(opt);
-    }
+    // Always offer MP4 (.mp4)
+    const optMp4 = document.createElement('option');
+    optMp4.value = 'video/mp4';
+    optMp4.textContent = 'MP4 (.mp4)';
+    formatSelect.appendChild(optMp4);
     
-    // Fallback if none of the above are recognized
-    if (formatSelect.children.length === 0) {
-        const opt = document.createElement('option');
-        opt.value = 'video/webm';
-        opt.textContent = 'WebM (.webm)';
-        formatSelect.appendChild(opt);
-    }
-
-    // Restore saved format preference if it is supported/exists in options
+    // Restore saved format preference
     const savedFormat = localStorage.getItem('blaeu_video_format');
     if (savedFormat) {
         const hasOption = Array.from(formatSelect.options).some(opt => opt.value === savedFormat);

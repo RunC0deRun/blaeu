@@ -8,8 +8,6 @@ on:
 jobs:
   release:
     runs-on: node-22
-    container:
-      image: ubuntu:latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

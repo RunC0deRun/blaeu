@@ -14,13 +14,36 @@ jobs:
         with:
           fetch-depth: 0 # Fetches all history so the changelog tool can see past commits
 
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "refs/tags/$TAG_NAME^" 2>/dev/null || true)
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git describe --tags --abbrev=0 "$TAG_NAME^" 2>/dev/null || true)
+          fi
+          
+          if [ -z "$PREV_TAG" ]; then
+            CHANGELOG=$(git log "refs/tags/$TAG_NAME" --pretty=format:"* %s (%h)" --no-merges 2>/dev/null || git log --pretty=format:"* %s (%h)" --no-merges)
+          else
+            CHANGELOG=$(git log "refs/tags/$PREV_TAG..refs/tags/$TAG_NAME" --pretty=format:"* %s (%h)" --no-merges 2>/dev/null || git log "$PREV_TAG..$TAG_NAME" --pretty=format:"* %s (%h)" --no-merges)
+          fi
+          
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="* No new commits found."
+          fi
+          
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Forgejo Release
         uses: https://github.com/actions/create-release@v1 # Or a Gitea/Forgejo specific release action
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }} # A token with write access to releases
         with:
           tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          body_from_changelog: true # This tells Forgejo to automatically compile the commit/MR summary
+          release_name: Release ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.body }}
           draft: false
           prerelease: false

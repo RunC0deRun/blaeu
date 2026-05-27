@@ -123,6 +123,62 @@ function initAppEvents() {
 
     // Video Export
     document.getElementById('export-video-btn').addEventListener('click', exportVideo);
+
+    // Settings Modal
+    document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
+    document.getElementById('close-settings-btn').addEventListener('click', closeSettingsModal);
+    
+    // Load and bind Animation Mode Settings
+    const modeSelect = document.getElementById('mode-select');
+    const savedMode = localStorage.getItem('blaeu_animation_mode');
+    if (savedMode && modeSelect) {
+        modeSelect.value = savedMode;
+    }
+    if (modeSelect) {
+        modeSelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_animation_mode', e.target.value);
+            if (currentRoute) {
+                prepareAnimationPoints();
+            }
+        });
+    }
+
+    // Load and bind Resolution Settings
+    const resSelect = document.getElementById('res-select');
+    const savedRes = localStorage.getItem('blaeu_video_res');
+    if (savedRes && resSelect) {
+        resSelect.value = savedRes;
+    }
+    if (resSelect) {
+        resSelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_video_res', e.target.value);
+        });
+    }
+
+    // Load and bind FPS Settings
+    const fpsSelect = document.getElementById('fps-select');
+    const savedFps = localStorage.getItem('blaeu_video_fps');
+    if (savedFps && fpsSelect) {
+        fpsSelect.value = savedFps;
+    }
+    if (fpsSelect) {
+        fpsSelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_video_fps', e.target.value);
+        });
+    }
+
+    // Bind Format Settings (loading happens inside initSettingsFormats)
+    const formatSelect = document.getElementById('format-select');
+    if (formatSelect) {
+        formatSelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_video_format', e.target.value);
+        });
+    }
+
+    initSettingsFormats();
+
+    // Back to Dashboard
+    document.getElementById('back-to-dashboard-btn').addEventListener('click', deselectRoute);
 }
 
 // ----------------------------------------------------
@@ -184,6 +240,13 @@ async function loadRoutes() {
         const res = await fetch('/api/routes');
         routesList = await res.json();
         renderRoutesLedger();
+        renderDashboardGrid();
+        
+        if (currentRoute) {
+            showDashboardView(false);
+        } else {
+            showDashboardView(true);
+        }
     } catch (err) {
         console.error("Error loading routes", err);
     }
@@ -240,6 +303,312 @@ function renderRoutesLedger() {
     }).join('');
 }
 
+// Manage transitions between Dashboard Mode and Map Mode
+function showDashboardView(show) {
+    const dashboardView = document.getElementById('dashboard-view');
+    const mapViewport = document.querySelector('.map-viewport');
+    const routeDetailsPanel = document.getElementById('route-details-panel');
+    const sidebarLedger = document.getElementById('sidebar-ledger-container');
+    const animationHUD = document.getElementById('animation-controller-overlay');
+    
+    if (show) {
+        dashboardView.classList.remove('hidden');
+        mapViewport.classList.add('hidden');
+        routeDetailsPanel.classList.add('hidden');
+        sidebarLedger.classList.add('hidden');
+        animationHUD.classList.add('hidden');
+        currentRoute = null;
+        // Clean active classes on timeline items
+        const activeItems = document.querySelectorAll('.timeline-item.active');
+        activeItems.forEach(item => item.classList.remove('active'));
+    } else {
+        dashboardView.classList.add('hidden');
+        mapViewport.classList.remove('hidden');
+        sidebarLedger.classList.remove('hidden');
+        
+        // Fix Leaflet sizing after DOM display update
+        if (map) {
+            setTimeout(() => {
+                map.invalidateSize();
+            }, 100);
+        }
+    }
+}
+
+// Deselect selected route and return to dashboard
+function deselectRoute() {
+    stopAnimation();
+    if (routePolyline) map.removeLayer(routePolyline);
+    if (animatedPolyline) map.removeLayer(animatedPolyline);
+    if (animationMarker) map.removeLayer(animationMarker);
+    waypointMarkersGroup.clearLayers();
+    
+    currentRoute = null;
+    showDashboardView(true);
+    renderRoutesLedger();
+    renderDashboardGrid();
+}
+
+// Render Dashboard View grid and aggregate statistics banner
+function renderDashboardGrid() {
+    const gridContainer = document.getElementById('dashboard-grid');
+    const activityCountEl = document.getElementById('dashboard-activity-count');
+    
+    // Apply filters
+    let filtered = routesList;
+    if (activeFolderFilter) {
+        filtered = filtered.filter(r => r.folder_id == activeFolderFilter);
+    }
+    if (activeTagFilter) {
+        filtered = filtered.filter(r => r.tags && r.tags.includes(activeTagFilter));
+    }
+    
+    // Update count
+    activityCountEl.textContent = filtered.length === 1 ? '1 Activity Loaded' : `${filtered.length} Activities Loaded`;
+    
+    // Calculate aggregate statistics
+    let totalDist = 0;
+    let totalGain = 0;
+    let totalDur = 0;
+    
+    filtered.forEach(r => {
+        totalDist += r.total_distance || 0;
+        totalGain += r.elevation_gain || 0;
+        totalDur += r.duration || 0;
+    });
+    
+    document.getElementById('summary-total-distance').textContent = formatDistance(totalDist);
+    document.getElementById('summary-total-gain').textContent = `${Math.round(totalGain)} m`;
+    document.getElementById('summary-total-duration').textContent = formatDuration(totalDur);
+    
+    if (filtered.length === 0) {
+        gridContainer.innerHTML = '<div class="timeline-empty" style="grid-column: 1/-1;">No activities match the current filters. Import a GPX file to get started.</div>';
+        return;
+    }
+    
+    gridContainer.innerHTML = filtered.map(route => {
+        const folderBadge = route.folder_name ? `<span class="folder-badge">${escapeHTML(route.folder_name)}</span>` : '';
+        const distanceStr = formatDistance(route.total_distance);
+        const durationStr = formatDuration(route.duration);
+        const gainStr = `${Math.round(route.elevation_gain || 0)} m`;
+        const avgSpeedStr = formatSpeed(route.avg_speed);
+        
+        const dateObj = new Date(route.created_at + 'Z');
+        const formatOptions = { 
+            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+            hour12: false
+        };
+        if (route.timezone) {
+            formatOptions.timeZone = route.timezone;
+        }
+        let formattedDate = dateObj.toLocaleDateString(undefined, formatOptions);
+        if (route.timezone_abbr) {
+            formattedDate += ` ${route.timezone_abbr}`;
+        }
+        
+        const tagsHtml = route.tags ? route.tags.map(t => `<span class="tag-badge" onclick="event.stopPropagation(); toggleTagFilter('${t}')">#${escapeHTML(t)}</span>`).join('') : '';
+
+        return `
+            <div class="activity-card" onclick="selectRoute(${route.id})">
+                <div class="activity-card-preview">
+                    <canvas class="activity-mini-canvas" data-route-id="${route.id}"></canvas>
+                </div>
+                <div class="activity-card-body">
+                    <div class="activity-card-time">${formattedDate}</div>
+                    <h3 class="activity-card-title" title="${escapeHTML(route.name)}">${escapeHTML(route.name)}</h3>
+                    <p class="activity-card-desc">${escapeHTML(route.description || 'No description provided.')}</p>
+                    <div class="activity-card-stats-grid">
+                        <div class="activity-card-stat">
+                            <span class="stat-label">Distance</span>
+                            <span class="stat-value">${distanceStr}</span>
+                        </div>
+                        <div class="activity-card-stat">
+                            <span class="stat-label">Elev Gain</span>
+                            <span class="stat-value">${gainStr}</span>
+                        </div>
+                        <div class="activity-card-stat">
+                            <span class="stat-label">Duration</span>
+                            <span class="stat-value">${durationStr}</span>
+                        </div>
+                        <div class="activity-card-stat">
+                            <span class="stat-label">Avg Speed</span>
+                            <span class="stat-value">${avgSpeedStr}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="activity-card-footer">
+                    <div class="activity-card-tags">
+                        ${folderBadge}
+                        ${tagsHtml}
+                    </div>
+                    <div class="activity-card-actions">
+                        <button class="btn-icon" onclick="editRouteFromDashboard(${route.id}, event)" title="Edit details">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                        </button>
+                        <button class="btn-icon" onclick="deleteRouteFromDashboard(${route.id}, '${escapeHTML(route.name)}', event)" title="Delete activity">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    // Draw miniature canvases
+    const canvases = gridContainer.querySelectorAll('.activity-mini-canvas');
+    canvases.forEach(canvas => {
+        const routeId = parseInt(canvas.getAttribute('data-route-id'), 10);
+        const route = filtered.find(r => r.id === routeId);
+        if (route && route.simplified_path) {
+            drawRouteMiniature(canvas, route.simplified_path);
+        }
+    });
+}
+
+// Draw a glowing neon route path miniature on a card canvas
+function drawRouteMiniature(canvas, coords) {
+    const ctx = canvas.getContext('2d');
+    
+    // Set actual canvas size to match layout size
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+    
+    if (!coords || coords.length < 2) {
+        // Draw centered placeholder text
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '12px Outfit';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('No route path available', canvas.width / 2, canvas.height / 2);
+        return;
+    }
+    
+    // Find bounds
+    let minLat = Infinity, maxLat = -Infinity;
+    let minLon = Infinity, maxLon = -Infinity;
+    
+    coords.forEach(pt => {
+        const lat = pt[0];
+        const lon = pt[1];
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+    });
+    
+    const latRange = maxLat - minLat;
+    const lonRange = maxLon - minLon;
+    
+    const padding = 30;
+    const w = canvas.width - padding;
+    const h = canvas.height - padding;
+    
+    // Scale factor keeping aspect ratio (correct for mercator aspect ratio approx)
+    const latCos = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180);
+    const lonWidth = lonRange * latCos;
+    const latHeight = latRange;
+    
+    const scaleX = w / (lonWidth || 0.0001);
+    const scaleY = h / (latHeight || 0.0001);
+    const scale = Math.min(scaleX, scaleY);
+    
+    // Center translation
+    const offsetX = (canvas.width - lonWidth * scale) / 2;
+    const offsetY = (canvas.height - latHeight * scale) / 2;
+    
+    // Helper to convert lat/lon to canvas x/y
+    function getCanvasCoords(lat, lon) {
+        const x = offsetX + (lon - minLon) * latCos * scale;
+        // Invert Y axis
+        const y = canvas.height - (offsetY + (lat - minLat) * scale);
+        return [x, y];
+    }
+    
+    // Draw route path
+    ctx.beginPath();
+    const startPoint = getCanvasCoords(coords[0][0], coords[0][1]);
+    ctx.moveTo(startPoint[0], startPoint[1]);
+    
+    for (let i = 1; i < coords.length; i++) {
+        const pt = getCanvasCoords(coords[i][0], coords[i][1]);
+        ctx.lineTo(pt[0], pt[1]);
+    }
+    
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    // High-tech neon glow
+    ctx.shadowColor = 'rgba(0, 240, 255, 0.7)';
+    ctx.shadowBlur = 6;
+    ctx.stroke();
+    
+    // Reset shadow for dots
+    ctx.shadowBlur = 0;
+    
+    // Draw Start Point (Neon Green)
+    const startXY = getCanvasCoords(coords[0][0], coords[0][1]);
+    ctx.beginPath();
+    ctx.arc(startXY[0], startXY[1], 4, 0, 2 * Math.PI);
+    ctx.fillStyle = '#10b981';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    
+    // Draw End Point (Neon Red)
+    const endXY = getCanvasCoords(coords[coords.length - 1][0], coords[coords.length - 1][1]);
+    ctx.beginPath();
+    ctx.arc(endXY[0], endXY[1], 4, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ef4444';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+}
+
+// Delete route shortcut from dashboard card
+async function deleteRouteFromDashboard(routeId, routeName, event) {
+    if (event) event.stopPropagation(); // Prevent opening map
+    if (!confirm(`Are you sure you want to delete "${routeName}"? This action is permanent.`)) return;
+
+    try {
+        const res = await fetch(`/api/routes/${routeId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete route');
+        
+        // If the currently selected route on map was this one, clear it
+        if (currentRoute && currentRoute.id === routeId) {
+            deselectRoute();
+        } else {
+            await loadTags();
+            await loadRoutes();
+        }
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+// Edit route shortcut from dashboard card
+function editRouteFromDashboard(routeId, event) {
+    if (event) event.stopPropagation(); // Prevent opening map
+    
+    // Find route in list
+    const route = routesList.find(r => r.id === routeId);
+    if (!route) return;
+    
+    // Temporarily set currentRoute so the existing modal logic works
+    currentRoute = route;
+    
+    openEditRouteModal();
+}
+
 // Handle GPX File Upload
 async function handleUpload() {
     const form = document.getElementById('upload-form');
@@ -294,6 +663,7 @@ async function handleUpload() {
 // Select a route and load its full details
 async function selectRoute(routeId) {
     stopAnimation();
+    showDashboardView(false); // Switch to Map Mode
 
     try {
         const res = await fetch(`/api/routes/${routeId}`);
@@ -394,11 +764,65 @@ function drawRouteOnMap() {
         .addTo(waypointMarkersGroup);
     });
 
+    // Start and Finish custom SVG Icons
+    const startIcon = L.divIcon({
+        html: `
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="9" fill="#064e3b" stroke="#10b981" stroke-width="2" style="filter: drop-shadow(0 0 3px #10b981);"/>
+            <path d="M10 8.5L15.5 12L10 15.5V8.5Z" fill="#ffffff"/>
+          </svg>
+        `,
+        className: 'custom-map-marker',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+
+    const finishIcon = L.divIcon({
+        html: `
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="9" fill="#7f1d1d" stroke="#ef4444" stroke-width="2" style="filter: drop-shadow(0 0 3px #ef4444);"/>
+            <rect x="9" y="9" width="3" height="3" fill="#ffffff"/>
+            <rect x="12" y="9" width="3" height="3" fill="#111827"/>
+            <rect x="9" y="12" width="3" height="3" fill="#111827"/>
+            <rect x="12" y="12" width="3" height="3" fill="#ffffff"/>
+          </svg>
+        `,
+        className: 'custom-map-marker',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+    });
+
+    // Draw Start and Finish Markers
+    if (trackCoordinates.length > 0) {
+        const startPoint = trackCoordinates[0];
+        const finishPoint = trackCoordinates[trackCoordinates.length - 1];
+
+        L.marker(startPoint, { icon: startIcon, zIndexOffset: 1000 })
+            .bindPopup('<strong>Start Point</strong>')
+            .addTo(waypointMarkersGroup);
+
+        L.marker(finishPoint, { icon: finishIcon, zIndexOffset: 1000 })
+            .bindPopup('<strong>Finish Point</strong>')
+            .addTo(waypointMarkersGroup);
+    }
+
     // Zoom Map to Route Bounds
     map.fitBounds(routePolyline.getBounds(), { padding: [30, 30] });
 
     // Show animation controls
     document.getElementById('animation-controller-overlay').classList.remove('hidden');
+}
+
+// Helper to calculate distance in meters between two lat/lon coordinates using Haversine formula
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // Radius of Earth in meters
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
 }
 
 // ----------------------------------------------------
@@ -431,16 +855,94 @@ function prepareAnimationPoints() {
         });
     });
 
-    // If GPX has no time, space points equally (1s interval)
+    if (animationPoints.length === 0) return;
+
+    // Get selected animation mode (realtime or smooth)
+    const modeSelect = document.getElementById('mode-select');
+    const animationMode = modeSelect ? modeSelect.value : (localStorage.getItem('blaeu_animation_mode') || 'realtime');
+
+    // If GPX has no time, space points equally (2s interval)
     const hasTimestamps = animationPoints.some(p => p.elapsed > 0);
     if (!hasTimestamps) {
         animationPoints.forEach((pt, idx) => {
             pt.elapsed = idx * 2.0; // Space points by 2 seconds
         });
+    } else if (animationMode === 'smooth') {
+        // "Smooth" Mode: Filter out stationary periods and play back at constant speed
+        const maxStationaryRadius = 15; // meters
+        const activePoints = [];
+        activePoints.push({ ...animationPoints[0] });
+
+        for (let i = 1; i < animationPoints.length; i++) {
+            const lastActive = activePoints[activePoints.length - 1];
+            const pt = animationPoints[i];
+            const d = getDistanceMeters(lastActive.lat, lastActive.lon, pt.lat, pt.lon);
+            if (d >= maxStationaryRadius) {
+                activePoints.push({ ...pt });
+            }
+        }
+        
+        // Ensure last point is included to reach the exact finish line
+        if (animationPoints.length > 1) {
+            const lastPt = animationPoints[animationPoints.length - 1];
+            const lastActive = activePoints[activePoints.length - 1];
+            if (lastActive.lat !== lastPt.lat || lastActive.lon !== lastPt.lon) {
+                activePoints.push({ ...lastPt });
+            }
+        }
+
+        // Calculate cumulative distance and elapsed time based on constant average moving speed
+        let cumulativeDistance = 0;
+        const distances = [0];
+        for (let i = 1; i < activePoints.length; i++) {
+            const p1 = activePoints[i - 1];
+            const p2 = activePoints[i];
+            const d = getDistanceMeters(p1.lat, p1.lon, p2.lat, p2.lon);
+            cumulativeDistance += d;
+            distances.push(cumulativeDistance);
+        }
+
+        let speed = (currentRoute && currentRoute.avg_moving_speed) ? currentRoute.avg_moving_speed : 5.0;
+        if (speed <= 0) {
+            speed = 5.0;
+        }
+
+        for (let i = 0; i < activePoints.length; i++) {
+            activePoints[i].elapsed = distances[i] / speed;
+        }
+        animationPoints = activePoints;
+    } else {
+        // "Real-Time" Mode: Play back based on actual progression through time, slowing/speeding as recorded
+        let adjustedElapsed = 0;
+        const processedPoints = [];
+        processedPoints.push({ ...animationPoints[0], elapsed: 0 });
+
+        for (let i = 1; i < animationPoints.length; i++) {
+            const pt = animationPoints[i];
+            const prevPt = animationPoints[i - 1];
+            let dt = pt.elapsed - prevPt.elapsed;
+            // Cap extreme gaps (e.g. GPS signal lost/restored) to 2.0s to avoid animation jumps.
+            // We set the threshold to 120s to ensure sparse tracks (e.g. with 60s intervals) are not compressed.
+            if (dt > 120.0) {
+                dt = 2.0;
+            }
+            adjustedElapsed += dt;
+            processedPoints.push({
+                ...pt,
+                elapsed: adjustedElapsed
+            });
+        }
+        animationPoints = processedPoints;
     }
 
     // Smooth the points to reduce animation/camera jitter
     animationPoints = smoothAnimationPoints(animationPoints, 7);
+
+    // Update static routePolyline coordinate set to match current animation profile (Real-Time vs Smooth)
+    if (routePolyline) {
+        const drawCoords = animationPoints.map(p => [p.lat, p.lon]);
+        routePolyline.setLatLngs(drawCoords);
+    }
 
     totalDuration = animationPoints[animationPoints.length - 1].elapsed;
     currentTime = 0;
@@ -728,19 +1230,46 @@ async function exportVideo() {
     const fpsSelect = document.getElementById('fps-select');
     const fps = fpsSelect ? parseInt(fpsSelect.value, 10) : 30;
 
+    const formatSelect = document.getElementById('format-select');
+    const userSelectedFormat = formatSelect ? formatSelect.value : 'video/webm'; // 'video/webm' or 'video/mp4'
+    
+    let recorderMimeType = 'video/webm';
+    if (userSelectedFormat === 'video/mp4') {
+        if (MediaRecorder.isTypeSupported('video/mp4;codecs=h264')) {
+            recorderMimeType = 'video/mp4;codecs=h264';
+        } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+            recorderMimeType = 'video/mp4';
+        } else {
+            // No native MP4 support (Chrome/Firefox): record WebM and convert on server
+            if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+                recorderMimeType = 'video/webm;codecs=vp9';
+            } else {
+                recorderMimeType = 'video/webm';
+            }
+        }
+    } else { // WebM
+        if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+            recorderMimeType = 'video/webm;codecs=vp9';
+        } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+            recorderMimeType = 'video/webm;codecs=vp8';
+        } else {
+            recorderMimeType = 'video/webm';
+        }
+    }
+
     const stream = canvas.captureStream(fps);
     let recorder;
     
-    // WebM options configured with the resolution-appropriate high bitrate
+    // MediaRecorder configured with the resolution-appropriate high bitrate and resolved format
     try {
         recorder = new MediaRecorder(stream, { 
-            mimeType: 'video/webm;codecs=vp9',
+            mimeType: recorderMimeType,
             videoBitsPerSecond: videoBitrate
         });
     } catch (e) {
         try {
+            // fallback
             recorder = new MediaRecorder(stream, { 
-                mimeType: 'video/webm',
                 videoBitsPerSecond: videoBitrate
             });
         } catch (e2) {
@@ -750,40 +1279,81 @@ async function exportVideo() {
         }
     }
 
+    recorder.onerror = (event) => {
+        console.error("MediaRecorder error:", event.error);
+        alert(`Video recording error: ${event.error.message || event.error.name || 'Unknown error'}`);
+        modal.classList.add('hidden');
+    };
+
     const recordedChunks = [];
     recorder.ondataavailable = (e) => {
         if (e.data.size > 0) recordedChunks.push(e.data);
     };
 
+    // Calculate target video duration based on the activity total duration and the selected speed multiplier
+    const targetVideoDuration = totalDuration / speedMultiplier;
+    const totalFrames = Math.ceil(targetVideoDuration * fps);
+
+    // We always use virtual time to guarantee every frame is captured at the configured FPS.
+    // The server-side transcoding fixes timestamps and duration to match real-time playback.
+    const useVirtualTime = true;
+
     recorder.onstop = () => {
         statusText.textContent = 'Saving video file...';
-        const rawBlob = new Blob(recordedChunks, { type: 'video/webm' });
-        const recordedDuration = Date.now() - recordStartTime;
+        
+        // Determine the actual recorded MIME type
+        const actualMimeType = recorder.mimeType || recorderMimeType;
+        const isActuallyWebM = actualMimeType.includes('webm');
+        
+        const rawBlob = new Blob(recordedChunks, { type: isActuallyWebM ? 'video/webm' : 'video/mp4' });
 
-        const downloadBlob = (blobToDownload) => {
+        const downloadBlob = (blobToDownload, ext) => {
             const url = URL.createObjectURL(blobToDownload);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-animation.webm`;
+            a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}-animation.${ext}`;
             a.click();
             // Hide Modal
             modal.classList.add('hidden');
         };
 
-        if (typeof ysFixWebmDuration === 'function') {
-            statusText.textContent = 'Optimizing video duration metadata...';
-            ysFixWebmDuration(rawBlob, recordedDuration, (fixedBlob) => {
-                downloadBlob(fixedBlob);
-            });
-        } else {
-            downloadBlob(rawBlob);
-        }
+        const fallbackDownload = () => {
+            if (isActuallyWebM && typeof ysFixWebmDuration === 'function') {
+                statusText.textContent = 'Optimizing video duration metadata...';
+                ysFixWebmDuration(rawBlob, targetVideoDuration * 1000, (fixedBlob) => {
+                    downloadBlob(fixedBlob, 'webm');
+                });
+            } else {
+                downloadBlob(rawBlob, isActuallyWebM ? 'webm' : 'mp4');
+            }
+        };
+
+        statusText.textContent = 'Processing video on server...';
+        const formData = new FormData();
+        const ext = userSelectedFormat === 'video/mp4' ? 'mp4' : 'webm';
+        formData.append('file', rawBlob, `animation.${isActuallyWebM ? 'webm' : 'mp4'}`);
+        formData.append('fps', fps);
+        formData.append('format', ext);
+        formData.append('bitrate', videoBitrate);
+        
+        fetch('/api/convert-video', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => {
+            if (!res.ok) throw new Error('Transcoding failed');
+            return res.blob();
+        })
+        .then(processedBlob => {
+            downloadBlob(processedBlob, ext);
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Server processing failed. Downloading original video instead.');
+            fallbackDownload();
+        });
     };
 
-    // Calculate target video duration based on the activity total duration and the selected speed multiplier
-    const targetVideoDuration = totalDuration / speedMultiplier;
-    const totalFrames = targetVideoDuration * fps;
-    
     const recordStartTime = Date.now();
     recorder.start();
 
@@ -798,11 +1368,9 @@ async function exportVideo() {
     }
 
     let currentFrame = 0;
-    const startTime = performance.now();
 
     function drawFrame() {
-        const elapsedRealTime = (performance.now() - startTime) / 1000;
-        let ratio = elapsedRealTime / targetVideoDuration;
+        let ratio = currentFrame / totalFrames;
         if (ratio > 1.0) {
             ratio = 1.0;
         }
@@ -907,6 +1475,58 @@ async function exportVideo() {
             ctx.stroke();
         });
 
+        // 4b. Draw Start and Finish markers on Canvas
+        if (animationPoints.length > 0) {
+            // Draw Start Marker (Neon Green circle with white play triangle)
+            const startPt = animationPoints[0];
+            const startPos = latLngToCanvasPx(startPt.lat, startPt.lon);
+            
+            ctx.beginPath();
+            ctx.arc(startPos.x, startPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#064e3b';
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            // Draw Play Triangle
+            ctx.beginPath();
+            const sz = 3.5 * scaleFactor;
+            ctx.moveTo(startPos.x - sz * 0.6, startPos.y - sz);
+            ctx.lineTo(startPos.x + sz, startPos.y);
+            ctx.lineTo(startPos.x - sz * 0.6, startPos.y + sz);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            // Draw Finish Marker (Neon Red circle with 2x2 Checkerboard pattern in center)
+            const finishPt = animationPoints[animationPoints.length - 1];
+            const finishPos = latLngToCanvasPx(finishPt.lat, finishPt.lon);
+            
+            ctx.beginPath();
+            ctx.arc(finishPos.x, finishPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#7f1d1d';
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            // Draw 2x2 Checkerboard in center
+            const sq = 3 * scaleFactor;
+            // Top-left
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x - sq, finishPos.y - sq, sq, sq);
+            // Top-right
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x, finishPos.y - sq, sq, sq);
+            // Bottom-left
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x - sq, finishPos.y, sq, sq);
+            // Bottom-right
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x, finishPos.y, sq, sq);
+        }
+
         // 5. Draw Active Neon Indicator Marker
         ctx.beginPath();
         ctx.arc(activePos.x, activePos.y, 7 * scaleFactor, 0, 2 * Math.PI);
@@ -928,19 +1548,26 @@ async function exportVideo() {
         currentFrame++;
         const totalProgress = 30 + Math.round(ratio * 70); // 30-100% progress
         fill.style.width = `${totalProgress}%`;
-        statusText.textContent = `Rendering frame ${currentFrame} at ${(elapsedRealTime).toFixed(1)}s / ${targetVideoDuration}s...`;
+        
+        const displayTime = ratio * targetVideoDuration;
+        statusText.textContent = `Rendering frame ${currentFrame}/${totalFrames} at ${displayTime.toFixed(1)}s / ${targetVideoDuration.toFixed(1)}s...`;
 
-        if (elapsedRealTime >= targetVideoDuration) {
-            recorder.stop();
+        if (currentFrame > totalFrames) {
+            try {
+                if (recorder && recorder.state !== 'inactive') {
+                    recorder.stop();
+                } else {
+                    modal.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error("Error stopping recorder:", err);
+                modal.classList.add('hidden');
+            }
             return;
         }
 
-        // Schedule next frame to match the target frame intervals
-        const targetNextFrameTime = ((currentFrame + 1) * 1000) / fps;
-        const actualElapsedMs = performance.now() - startTime;
-        const delay = Math.max(0, targetNextFrameTime - actualElapsedMs);
-
-        setTimeout(drawFrame, delay);
+        // Schedule next frame to match the target capture rate, preventing frame drops in MediaRecorder
+        setTimeout(drawFrame, 1000 / fps);
     }
 
     // Start drawing loops
@@ -982,6 +1609,43 @@ async function renderFoldersList() {
 
 function closeFoldersModal() {
     document.getElementById('folders-modal').classList.add('hidden');
+}
+
+// Settings Modal Operations
+function openSettingsModal() {
+    document.getElementById('settings-modal').classList.remove('hidden');
+}
+
+function closeSettingsModal() {
+    document.getElementById('settings-modal').classList.add('hidden');
+}
+
+function initSettingsFormats() {
+    const formatSelect = document.getElementById('format-select');
+    if (!formatSelect) return;
+    
+    formatSelect.innerHTML = '';
+    
+    // Always offer WebM (.webm)
+    const optWebm = document.createElement('option');
+    optWebm.value = 'video/webm';
+    optWebm.textContent = 'WebM (.webm)';
+    formatSelect.appendChild(optWebm);
+
+    // Always offer MP4 (.mp4)
+    const optMp4 = document.createElement('option');
+    optMp4.value = 'video/mp4';
+    optMp4.textContent = 'MP4 (.mp4)';
+    formatSelect.appendChild(optMp4);
+    
+    // Restore saved format preference
+    const savedFormat = localStorage.getItem('blaeu_video_format');
+    if (savedFormat) {
+        const hasOption = Array.from(formatSelect.options).some(opt => opt.value === savedFormat);
+        if (hasOption) {
+            formatSelect.value = savedFormat;
+        }
+    }
 }
 
 async function handleCreateFolder(e) {
@@ -1062,8 +1726,12 @@ async function handleEditRoute(e) {
         await loadTags();
         await loadRoutes();
         
-        // Refresh details
-        await selectRoute(currentRoute.id);
+        // Refresh details if in Map Mode, otherwise clear temp selection
+        if (document.getElementById('dashboard-view').classList.contains('hidden')) {
+            await selectRoute(currentRoute.id);
+        } else {
+            currentRoute = null;
+        }
     } catch (err) {
         alert(err.message);
     }

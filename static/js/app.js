@@ -3,6 +3,8 @@
 // Global Application State
 let map = null;
 let currentRoute = null;
+let originalStartPoint = null;
+let originalFinishPoint = null;
 let routesList = [];
 let foldersList = [];
 let activeFolderFilter = '';
@@ -172,6 +174,22 @@ function initAppEvents() {
     if (formatSelect) {
         formatSelect.addEventListener('change', (e) => {
             localStorage.setItem('blaeu_video_format', e.target.value);
+        });
+    }
+
+    // Load and bind Privacy Settings
+    const privacySelect = document.getElementById('privacy-select');
+    const savedPrivacy = localStorage.getItem('blaeu_privacy_distance');
+    if (savedPrivacy && privacySelect) {
+        privacySelect.value = savedPrivacy;
+    }
+    if (privacySelect) {
+        privacySelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_privacy_distance', e.target.value);
+            if (currentRoute) {
+                drawRouteOnMap();
+                prepareAnimationPoints();
+            }
         });
     }
 
@@ -491,6 +509,27 @@ function drawRouteMiniature(canvas, coords) {
         return;
     }
     
+    const privacyDistance = getPrivacyDistance();
+    if (privacyDistance > 0 && coords.length > 0) {
+        const originalStart = coords[0];
+        const originalFinish = coords[coords.length - 1];
+        const filtered = coords.filter(pt => {
+            const dStart = getDistanceMeters(pt[0], pt[1], originalStart[0], originalStart[1]);
+            const dFinish = getDistanceMeters(pt[0], pt[1], originalFinish[0], originalFinish[1]);
+            return dStart > privacyDistance && dFinish > privacyDistance;
+        });
+        if (filtered.length >= 2) {
+            coords = filtered;
+        } else {
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '12px Outfit';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Route within privacy zone', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+    }
+    
     // Find bounds
     let minLat = Infinity, maxLat = -Infinity;
     let minLon = Infinity, maxLon = -Infinity;
@@ -672,6 +711,7 @@ async function selectRoute(routeId) {
         if (!res.ok) throw new Error('Could not load route details');
         
         currentRoute = await res.json();
+        setOriginalStartAndFinishPoints(currentRoute);
         
         // Update sidebar selection styling
         renderRoutesLedger();
@@ -727,7 +767,7 @@ function drawRouteOnMap() {
     const trackCoordinates = [];
     
     // Draw Tracks
-    currentRoute.tracks.forEach(track => {
+    getFilteredTracks().forEach(track => {
         track.segments.forEach(segment => {
             const segCoords = segment.map(pt => [pt.lat, pt.lon]);
             trackCoordinates.push(...segCoords);
@@ -754,7 +794,7 @@ function drawRouteOnMap() {
     }).addTo(map);
 
     // Draw Waypoints as modern glowing purple markers
-    currentRoute.waypoints.forEach(wpt => {
+    getFilteredWaypoints().forEach(wpt => {
         L.circleMarker([wpt.lat, wpt.lon], {
             radius: 5,
             color: '#00f0ff',
@@ -827,6 +867,91 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
     return R * c;
 }
 
+function getPrivacyDistance() {
+    const val = localStorage.getItem('blaeu_privacy_distance');
+    return val ? parseInt(val, 10) : 0;
+}
+
+function setOriginalStartAndFinishPoints(route) {
+    originalStartPoint = null;
+    originalFinishPoint = null;
+    if (!route || !route.tracks || route.tracks.length === 0) return;
+    
+    // Find first point
+    for (const track of route.tracks) {
+        for (const segment of track.segments) {
+            if (segment.length > 0) {
+                const pt = segment[0];
+                originalStartPoint = { lat: pt.lat, lon: pt.lon };
+                break;
+            }
+        }
+        if (originalStartPoint) break;
+    }
+    
+    // Find last point
+    for (let i = route.tracks.length - 1; i >= 0; i--) {
+        const track = route.tracks[i];
+        for (let j = track.segments.length - 1; j >= 0; j--) {
+            const segment = track.segments[j];
+            if (segment.length > 0) {
+                const pt = segment[segment.length - 1];
+                originalFinishPoint = { lat: pt.lat, lon: pt.lon };
+                break;
+            }
+        }
+        if (originalFinishPoint) break;
+    }
+}
+
+function getFilteredTracks() {
+    if (!currentRoute || !currentRoute.tracks || currentRoute.tracks.length === 0) {
+        return [];
+    }
+    const privacyDistance = getPrivacyDistance();
+    if (privacyDistance === 0 || !originalStartPoint || !originalFinishPoint) {
+        return currentRoute.tracks;
+    }
+    
+    const filteredTracks = [];
+    currentRoute.tracks.forEach(track => {
+        const filteredSegments = [];
+        track.segments.forEach(segment => {
+            const filteredSegment = segment.filter(pt => {
+                const dStart = getDistanceMeters(pt.lat, pt.lon, originalStartPoint.lat, originalStartPoint.lon);
+                const dFinish = getDistanceMeters(pt.lat, pt.lon, originalFinishPoint.lat, originalFinishPoint.lon);
+                return dStart > privacyDistance && dFinish > privacyDistance;
+            });
+            if (filteredSegment.length > 0) {
+                filteredSegments.push(filteredSegment);
+            }
+        });
+        if (filteredSegments.length > 0) {
+            filteredTracks.push({
+                ...track,
+                segments: filteredSegments
+            });
+        }
+    });
+    return filteredTracks;
+}
+
+function getFilteredWaypoints() {
+    if (!currentRoute || !currentRoute.waypoints) {
+        return [];
+    }
+    const privacyDistance = getPrivacyDistance();
+    if (privacyDistance === 0 || !originalStartPoint || !originalFinishPoint) {
+        return currentRoute.waypoints;
+    }
+    
+    return currentRoute.waypoints.filter(wpt => {
+        const dStart = getDistanceMeters(wpt.lat, wpt.lon, originalStartPoint.lat, originalStartPoint.lon);
+        const dFinish = getDistanceMeters(wpt.lat, wpt.lon, originalFinishPoint.lat, originalFinishPoint.lon);
+        return dStart > privacyDistance && dFinish > privacyDistance;
+    });
+}
+
 // ----------------------------------------------------
 // Playback Animation Logic
 // ----------------------------------------------------
@@ -836,7 +961,7 @@ function prepareAnimationPoints() {
     let startTimestamp = null;
     
     // Flatten track coordinates
-    currentRoute.tracks.forEach(track => {
+    getFilteredTracks().forEach(track => {
         track.segments.forEach(segment => {
             segment.forEach(pt => {
                 let elapsed = 0;
@@ -1466,7 +1591,7 @@ async function exportVideo() {
         ctx.stroke();
 
         // 4. Draw Waypoints circles (neon purple with cyan border)
-        currentRoute.waypoints.forEach(wpt => {
+        getFilteredWaypoints().forEach(wpt => {
             const pos = latLngToCanvasPx(wpt.lat, wpt.lon);
             ctx.beginPath();
             ctx.arc(pos.x, pos.y, 5 * scaleFactor, 0, 2 * Math.PI);

@@ -97,6 +97,18 @@ def init_db():
         FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
     );
     """)
+
+    # Create Garmin Connections Table (supporting multi-user readiness via user_id)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS garmin_connections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER DEFAULT 1,
+        email TEXT NOT NULL,
+        display_name TEXT,
+        last_sync TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
     
     # Backfill timezone, start_time, and simplified_path for existing routes where they are NULL
     cursor.execute("SELECT id, file_path, created_at, timezone, simplified_path FROM routes WHERE timezone IS NULL OR simplified_path IS NULL;")
@@ -373,3 +385,53 @@ def get_all_tags():
     tags = [dict(row) for row in rows]
     conn.close()
     return tags
+
+# Helper Functions for Garmin Connections
+def save_garmin_connection(user_id, email, display_name):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM garmin_connections WHERE user_id = ?", (user_id,))
+        cursor.execute("""
+            INSERT INTO garmin_connections (user_id, email, display_name)
+            VALUES (?, ?, ?)
+        """, (user_id, email, display_name))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_garmin_connection(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM garmin_connections WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_garmin_connection(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM garmin_connections WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def update_garmin_last_sync(user_id, last_sync_time):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE garmin_connections SET last_sync = ? WHERE user_id = ?", (last_sync_time, user_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()

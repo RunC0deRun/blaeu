@@ -275,3 +275,223 @@ def test_convert_video_webm_endpoint(client, monkeypatch):
     assert '-b:v' in call_args
     assert '12000000' in call_args
 
+
+def test_garmin_status_initially_disconnected(client):
+    res = client.get('/api/garmin/status')
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['status'] == 'disconnected'
+
+
+def test_garmin_connect_mfa_required(client, monkeypatch):
+    from unittest.mock import MagicMock
+    from app import MfaRequiredException
+    
+    mock_garmin = MagicMock()
+    # First call throws MFA exception
+    def mock_login(*args, **kwargs):
+        raise MfaRequiredException()
+        
+    mock_garmin.return_value.login = mock_login
+    monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
+    
+    res = client.post('/api/garmin/connect', json={'email': 'test@example.com', 'password': 'password123'})
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['status'] == 'mfa_required'
+
+
+def test_garmin_connect_success(client, monkeypatch):
+    from unittest.mock import MagicMock
+    
+    mock_garmin = MagicMock()
+    mock_garmin.return_value.display_name = 'Garmin Champ'
+    
+    monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
+    
+    res = client.post('/api/garmin/connect', json={
+        'email': 'test@example.com', 
+        'password': 'password123',
+        'mfa_code': '123456'
+    })
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['status'] == 'connected'
+    assert data['display_name'] == 'Garmin Champ'
+    
+    # Check status endpoint now returns connected
+    status_res = client.get('/api/garmin/status')
+    assert status_res.status_code == 200
+    status_data = json.loads(status_res.data)
+    assert status_data['status'] == 'connected'
+    assert status_data['email'] == 'test@example.com'
+    assert status_data['display_name'] == 'Garmin Champ'
+
+
+def test_garmin_disconnect(client, monkeypatch):
+    import db
+    db.save_garmin_connection(1, 'test@example.com', 'Garmin Champ')
+    
+    res = client.post('/api/garmin/disconnect')
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['status'] == 'disconnected'
+    
+    # Verify connection is deleted from DB
+    connection = db.get_garmin_connection(1)
+    assert connection is None
+
+
+def test_garmin_activities_not_connected(client):
+    res = client.get('/api/garmin/activities')
+    assert res.status_code == 400
+    data = json.loads(res.data)
+    assert 'Garmin not connected' in data['error']
+
+
+def test_garmin_activities_success(client, monkeypatch):
+    from unittest.mock import MagicMock
+    import db
+    
+    db.save_garmin_connection(1, 'test@example.com', 'Garmin Champ')
+    
+    mock_garmin = MagicMock()
+    mock_garmin.return_value.get_activities_by_limit.return_value = [
+        {
+            'activityId': '98765',
+            'activityName': 'Morning Run',
+            'activityType': {'typeKey': 'running'},
+            'startTimeLocal': '2026-05-25 08:00:00',
+            'distance': 10000.0,
+            'duration': 3600.0
+        }
+    ]
+    monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
+    
+    res = client.get('/api/garmin/activities')
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['status'] == 'success'
+    assert len(data['activities']) == 1
+    assert data['activities'][0]['activityId'] == '98765'
+    assert data['activities'][0]['activityName'] == 'Morning Run'
+    assert data['activities'][0]['activityType'] == 'running'
+
+
+def test_garmin_activities_expired(client, monkeypatch):
+    from unittest.mock import MagicMock
+    import db
+    
+    db.save_garmin_connection(1, 'test@example.com', 'Garmin Champ')
+    
+    mock_garmin = MagicMock()
+    # login raises exception simulating expired token
+    mock_garmin.return_value.login.side_effect = Exception('Token expired')
+    monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
+    
+    res = client.get('/api/garmin/activities')
+    assert res.status_code == 401
+    data = json.loads(res.data)
+    assert data['status'] == 'needs_reauthentication'
+
+
+def test_garmin_import_success(client, monkeypatch):
+    from unittest.mock import MagicMock
+    import db
+    
+    # Set up active connection in DB
+    db.save_garmin_connection(1, 'test@example.com', 'Garmin Champ')
+    
+    mock_garmin = MagicMock()
+    mock_garmin.return_value.download_activity.return_value = GPX_DATA_1.encode('utf-8')
+    monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
+    
+    res = client.post('/api/garmin/import', json={'activityId': '123456789'})
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    assert data['status'] == 'success'
+    assert data['route_id'] is not None
+    assert 'Route A' in data['name']
+    
+    # Verify the route actually exists in routes list
+    routes_res = client.get('/api/routes')
+    routes = json.loads(routes_res.data)
+    assert len(routes) == 1
+    assert routes[0]['name'] == 'Route A'
+
+
+def test_garmin_connect_rate_limit(client, monkeypatch):
+    from unittest.mock import MagicMock
+    from garminconnect.exceptions import GarminConnectTooManyRequestsError
+    
+    mock_garmin = MagicMock()
+    mock_garmin.return_value.login.side_effect = GarminConnectTooManyRequestsError("Too many login attempts.")
+    monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
+    
+    res = client.post('/api/garmin/connect', json={
+        'email': 'test@example.com',
+        'password': 'password123'
+    })
+    assert res.status_code == 429
+    data = json.loads(res.data)
+    assert "Too many login attempts" in data['error']
+
+
+def test_garmin_activities_rate_limit(client, monkeypatch):
+    from unittest.mock import MagicMock
+    from garminconnect.exceptions import GarminConnectTooManyRequestsError
+    import db
+    
+    db.save_garmin_connection(1, 'test@example.com', 'Garmin Champ')
+    
+    mock_garmin = MagicMock()
+    mock_garmin.return_value.login.side_effect = GarminConnectTooManyRequestsError("Rate limited during login.")
+    monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
+    
+    res = client.get('/api/garmin/activities')
+    assert res.status_code == 429
+    data = json.loads(res.data)
+    assert "Rate limit exceeded by Garmin" in data['error']
+    
+    # Verify we did NOT clear the connection
+    assert db.get_garmin_connection(1) is not None
+
+
+def test_garmin_import_rate_limit(client, monkeypatch):
+    from unittest.mock import MagicMock
+    from garminconnect.exceptions import GarminConnectTooManyRequestsError
+    import db
+    
+    db.save_garmin_connection(1, 'test@example.com', 'Garmin Champ')
+    
+    mock_garmin = MagicMock()
+    mock_garmin.return_value.login.side_effect = GarminConnectTooManyRequestsError("Rate limited during login.")
+    monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
+    
+    res = client.post('/api/garmin/import', json={'activityId': '123456789'})
+    assert res.status_code == 429
+    data = json.loads(res.data)
+    assert "Garmin import failed" in data['error']
+
+
+def test_garmin_connect_fallback_rate_limit(client, monkeypatch):
+    from unittest.mock import MagicMock
+    from garminconnect.exceptions import GarminConnectAuthenticationError
+    
+    mock_garmin = MagicMock()
+    # Mock login to succeed, but di_token is None (fallback case)
+    mock_garmin.return_value.client.di_token = None
+    monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
+    
+    res = client.post('/api/garmin/connect', json={
+        'email': 'test@example.com', 
+        'password': 'password123',
+        'mfa_code': '123456'
+    })
+    # Should fail with 401 and explain DI OAuth token failure
+    assert res.status_code == 401
+    data = json.loads(res.data)
+    assert "failed to acquire persistent DI OAuth tokens" in data['error']
+
+
+

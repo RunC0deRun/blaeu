@@ -360,10 +360,76 @@
                             <!-- Populated dynamically via JS -->
                         </select>
                     </div>
-                    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+                    
+                    <hr style="border-color: rgba(255,255,255,0.1); margin: 20px 0;">
+                    <h4 style="color: var(--primary); margin-bottom: 12px; font-family: 'Outfit', sans-serif;">Garmin Integration</h4>
+                    <div id="garmin-disconnected-section">
+                        <p style="font-size: 0.85em; opacity: 0.7; margin-bottom: 12px; line-height: 1.4;">Connect your Garmin account to pull activities directly. Your password is processed in memory and never saved to the database.</p>
+                        <div class="form-group">
+                            <label for="garmin-email">Garmin Email</label>
+                            <input type="email" id="garmin-email" placeholder="email@example.com" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.2); color: #fff;">
+                        </div>
+                        <div class="form-group" style="margin-top: 10px;">
+                            <label for="garmin-password">Garmin Password</label>
+                            <input type="password" id="garmin-password" placeholder="••••••••" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.2); color: #fff;">
+                        </div>
+                        
+                        <!-- MFA Code (hidden by default) -->
+                        <div class="form-group hidden" id="garmin-mfa-container" style="margin-top: 10px;">
+                            <label for="garmin-mfa" style="color: var(--secondary);">MFA Verification Code</label>
+                            <input type="text" id="garmin-mfa" placeholder="Enter one-time code" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid var(--secondary); background: rgba(0,0,0,0.2); color: #fff;">
+                        </div>
+                        
+                        <button type="button" class="btn btn-primary" id="garmin-connect-btn" style="width: 100%; margin-top: 15px;">Connect Garmin</button>
+                    </div>
+                    <div id="garmin-connected-section" class="hidden">
+                        <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--secondary); padding: 12px; border-radius: 6px; margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between;">
+                            <div>
+                                <strong style="color: var(--secondary); display: block; font-size: 0.95em;" id="garmin-connected-name">Garmin Connected</strong>
+                                <span style="font-size: 0.8em; opacity: 0.8;" id="garmin-connected-email">user@example.com</span>
+                            </div>
+                            <span style="background: var(--secondary); color: #fff; font-size: 0.75em; padding: 2px 8px; border-radius: 20px; font-weight: bold;">Active</span>
+                        </div>
+                        <button type="button" class="btn btn-primary" id="garmin-sync-btn" style="width: 100%; margin-bottom: 10px;">
+                            <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: middle; margin-right: 4px;"><path d="M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z" fill="currentColor"/></svg>
+                            Sync Garmin Activities
+                        </button>
+                        <button type="button" class="btn btn-outline" id="garmin-disconnect-btn" style="width: 100%; border-color: #ef4444; color: #ef4444;">Disconnect</button>
+                    </div>
+                    
+                    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
                         <button type="button" class="btn btn-primary" id="close-settings-btn">Save & Close</button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Garmin Activities Modal -->
+    <div class="modal hidden" id="garmin-activities-modal" style="z-index: 2005;">
+        <div class="modal-content card" style="max-width: 800px; width: 90%;">
+            <h3 class="card-title">Garmin Activities</h3>
+            <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+                <table class="garmin-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px; text-align: center;"><input type="checkbox" id="garmin-select-all"></th>
+                            <th>Date</th>
+                            <th>Activity Name</th>
+                            <th>Type</th>
+                            <th>Distance</th>
+                            <th>Duration</th>
+                            <th style="text-align: right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="garmin-activities-list">
+                        <!-- Populated dynamically via JS -->
+                    </tbody>
+                </table>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
+                <button type="button" class="btn btn-primary" id="garmin-import-selected-btn">Import Selected</button>
+                <button type="button" class="btn btn-outline" id="close-garmin-activities-btn">Close</button>
             </div>
         </div>
     </div>

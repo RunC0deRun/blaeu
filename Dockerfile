@@ -5,7 +5,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install system dependencies if any are needed (none currently required for Flask/Gunicorn wheels)
+# Install system dependencies (including FFmpeg for video transcoding)
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+
 # Copy requirements first to leverage caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import json
 from datetime import datetime, timezone as tz
 from zoneinfo import ZoneInfo
 
@@ -48,6 +49,7 @@ def init_db():
         folder_id INTEGER,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         timezone TEXT,
+        simplified_path TEXT,
         total_distance REAL,
         elevation_gain REAL,
         elevation_loss REAL,
@@ -63,12 +65,17 @@ def init_db():
     );
     """)
 
-    # Ensure timezone column exists (migration for existing DBs)
+    # Ensure timezone and simplified_path columns exist (migration for existing DBs)
     cursor.execute("PRAGMA table_info(routes);")
     columns = [row['name'] for row in cursor.fetchall()]
     if 'timezone' not in columns:
         try:
             cursor.execute("ALTER TABLE routes ADD COLUMN timezone TEXT;")
+        except sqlite3.OperationalError:
+            pass
+    if 'simplified_path' not in columns:
+        try:
+            cursor.execute("ALTER TABLE routes ADD COLUMN simplified_path TEXT;")
         except sqlite3.OperationalError:
             pass
     
@@ -91,8 +98,8 @@ def init_db():
     );
     """)
     
-    # Backfill timezone and start_time for existing routes where timezone is NULL
-    cursor.execute("SELECT id, file_path, created_at FROM routes WHERE timezone IS NULL;")
+    # Backfill timezone, start_time, and simplified_path for existing routes where they are NULL
+    cursor.execute("SELECT id, file_path, created_at, timezone, simplified_path FROM routes WHERE timezone IS NULL OR simplified_path IS NULL;")
     routes_to_backfill = [dict(row) for row in cursor.fetchall()]
     
     if routes_to_backfill:
@@ -105,21 +112,15 @@ def init_db():
                     with open(file_path, 'rb') as f:
                         content = f.read()
                     parsed = parse_gpx(content)
-                    timezone = parsed.get('timezone') or 'UTC'
-                    start_time = parsed.get('start_time')
+                    timezone = parsed.get('timezone') or r['timezone'] or 'UTC'
+                    start_time = parsed.get('start_time') or r['created_at']
+                    simplified_path = json.dumps(parsed.get('simplified_path', []))
                     
-                    if start_time:
-                        cursor.execute("""
-                            UPDATE routes 
-                            SET timezone = ?, created_at = ? 
-                            WHERE id = ?
-                        """, (timezone, start_time, route_id))
-                    else:
-                        cursor.execute("""
-                            UPDATE routes 
-                            SET timezone = ? 
-                            WHERE id = ?
-                        """, (timezone, route_id))
+                    cursor.execute("""
+                        UPDATE routes 
+                        SET timezone = ?, created_at = ?, simplified_path = ? 
+                        WHERE id = ?
+                    """, (timezone, start_time, simplified_path, route_id))
                 except Exception as e:
                     print(f"Error backfilling route {route_id}: {e}")
                     
@@ -144,8 +145,8 @@ def add_route(route_metadata, stats):
             total_distance, elevation_gain, elevation_loss, duration,
             avg_speed, avg_moving_speed, max_speed,
             waypoints_count, tracks_count, segments_count, points_count,
-            timezone, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            timezone, created_at, simplified_path
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             route_metadata['name'],
             route_metadata.get('description'),
@@ -165,7 +166,8 @@ def add_route(route_metadata, stats):
             stats['segments_count'],
             stats['points_count'],
             timezone,
-            created_at
+            created_at,
+            route_metadata.get('simplified_path')
         ))
         route_id = cursor.lastrowid
         conn.commit()
@@ -197,6 +199,14 @@ def get_routes(folder_id=None):
     routes = []
     for row in rows:
         route = dict(row)
+        # Deserialize simplified_path
+        if 'simplified_path' in route and route['simplified_path']:
+            try:
+                route['simplified_path'] = json.loads(route['simplified_path'])
+            except Exception:
+                route['simplified_path'] = []
+        else:
+            route['simplified_path'] = []
         # Fetch tags
         cursor.execute("""
             SELECT t.name FROM tags t
@@ -225,6 +235,14 @@ def get_route(route_id):
         return None
     
     route = dict(row)
+    # Deserialize simplified_path
+    if 'simplified_path' in route and route['simplified_path']:
+        try:
+            route['simplified_path'] = json.loads(route['simplified_path'])
+        except Exception:
+            route['simplified_path'] = []
+    else:
+        route['simplified_path'] = []
     # Fetch tags
     cursor.execute("""
         SELECT t.name FROM tags t

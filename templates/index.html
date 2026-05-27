@@ -326,9 +326,16 @@
     <!-- Video Export Settings Modal -->
     <div class="modal hidden" id="settings-modal">
         <div class="modal-content card">
-            <h3 class="card-title">Video Settings</h3>
+            <h3 class="card-title">Playback & Video Settings</h3>
             <div class="modal-body">
                 <form id="settings-form" onsubmit="event.preventDefault();">
+                    <div class="form-group">
+                        <label for="mode-select">Animation Mode</label>
+                        <select id="mode-select">
+                            <option value="realtime" selected>Real-Time (Time-Based)</option>
+                            <option value="smooth">Smooth (Constant Speed)</option>
+                        </select>
+                    </div>
                     <div class="form-group">
                         <label for="res-select">Resolution</label>
                         <select id="res-select">

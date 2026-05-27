@@ -128,6 +128,21 @@ function initAppEvents() {
     document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
     document.getElementById('close-settings-btn').addEventListener('click', closeSettingsModal);
     
+    // Load and bind Animation Mode Settings
+    const modeSelect = document.getElementById('mode-select');
+    const savedMode = localStorage.getItem('blaeu_animation_mode');
+    if (savedMode && modeSelect) {
+        modeSelect.value = savedMode;
+    }
+    if (modeSelect) {
+        modeSelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_animation_mode', e.target.value);
+            if (currentRoute) {
+                prepareAnimationPoints();
+            }
+        });
+    }
+
     // Load and bind Resolution Settings
     const resSelect = document.getElementById('res-select');
     const savedRes = localStorage.getItem('blaeu_video_res');
@@ -798,6 +813,18 @@ function drawRouteOnMap() {
     document.getElementById('animation-controller-overlay').classList.remove('hidden');
 }
 
+// Helper to calculate distance in meters between two lat/lon coordinates using Haversine formula
+function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // Radius of Earth in meters
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
 // ----------------------------------------------------
 // Playback Animation Logic
 // ----------------------------------------------------
@@ -828,16 +855,94 @@ function prepareAnimationPoints() {
         });
     });
 
-    // If GPX has no time, space points equally (1s interval)
+    if (animationPoints.length === 0) return;
+
+    // Get selected animation mode (realtime or smooth)
+    const modeSelect = document.getElementById('mode-select');
+    const animationMode = modeSelect ? modeSelect.value : (localStorage.getItem('blaeu_animation_mode') || 'realtime');
+
+    // If GPX has no time, space points equally (2s interval)
     const hasTimestamps = animationPoints.some(p => p.elapsed > 0);
     if (!hasTimestamps) {
         animationPoints.forEach((pt, idx) => {
             pt.elapsed = idx * 2.0; // Space points by 2 seconds
         });
+    } else if (animationMode === 'smooth') {
+        // "Smooth" Mode: Filter out stationary periods and play back at constant speed
+        const maxStationaryRadius = 15; // meters
+        const activePoints = [];
+        activePoints.push({ ...animationPoints[0] });
+
+        for (let i = 1; i < animationPoints.length; i++) {
+            const lastActive = activePoints[activePoints.length - 1];
+            const pt = animationPoints[i];
+            const d = getDistanceMeters(lastActive.lat, lastActive.lon, pt.lat, pt.lon);
+            if (d >= maxStationaryRadius) {
+                activePoints.push({ ...pt });
+            }
+        }
+        
+        // Ensure last point is included to reach the exact finish line
+        if (animationPoints.length > 1) {
+            const lastPt = animationPoints[animationPoints.length - 1];
+            const lastActive = activePoints[activePoints.length - 1];
+            if (lastActive.lat !== lastPt.lat || lastActive.lon !== lastPt.lon) {
+                activePoints.push({ ...lastPt });
+            }
+        }
+
+        // Calculate cumulative distance and elapsed time based on constant average moving speed
+        let cumulativeDistance = 0;
+        const distances = [0];
+        for (let i = 1; i < activePoints.length; i++) {
+            const p1 = activePoints[i - 1];
+            const p2 = activePoints[i];
+            const d = getDistanceMeters(p1.lat, p1.lon, p2.lat, p2.lon);
+            cumulativeDistance += d;
+            distances.push(cumulativeDistance);
+        }
+
+        let speed = (currentRoute && currentRoute.avg_moving_speed) ? currentRoute.avg_moving_speed : 5.0;
+        if (speed <= 0) {
+            speed = 5.0;
+        }
+
+        for (let i = 0; i < activePoints.length; i++) {
+            activePoints[i].elapsed = distances[i] / speed;
+        }
+        animationPoints = activePoints;
+    } else {
+        // "Real-Time" Mode: Play back based on actual progression through time, slowing/speeding as recorded
+        let adjustedElapsed = 0;
+        const processedPoints = [];
+        processedPoints.push({ ...animationPoints[0], elapsed: 0 });
+
+        for (let i = 1; i < animationPoints.length; i++) {
+            const pt = animationPoints[i];
+            const prevPt = animationPoints[i - 1];
+            let dt = pt.elapsed - prevPt.elapsed;
+            // Cap extreme gaps (e.g. GPS signal lost/restored) to 2.0s to avoid animation jumps.
+            // We set the threshold to 120s to ensure sparse tracks (e.g. with 60s intervals) are not compressed.
+            if (dt > 120.0) {
+                dt = 2.0;
+            }
+            adjustedElapsed += dt;
+            processedPoints.push({
+                ...pt,
+                elapsed: adjustedElapsed
+            });
+        }
+        animationPoints = processedPoints;
     }
 
     // Smooth the points to reduce animation/camera jitter
     animationPoints = smoothAnimationPoints(animationPoints, 7);
+
+    // Update static routePolyline coordinate set to match current animation profile (Real-Time vs Smooth)
+    if (routePolyline) {
+        const drawCoords = animationPoints.map(p => [p.lat, p.lon]);
+        routePolyline.setLatLngs(drawCoords);
+    }
 
     totalDuration = animationPoints[animationPoints.length - 1].elapsed;
     currentTime = 0;
@@ -1461,8 +1566,8 @@ async function exportVideo() {
             return;
         }
 
-        // Schedule next frame
-        setTimeout(drawFrame, 10);
+        // Schedule next frame to match the target capture rate, preventing frame drops in MediaRecorder
+        setTimeout(drawFrame, 1000 / fps);
     }
 
     // Start drawing loops

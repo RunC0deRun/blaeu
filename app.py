@@ -5,7 +5,8 @@ import json
 from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
 from db import (
     init_db, add_route, get_routes, get_route, update_route, delete_route,
-    create_folder, get_folders, delete_folder, get_all_tags, DATA_DIR, get_db
+    create_folder, get_folders, delete_folder, get_all_tags, DATA_DIR, get_db,
+    save_garmin_connection, get_garmin_connection, delete_garmin_connection, update_garmin_last_sync
 )
 from gpx_parser import parse_gpx
 
@@ -341,7 +342,210 @@ def convert_video():
             try:
                 os.unlink(temp_out_path)
             except Exception:
-                pass
+                pass# Garmin Connect API Integration Endpoints
+from garminconnect.exceptions import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
+
+class MfaRequiredException(GarminConnectAuthenticationError):
+    pass
+
+@app.route('/api/garmin/status', methods=['GET'])
+def get_garmin_status():
+    user_id = 1 # Default single-user
+    connection = get_garmin_connection(user_id)
+    if connection:
+        return jsonify({
+            'status': 'connected',
+            'email': connection['email'],
+            'display_name': connection['display_name'],
+            'last_sync': connection['last_sync']
+        })
+    else:
+        return jsonify({'status': 'disconnected'})
+
+@app.route('/api/garmin/connect', methods=['POST'])
+def connect_garmin():
+    user_id = 1 # Default single-user
+    data = request.json or {}
+    email = data.get('email')
+    password = data.get('password')
+    mfa_code = data.get('mfa_code')
+    
+    if not email or not password:
+        return jsonify({'error': 'Email and password are required'}), 400
+        
+    from garminconnect import Garmin
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    os.makedirs(token_store, exist_ok=True)
+    
+    try:
+        if mfa_code:
+            # Step 2: MFA code is provided, complete login
+            client = Garmin(email, password, prompt_mfa=lambda: mfa_code)
+            client.login(tokenstore=token_store)
+        else:
+            # Step 1: Initial login attempt, raise exception if MFA requested
+            def mfa_callback():
+                raise MfaRequiredException()
+            client = Garmin(email, password, prompt_mfa=mfa_callback)
+            client.login(tokenstore=token_store)
+            
+        if not client.client.di_token:
+            if os.path.exists(token_store):
+                import shutil
+                shutil.rmtree(token_store, ignore_errors=True)
+            raise GarminConnectAuthenticationError(
+                "Garmin connection established, but failed to acquire persistent DI OAuth tokens due to rate limiting. "
+                "Please try again in a few hours."
+            )
+
+        display_name = client.display_name
+        save_garmin_connection(user_id, email, display_name)
+        return jsonify({'status': 'connected', 'display_name': display_name})
+        
+    except MfaRequiredException:
+        return jsonify({'status': 'mfa_required'})
+    except GarminConnectTooManyRequestsError as e:
+        import shutil
+        if os.path.exists(token_store):
+            shutil.rmtree(token_store, ignore_errors=True)
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f"Garmin connection failed: {str(e)}"}), 429
+    except Exception as e:
+        import shutil
+        if os.path.exists(token_store):
+            shutil.rmtree(token_store, ignore_errors=True)
+        import traceback
+        traceback.print_exc()
+        err_msg = str(e)
+        if "429" in err_msg.lower() or "too many requests" in err_msg.lower():
+            return jsonify({'error': f"Garmin connection failed: {err_msg}"}), 429
+        return jsonify({'error': f"Garmin connection failed: {err_msg}"}), 401
+
+@app.route('/api/garmin/disconnect', methods=['POST'])
+def disconnect_garmin():
+    user_id = 1 # Default single-user
+    delete_garmin_connection(user_id)
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    if os.path.exists(token_store):
+        import shutil
+        try:
+            shutil.rmtree(token_store)
+        except Exception:
+            pass
+    return jsonify({'status': 'disconnected'})
+
+@app.route('/api/garmin/activities', methods=['GET'])
+def get_garmin_activities():
+    user_id = 1 # Default single-user
+    connection = get_garmin_connection(user_id)
+    if not connection:
+        return jsonify({'error': 'Garmin not connected'}), 400
+        
+    from garminconnect import Garmin
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    
+    try:
+        client = Garmin()
+        client.login(tokenstore=token_store)
+        activities = client.get_activities(0, 15)
+        
+        # Format activities nicely for frontend UI
+        formatted = []
+        for act in activities:
+            formatted.append({
+                'activityId': act.get('activityId'),
+                'activityName': act.get('activityName'),
+                'activityType': act.get('activityType', {}).get('typeKey'),
+                'startTimeLocal': act.get('startTimeLocal'),
+                'distance': act.get('distance'), # meters
+                'duration': act.get('duration') # seconds
+            })
+        return jsonify({'status': 'success', 'activities': formatted})
+    except GarminConnectTooManyRequestsError as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f"Rate limit exceeded by Garmin: {str(e)}"}), 429
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        err_msg = str(e)
+        if "429" in err_msg.lower() or "too many requests" in err_msg.lower():
+            return jsonify({'error': f"Rate limit exceeded by Garmin: {err_msg}"}), 429
+        # If authentication session tokens expired/revoked, prompt reconnect
+        return jsonify({'status': 'needs_reauthentication', 'error': err_msg}), 401
+
+@app.route('/api/garmin/import', methods=['POST'])
+def import_garmin_activity():
+    user_id = 1 # Default single-user
+    connection = get_garmin_connection(user_id)
+    if not connection:
+        return jsonify({'error': 'Garmin not connected'}), 400
+        
+    data = request.json or {}
+    activity_id = data.get('activityId')
+    if not activity_id:
+        return jsonify({'error': 'activityId is required'}), 400
+        
+    from garminconnect import Garmin
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    
+    try:
+        client = Garmin()
+        client.login(tokenstore=token_store)
+        
+        # Download activity GPX
+        gpx_bytes = client.download_activity(activity_id, dl_fmt=Garmin.ActivityDownloadFormat.GPX)
+        
+        # Parse GPX to verify validity and extract metadata
+        parsed = parse_gpx(gpx_bytes)
+        
+        # Generate filename and unique hash
+        file_hash = hashlib.sha256(gpx_bytes).hexdigest()
+        filename = f"garmin_{activity_id}.gpx"
+        file_path = os.path.join(GPX_STORE_DIR, filename)
+        
+        # Save to local GPX store
+        os.makedirs(GPX_STORE_DIR, exist_ok=True)
+        with open(file_path, 'wb') as f:
+            f.write(gpx_bytes)
+            
+        track_name = None
+        if parsed.get('tracks') and len(parsed['tracks']) > 0:
+            track_name = parsed['tracks'][0].get('name')
+        if not track_name:
+            track_name = f"Garmin Activity {activity_id}"
+
+        # Register in SQLite database routes
+        route_metadata = {
+            'name': track_name,
+            'description': f"Imported from Garmin Connect (Activity ID: {activity_id})",
+            'filename': filename,
+            'file_hash': file_hash,
+            'file_path': file_path,
+            'folder_id': None,
+            'timezone': parsed.get('timezone'),
+            'simplified_path': json.dumps(parsed.get('simplified_path', []))
+        }
+        
+        route_id = add_route(route_metadata, parsed['statistics'])
+        
+        # Update last sync timestamp
+        from datetime import datetime
+        update_garmin_last_sync(user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        
+        return jsonify({
+            'status': 'success',
+            'route_id': route_id,
+            'name': route_metadata['name']
+        })
+    except GarminConnectTooManyRequestsError as e:
+        return jsonify({'error': f"Garmin import failed: {str(e)}"}), 429
+    except Exception as e:
+        err_msg = str(e)
+        if "429" in err_msg.lower() or "too many requests" in err_msg.lower():
+            return jsonify({'error': f"Garmin import failed: {err_msg}"}), 429
+        return jsonify({'error': f"Garmin import failed: {err_msg}"}), 500
 
 
 if __name__ == '__main__':

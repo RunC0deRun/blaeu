@@ -135,3 +135,53 @@ def test_end_to_end_flow(server, test_gpx_path):
         assert 'integration_run' in download.suggested_filename
         
         browser.close()
+
+
+def test_privacy_zone_cropping(server, test_gpx_path):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        pytest.skip("Playwright not installed. Skipping browser integration test.")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_context().new_page()
+        
+        # 1. Open home page
+        page.goto(server)
+        page.wait_for_selector('.app-title')
+        
+        # 2. Upload file
+        page.set_input_files('#file-input', test_gpx_path)
+        page.click('#upload-btn')
+        page.wait_for_selector('#route-details-panel:not(.hidden)', timeout=5000)
+        
+        # Check initial state: privacy distance should be default '0'
+        assert page.evaluate("localStorage.getItem('blaeu_privacy_distance')") is None or page.evaluate("localStorage.getItem('blaeu_privacy_distance')") == '0'
+        
+        # 3. Open settings modal
+        page.click('#settings-btn')
+        page.wait_for_selector('#settings-modal:not(.hidden)')
+        
+        # 4. Select privacy zone range of 1000m
+        page.select_option('#privacy-select', '1000')
+        
+        # Verify the privacy setting is persisted in localStorage
+        privacy_val = page.evaluate("localStorage.getItem('blaeu_privacy_distance')")
+        assert privacy_val == '1000'
+        
+        # Turn off privacy zone to test animation play
+        page.select_option('#privacy-select', '0')
+        privacy_val = page.evaluate("localStorage.getItem('blaeu_privacy_distance')")
+        assert privacy_val == '0'
+
+        # Close settings
+        page.click('#close-settings-btn')
+        page.wait_for_selector('#settings-modal', state="hidden")
+        
+        # Verify that we can still play/scrub the animation without errors
+        page.click('#play-pause-btn')
+        page.wait_for_timeout(200)
+        assert page.locator('#icon-pause:not(.hidden)').count() == 1
+        
+        browser.close()

@@ -3,6 +3,8 @@
 // Global Application State
 let map = null;
 let currentRoute = null;
+let originalStartPoint = null;
+let originalFinishPoint = null;
 let routesList = [];
 let foldersList = [];
 let activeFolderFilter = '';
@@ -175,10 +177,28 @@ function initAppEvents() {
         });
     }
 
+    // Load and bind Privacy Settings
+    const privacySelect = document.getElementById('privacy-select');
+    const savedPrivacy = localStorage.getItem('blaeu_privacy_distance');
+    if (savedPrivacy && privacySelect) {
+        privacySelect.value = savedPrivacy;
+    }
+    if (privacySelect) {
+        privacySelect.addEventListener('change', (e) => {
+            localStorage.setItem('blaeu_privacy_distance', e.target.value);
+            if (currentRoute) {
+                drawRouteOnMap();
+                prepareAnimationPoints();
+            }
+        });
+    }
+
     initSettingsFormats();
 
     // Back to Dashboard
     document.getElementById('back-to-dashboard-btn').addEventListener('click', deselectRoute);
+
+    initGarminIntegration();
 }
 
 // ----------------------------------------------------
@@ -489,6 +509,27 @@ function drawRouteMiniature(canvas, coords) {
         return;
     }
     
+    const privacyDistance = getPrivacyDistance();
+    if (privacyDistance > 0 && coords.length > 0) {
+        const originalStart = coords[0];
+        const originalFinish = coords[coords.length - 1];
+        const filtered = coords.filter(pt => {
+            const dStart = getDistanceMeters(pt[0], pt[1], originalStart[0], originalStart[1]);
+            const dFinish = getDistanceMeters(pt[0], pt[1], originalFinish[0], originalFinish[1]);
+            return dStart > privacyDistance && dFinish > privacyDistance;
+        });
+        if (filtered.length >= 2) {
+            coords = filtered;
+        } else {
+            ctx.fillStyle = '#94a3b8';
+            ctx.font = '12px Outfit';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('Route within privacy zone', canvas.width / 2, canvas.height / 2);
+            return;
+        }
+    }
+    
     // Find bounds
     let minLat = Infinity, maxLat = -Infinity;
     let minLon = Infinity, maxLon = -Infinity;
@@ -670,6 +711,7 @@ async function selectRoute(routeId) {
         if (!res.ok) throw new Error('Could not load route details');
         
         currentRoute = await res.json();
+        setOriginalStartAndFinishPoints(currentRoute);
         
         // Update sidebar selection styling
         renderRoutesLedger();
@@ -725,7 +767,7 @@ function drawRouteOnMap() {
     const trackCoordinates = [];
     
     // Draw Tracks
-    currentRoute.tracks.forEach(track => {
+    getFilteredTracks().forEach(track => {
         track.segments.forEach(segment => {
             const segCoords = segment.map(pt => [pt.lat, pt.lon]);
             trackCoordinates.push(...segCoords);
@@ -752,7 +794,7 @@ function drawRouteOnMap() {
     }).addTo(map);
 
     // Draw Waypoints as modern glowing purple markers
-    currentRoute.waypoints.forEach(wpt => {
+    getFilteredWaypoints().forEach(wpt => {
         L.circleMarker([wpt.lat, wpt.lon], {
             radius: 5,
             color: '#00f0ff',
@@ -825,6 +867,91 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
     return R * c;
 }
 
+function getPrivacyDistance() {
+    const val = localStorage.getItem('blaeu_privacy_distance');
+    return val ? parseInt(val, 10) : 0;
+}
+
+function setOriginalStartAndFinishPoints(route) {
+    originalStartPoint = null;
+    originalFinishPoint = null;
+    if (!route || !route.tracks || route.tracks.length === 0) return;
+    
+    // Find first point
+    for (const track of route.tracks) {
+        for (const segment of track.segments) {
+            if (segment.length > 0) {
+                const pt = segment[0];
+                originalStartPoint = { lat: pt.lat, lon: pt.lon };
+                break;
+            }
+        }
+        if (originalStartPoint) break;
+    }
+    
+    // Find last point
+    for (let i = route.tracks.length - 1; i >= 0; i--) {
+        const track = route.tracks[i];
+        for (let j = track.segments.length - 1; j >= 0; j--) {
+            const segment = track.segments[j];
+            if (segment.length > 0) {
+                const pt = segment[segment.length - 1];
+                originalFinishPoint = { lat: pt.lat, lon: pt.lon };
+                break;
+            }
+        }
+        if (originalFinishPoint) break;
+    }
+}
+
+function getFilteredTracks() {
+    if (!currentRoute || !currentRoute.tracks || currentRoute.tracks.length === 0) {
+        return [];
+    }
+    const privacyDistance = getPrivacyDistance();
+    if (privacyDistance === 0 || !originalStartPoint || !originalFinishPoint) {
+        return currentRoute.tracks;
+    }
+    
+    const filteredTracks = [];
+    currentRoute.tracks.forEach(track => {
+        const filteredSegments = [];
+        track.segments.forEach(segment => {
+            const filteredSegment = segment.filter(pt => {
+                const dStart = getDistanceMeters(pt.lat, pt.lon, originalStartPoint.lat, originalStartPoint.lon);
+                const dFinish = getDistanceMeters(pt.lat, pt.lon, originalFinishPoint.lat, originalFinishPoint.lon);
+                return dStart > privacyDistance && dFinish > privacyDistance;
+            });
+            if (filteredSegment.length > 0) {
+                filteredSegments.push(filteredSegment);
+            }
+        });
+        if (filteredSegments.length > 0) {
+            filteredTracks.push({
+                ...track,
+                segments: filteredSegments
+            });
+        }
+    });
+    return filteredTracks;
+}
+
+function getFilteredWaypoints() {
+    if (!currentRoute || !currentRoute.waypoints) {
+        return [];
+    }
+    const privacyDistance = getPrivacyDistance();
+    if (privacyDistance === 0 || !originalStartPoint || !originalFinishPoint) {
+        return currentRoute.waypoints;
+    }
+    
+    return currentRoute.waypoints.filter(wpt => {
+        const dStart = getDistanceMeters(wpt.lat, wpt.lon, originalStartPoint.lat, originalStartPoint.lon);
+        const dFinish = getDistanceMeters(wpt.lat, wpt.lon, originalFinishPoint.lat, originalFinishPoint.lon);
+        return dStart > privacyDistance && dFinish > privacyDistance;
+    });
+}
+
 // ----------------------------------------------------
 // Playback Animation Logic
 // ----------------------------------------------------
@@ -834,7 +961,7 @@ function prepareAnimationPoints() {
     let startTimestamp = null;
     
     // Flatten track coordinates
-    currentRoute.tracks.forEach(track => {
+    getFilteredTracks().forEach(track => {
         track.segments.forEach(segment => {
             segment.forEach(pt => {
                 let elapsed = 0;
@@ -1464,7 +1591,7 @@ async function exportVideo() {
         ctx.stroke();
 
         // 4. Draw Waypoints circles (neon purple with cyan border)
-        currentRoute.waypoints.forEach(wpt => {
+        getFilteredWaypoints().forEach(wpt => {
             const pos = latLngToCanvasPx(wpt.lat, wpt.lon);
             ctx.beginPath();
             ctx.arc(pos.x, pos.y, 5 * scaleFactor, 0, 2 * Math.PI);
@@ -1614,6 +1741,7 @@ function closeFoldersModal() {
 // Settings Modal Operations
 function openSettingsModal() {
     document.getElementById('settings-modal').classList.remove('hidden');
+    checkGarminStatus();
 }
 
 function closeSettingsModal() {
@@ -1802,4 +1930,354 @@ function escapeHTML(str) {
             '"': '&quot;'
         }[tag] || tag)
     );
+}
+
+// ----------------------------------------------------
+// Garmin Connect API Integration Functions
+// ----------------------------------------------------
+let garminActivities = []; // Store fetched activities
+
+function initGarminIntegration() {
+    // Check Garmin status on startup
+    checkGarminStatus();
+
+    // Bind event listeners
+    const connectBtn = document.getElementById('garmin-connect-btn');
+    if (connectBtn) {
+        connectBtn.addEventListener('click', connectGarmin);
+    }
+
+    const disconnectBtn = document.getElementById('garmin-disconnect-btn');
+    if (disconnectBtn) {
+        disconnectBtn.addEventListener('click', disconnectGarmin);
+    }
+
+    const syncBtn = document.getElementById('garmin-sync-btn');
+    if (syncBtn) {
+        syncBtn.addEventListener('click', syncGarminActivities);
+    }
+
+    const closeActivitiesBtn = document.getElementById('close-garmin-activities-btn');
+    if (closeActivitiesBtn) {
+        closeActivitiesBtn.addEventListener('click', () => {
+            document.getElementById('garmin-activities-modal').classList.add('hidden');
+        });
+    }
+
+    const selectAllCheckbox = document.getElementById('garmin-select-all');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', (e) => {
+            const checkboxes = document.querySelectorAll('.garmin-activity-checkbox');
+            checkboxes.forEach(cb => {
+                if (!cb.disabled) {
+                    cb.checked = e.target.checked;
+                }
+            });
+        });
+    }
+
+    const importSelectedBtn = document.getElementById('garmin-import-selected-btn');
+    if (importSelectedBtn) {
+        importSelectedBtn.addEventListener('click', importSelectedGarminActivities);
+    }
+}
+
+async function checkGarminStatus() {
+    try {
+        const res = await fetch('/api/garmin/status');
+        const data = await res.json();
+        
+        const disconnectedSection = document.getElementById('garmin-disconnected-section');
+        const connectedSection = document.getElementById('garmin-connected-section');
+        
+        if (data.status === 'connected') {
+            disconnectedSection.classList.add('hidden');
+            connectedSection.classList.remove('hidden');
+            
+            document.getElementById('garmin-connected-name').textContent = data.display_name || 'Garmin Connected';
+            document.getElementById('garmin-connected-email').textContent = data.email;
+        } else {
+            disconnectedSection.classList.remove('hidden');
+            connectedSection.classList.add('hidden');
+            
+            document.getElementById('garmin-email').value = '';
+            document.getElementById('garmin-password').value = '';
+            const mfaInput = document.getElementById('garmin-mfa');
+            if (mfaInput) mfaInput.value = '';
+            document.getElementById('garmin-mfa-container').classList.add('hidden');
+            
+            const connectBtn = document.getElementById('garmin-connect-btn');
+            if (connectBtn) {
+                connectBtn.disabled = false;
+                connectBtn.textContent = 'Connect Garmin';
+            }
+        }
+    } catch (err) {
+        console.error("Error checking Garmin status", err);
+    }
+}
+
+async function connectGarmin() {
+    const email = document.getElementById('garmin-email').value.trim();
+    const password = document.getElementById('garmin-password').value.trim();
+    const mfaContainer = document.getElementById('garmin-mfa-container');
+    const mfaInput = document.getElementById('garmin-mfa');
+    const mfaCode = mfaContainer.classList.contains('hidden') ? null : mfaInput.value.trim();
+    const connectBtn = document.getElementById('garmin-connect-btn');
+
+    if (!email || !password) {
+        alert('Please enter both your Garmin email and password.');
+        return;
+    }
+
+    if (!mfaContainer.classList.contains('hidden') && !mfaCode) {
+        alert('Please enter the MFA verification code sent to your phone/email.');
+        return;
+    }
+
+    connectBtn.disabled = true;
+    connectBtn.textContent = mfaCode ? 'Verifying MFA Code...' : 'Connecting...';
+
+    try {
+        const payload = { email, password };
+        if (mfaCode) {
+            payload.mfa_code = mfaCode;
+        }
+
+        const res = await fetch('/api/garmin/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+
+        if (res.status === 401 || !res.ok) {
+            throw new Error(data.error || 'Connection failed');
+        }
+
+        if (data.status === 'mfa_required') {
+            mfaContainer.classList.remove('hidden');
+            mfaInput.focus();
+            connectBtn.disabled = false;
+            connectBtn.textContent = 'Verify MFA Code';
+            alert('Multi-Factor Authentication is required. Please enter the MFA code sent by Garmin.');
+        } else if (data.status === 'connected') {
+            alert(`Successfully connected as ${data.display_name || email}!`);
+            await checkGarminStatus();
+        }
+    } catch (err) {
+        alert(err.message);
+        connectBtn.disabled = false;
+        connectBtn.textContent = mfaCode ? 'Verify MFA Code' : 'Connect Garmin';
+    }
+}
+
+async function disconnectGarmin() {
+    if (!confirm('Are you sure you want to disconnect your Garmin account? All local session tokens will be deleted.')) return;
+    
+    try {
+        const res = await fetch('/api/garmin/disconnect', { method: 'POST' });
+        if (!res.ok) throw new Error('Failed to disconnect');
+        await checkGarminStatus();
+        alert('Garmin disconnected successfully.');
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function syncGarminActivities() {
+    const syncBtn = document.getElementById('garmin-sync-btn');
+    const originalText = syncBtn.innerHTML;
+    
+    syncBtn.disabled = true;
+    syncBtn.textContent = 'Syncing...';
+    
+    try {
+        const res = await fetch('/api/garmin/activities');
+        const data = await res.json();
+        
+        if (data.status === 'needs_reauthentication') {
+            alert('Your Garmin session has expired. Please reconnect your account.');
+            await fetch('/api/garmin/disconnect', { method: 'POST' });
+            await checkGarminStatus();
+            return;
+        }
+        
+        if (!res.ok || data.status !== 'success') {
+            throw new Error(data.error || 'Failed to sync activities');
+        }
+        
+        garminActivities = data.activities;
+        renderGarminActivitiesList();
+        
+        document.getElementById('garmin-activities-modal').classList.remove('hidden');
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        syncBtn.disabled = false;
+        syncBtn.innerHTML = originalText;
+    }
+}
+
+function renderGarminActivitiesList() {
+    const listBody = document.getElementById('garmin-activities-list');
+    const selectAllCheckbox = document.getElementById('garmin-select-all');
+    if (selectAllCheckbox) selectAllCheckbox.checked = false;
+    
+    if (!garminActivities || garminActivities.length === 0) {
+        listBody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px; opacity: 0.6;">No activities found on Garmin Connect.</td></tr>';
+        return;
+    }
+    
+    listBody.innerHTML = garminActivities.map(act => {
+        const dateObj = new Date(act.startTimeLocal);
+        const dateStr = dateObj.toLocaleDateString(undefined, {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit', hour12: false
+        });
+        
+        const distKm = act.distance ? (act.distance / 1000).toFixed(2) + ' km' : '0.00 km';
+        const durStr = formatDuration(act.duration);
+        const typeStr = act.activityType ? act.activityType.charAt(0).toUpperCase() + act.activityType.slice(1) : 'Unknown';
+        
+        return `
+            <tr id="garmin-row-${act.activityId}">
+                <td style="text-align: center; padding: 12px 10px;">
+                    <input type="checkbox" class="garmin-activity-checkbox" data-id="${act.activityId}">
+                </td>
+                <td style="padding: 12px 10px;">${dateStr}</td>
+                <td style="padding: 12px 10px; font-weight: 500;" title="${escapeHTML(act.activityName)}">${escapeHTML(act.activityName)}</td>
+                <td style="padding: 12px 10px;"><span class="tag-badge btn-sm">${typeStr}</span></td>
+                <td style="padding: 12px 10px;">${distKm}</td>
+                <td style="padding: 12px 10px;">${durStr}</td>
+                <td style="padding: 12px 10px; text-align: right;">
+                    <button type="button" class="btn btn-sm btn-primary btn-import-single" data-id="${act.activityId}" onclick="importSingleGarminActivity('${act.activityId}', this)">Import</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function importSingleGarminActivity(activityId, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Importing...';
+    
+    const row = document.getElementById(`garmin-row-${activityId}`);
+    if (row) {
+        const cb = row.querySelector('.garmin-activity-checkbox');
+        if (cb) cb.disabled = true;
+    }
+    
+    try {
+        const res = await fetch('/api/garmin/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ activityId })
+        });
+        
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || 'Import failed');
+        }
+        
+        btn.textContent = 'Imported';
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-outline');
+        btn.style.borderColor = '#10b981';
+        btn.style.color = '#10b981';
+        
+        await loadTags();
+        await loadRoutes();
+    } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+        btn.textContent = 'Import';
+        if (row) {
+            const cb = row.querySelector('.garmin-activity-checkbox');
+            if (cb) cb.disabled = false;
+        }
+    }
+}
+
+async function importSelectedGarminActivities() {
+    const checkboxes = document.querySelectorAll('.garmin-activity-checkbox:checked');
+    const selectedIds = Array.from(checkboxes).map(cb => cb.getAttribute('data-id'));
+    
+    if (selectedIds.length === 0) {
+        alert('Please select at least one activity to import.');
+        return;
+    }
+    
+    const importBtn = document.getElementById('garmin-import-selected-btn');
+    const originalText = importBtn.textContent;
+    importBtn.disabled = true;
+    importBtn.textContent = `Importing (${selectedIds.length})...`;
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const activityId of selectedIds) {
+        const row = document.getElementById(`garmin-row-${activityId}`);
+        const btnSingle = row ? row.querySelector('.btn-import-single') : null;
+        
+        if (btnSingle && btnSingle.textContent === 'Imported') {
+            continue;
+        }
+        
+        if (btnSingle) {
+            btnSingle.disabled = true;
+            btnSingle.textContent = 'Importing...';
+        }
+        
+        try {
+            const res = await fetch('/api/garmin/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ activityId })
+            });
+            
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || 'Import failed');
+            }
+            
+            successCount++;
+            if (btnSingle) {
+                btnSingle.textContent = 'Imported';
+                btnSingle.classList.remove('btn-primary');
+                btnSingle.classList.add('btn-outline');
+                btnSingle.style.borderColor = '#10b981';
+                btnSingle.style.color = '#10b981';
+            }
+            const cb = row ? row.querySelector('.garmin-activity-checkbox') : null;
+            if (cb) {
+                cb.checked = false;
+                cb.disabled = true;
+            }
+        } catch (err) {
+            console.error(`Failed to import activity ${activityId}:`, err);
+            failCount++;
+            if (btnSingle) {
+                btnSingle.disabled = false;
+                btnSingle.textContent = 'Import';
+            }
+        }
+    }
+    
+    await loadTags();
+    await loadRoutes();
+    
+    importBtn.disabled = false;
+    importBtn.textContent = originalText;
+    
+    let msg = `Import process finished.\nSuccessfully imported: ${successCount} activities.`;
+    if (failCount > 0) {
+        msg += `\nFailed imports: ${failCount} activities.`;
+    }
+    alert(msg);
+    
+    if (failCount === 0) {
+        document.getElementById('garmin-activities-modal').classList.add('hidden');
+    }
 }

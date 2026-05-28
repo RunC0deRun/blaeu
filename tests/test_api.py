@@ -356,7 +356,7 @@ def test_garmin_activities_success(client, monkeypatch):
     db.save_garmin_connection(1, 'test@example.com', 'Garmin Champ')
     
     mock_garmin = MagicMock()
-    mock_garmin.return_value.get_activities_by_limit.return_value = [
+    mock_garmin.return_value.get_activities.return_value = [
         {
             'activityId': '98765',
             'activityName': 'Morning Run',

@@ -448,7 +448,7 @@ def get_garmin_activities():
     try:
         client = Garmin()
         client.login(tokenstore=token_store)
-        activities = client.get_activities_by_limit(0, 15)
+        activities = client.get_activities(0, 15)
         
         # Format activities nicely for frontend UI
         formatted = []
@@ -495,7 +495,7 @@ def import_garmin_activity():
         client.login(tokenstore=token_store)
         
         # Download activity GPX
-        gpx_bytes = client.download_activity(activity_id, dl_fmt=Garmin.ActivityFormat.GPX)
+        gpx_bytes = client.download_activity(activity_id, dl_fmt=Garmin.ActivityDownloadFormat.GPX)
         
         # Parse GPX to verify validity and extract metadata
         parsed = parse_gpx(gpx_bytes)

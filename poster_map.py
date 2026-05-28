@@ -9,6 +9,101 @@ import osmnx as ox
 from shapely.geometry import Point
 from pyproj import Transformer
 from db import DATA_DIR
+import requests
+import numpy as np
+import matplotlib.colors as mcolors
+from matplotlib.font_manager import FontProperties
+
+GEO_CACHE_FILE = os.path.join(ox.settings.cache_folder, 'geocoding_cache.json')
+
+def load_geocoding_cache():
+    if os.path.exists(GEO_CACHE_FILE):
+        try:
+            with open(GEO_CACHE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_geocoding_cache(cache):
+    try:
+        with open(GEO_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def reverse_geocode(lat, lon):
+    cache = load_geocoding_cache()
+    key = f"{lat:.4f}_{lon:.4f}"
+    if key in cache:
+        return cache[key]['city'], cache[key]['country']
+
+    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=en"
+    headers = {"User-Agent": "Blaeu-GPX-Cartographer/1.0"}
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            address = data.get("address", {})
+            city = address.get("city") or address.get("town") or address.get("village") or address.get("suburb") or address.get("county") or ""
+            country = address.get("country") or ""
+            cache[key] = {'city': city, 'country': country}
+            save_geocoding_cache(cache)
+            return city, country
+    except Exception as e:
+        print(f"Reverse geocoding error: {e}")
+    return "", ""
+
+def is_latin_script(text):
+    if not text:
+        return True
+    latin_count = 0
+    total_alpha = 0
+    for char in text:
+        if char.isalpha():
+            total_alpha += 1
+            if ord(char) < 0x250:
+                latin_count += 1
+    if total_alpha == 0:
+        return True
+    return (latin_count / total_alpha) > 0.8
+
+def create_gradient_fade(ax, color, location="bottom", zorder=10):
+    vals = np.linspace(0, 1, 256).reshape(-1, 1)
+    gradient = np.hstack((vals, vals))
+
+    rgb = mcolors.to_rgb(color)
+    my_colors = np.zeros((256, 4))
+    my_colors[:, 0] = rgb[0]
+    my_colors[:, 1] = rgb[1]
+    my_colors[:, 2] = rgb[2]
+
+    if location == "bottom":
+        my_colors[:, 3] = np.linspace(1, 0, 256)
+        extent_y_start = 0
+        extent_y_end = 0.25
+    else:
+        my_colors[:, 3] = np.linspace(0, 1, 256)
+        extent_y_start = 0.75
+        extent_y_end = 1.0
+
+    custom_cmap = mcolors.ListedColormap(my_colors)
+
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    y_range = ylim[1] - ylim[0]
+
+    y_bottom = ylim[0] + y_range * extent_y_start
+    y_top = ylim[0] + y_range * extent_y_end
+
+    ax.imshow(
+        gradient,
+        extent=[xlim[0], xlim[1], y_bottom, y_top],
+        aspect="auto",
+        cmap=custom_cmap,
+        zorder=zorder,
+    )
+
 
 # Set up directories
 POSTER_MAPS_DIR = os.path.join(DATA_DIR, 'poster_maps')
@@ -24,7 +119,7 @@ os.makedirs(ox.settings.cache_folder, exist_ok=True)
 to_3857 = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 to_4326 = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
 
-def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, theme_name):
+def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, theme_name, display_city=None, display_country=None):
     """
     Generates a minimalist styled background map centered and scaled to the bounding box.
     Returns metadata including bounds and static URL.
@@ -88,8 +183,17 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     # Calculate radius for OSM querying (distance from center to furthest corner)
     corner_dist = math.sqrt((width_m / 2)**2 + (height_m / 2)**2)
     
-    # Generate bbox hash to uniquely identify this crop area
-    bbox_str = f"{lat_min:.6f}_{lat_max:.6f}_{lon_min:.6f}_{lon_max:.6f}"
+    # Resolve display city/country if not specified
+    if display_city is None or display_country is None:
+        detected_city, detected_country = reverse_geocode(center_lat, center_lon)
+        if display_city is None:
+            display_city = detected_city
+        if display_country is None:
+            display_country = detected_country
+
+    # Generate bbox hash to uniquely identify this crop area and label settings
+    label_str = f"{display_city or ''}_{display_country or ''}"
+    bbox_str = f"{lat_min:.6f}_{lat_max:.6f}_{lon_min:.6f}_{lon_max:.6f}_{label_str}"
     bbox_hash = hashlib.md5(bbox_str.encode()).hexdigest()[:8]
     filename = f"{route_id}_{theme_name}_{bbox_hash}.png"
     output_path = os.path.join(POSTER_MAPS_DIR, filename)
@@ -130,8 +234,11 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
             'image_url': f'/api/poster-maps/{filename}',
             'bounds': [[lat_min_final, lon_min_final], [lat_max_final, lon_max_final]],
             'bg_color': theme['bg'],
-            'text_color': theme['text']
+            'text_color': theme['text'],
+            'display_city': display_city or '',
+            'display_country': display_country or ''
         }
+
         
     # Fetch map data
     point = (center_lat, center_lon)
@@ -231,6 +338,89 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     ax.set_xlim(x_min, x_max)
     ax.set_ylim(y_min, y_max)
     
+    # Render poster gradients and text if either display_city or display_country is provided
+    if display_city or display_country:
+        create_gradient_fade(ax, theme['bg'], location='bottom', zorder=10)
+        create_gradient_fade(ax, theme['bg'], location='top', zorder=10)
+        
+        scale_factor = min(fig_height, fig_width) / 12.0
+        
+        base_sub = 22
+        base_coords = 14
+        
+        # City text
+        if display_city:
+            if is_latin_script(display_city):
+                spaced_city = "  ".join(list(display_city.upper()))
+            else:
+                spaced_city = display_city
+                
+            base_main = 60
+            adjusted_font_size = base_main * scale_factor
+            city_char_count = len(display_city)
+            if city_char_count > 10:
+                length_factor = 10 / city_char_count
+                adjusted_font_size = max(adjusted_font_size * length_factor, 10 * scale_factor)
+                
+            font_main = FontProperties(family="sans-serif", weight="bold", size=adjusted_font_size)
+            
+            ax.text(
+                0.5,
+                0.14,
+                spaced_city,
+                transform=ax.transAxes,
+                color=theme["text"],
+                ha="center",
+                fontproperties=font_main,
+                zorder=11,
+            )
+            
+        # Country text
+        if display_country:
+            font_sub = FontProperties(family="sans-serif", weight="normal", size=base_sub * scale_factor)
+            ax.text(
+                0.5,
+                0.10,
+                display_country.upper(),
+                transform=ax.transAxes,
+                color=theme["text"],
+                ha="center",
+                fontproperties=font_sub,
+                zorder=11,
+            )
+            
+        # Divider line
+        ax.plot(
+            [0.4, 0.6],
+            [0.125, 0.125],
+            transform=ax.transAxes,
+            color=theme["text"],
+            linewidth=1 * scale_factor,
+            zorder=11,
+        )
+        
+        # Coordinates text
+        font_coords = FontProperties(family="sans-serif", size=base_coords * scale_factor)
+        coords_str = (
+            f"{center_lat:.4f}° N / {center_lon:.4f}° E"
+            if center_lat >= 0
+            else f"{abs(center_lat):.4f}° S / {center_lon:.4f}° E"
+        )
+        if center_lon < 0:
+            coords_str = coords_str.replace("E", "W")
+            
+        ax.text(
+            0.5,
+            0.07,
+            coords_str,
+            transform=ax.transAxes,
+            color=theme["text"],
+            alpha=0.7,
+            ha="center",
+            fontproperties=font_coords,
+            zorder=11,
+        )
+
     # Save the figure to file
     plt.savefig(
         output_path,
@@ -245,5 +435,8 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         'image_url': f'/api/poster-maps/{filename}',
         'bounds': [[lat_min_final, lon_min_final], [lat_max_final, lon_max_final]],
         'bg_color': theme['bg'],
-        'text_color': theme['text']
+        'text_color': theme['text'],
+        'display_city': display_city or '',
+        'display_country': display_country or ''
     }
+

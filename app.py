@@ -587,6 +587,8 @@ def get_poster_map_image(filename):
 @app.route('/api/routes/<int:route_id>/poster-map', methods=['GET'])
 def get_route_poster_map(route_id):
     theme_name = request.args.get('theme', 'noir')
+    display_city = request.args.get('displayCity')
+    display_country = request.args.get('displayCountry')
     
     # Bounding box query parameters (optional)
     lat_min = request.args.get('latMin')
@@ -633,12 +635,16 @@ def get_route_poster_map(route_id):
 
     from poster_map import generate_poster_background
     try:
-        data = generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, theme_name)
+        data = generate_poster_background(
+            route_id, lat_min, lat_max, lon_min, lon_max, theme_name,
+            display_city=display_city, display_country=display_country
+        )
         return jsonify(data)
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'Poster map generation failed: {str(e)}'}), 500
+
 
 
 if __name__ == '__main__':

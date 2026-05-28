@@ -99,3 +99,23 @@ def test_generate_poster_map_with_bounds(client, mock_gis):
     res_data = json.loads(response.data)
     assert 'image_url' in res_data
     assert res_data['bg_color'] == '#1A3A5C' # Blueprint bg color
+
+def test_generate_poster_map_with_custom_labels(client, mock_gis):
+    # 1. Upload a route first
+    data = {
+        'file': (io.BytesIO(GPX_DATA_1.encode('utf-8')), 'test_route.gpx')
+    }
+    upload_res = client.post('/api/upload', data=data, content_type='multipart/form-data')
+    assert upload_res.status_code == 201
+    route_id = json.loads(upload_res.data)['id']
+    
+    # 2. Get poster map with custom labels
+    response = client.get(
+        f'/api/routes/{route_id}/poster-map?theme=noir&displayCity=Paris&displayCountry=France'
+    )
+    assert response.status_code == 200
+    res_data = json.loads(response.data)
+    assert 'image_url' in res_data
+    assert res_data['display_city'] == 'Paris'
+    assert res_data['display_country'] == 'France'
+

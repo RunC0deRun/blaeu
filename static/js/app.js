@@ -28,6 +28,8 @@ let tileLayer = null;
 let posterMapOverlay = null;
 let mapThemes = [];
 let currentMapStyle = 'dark';
+let labelsLoadedForRouteId = null;
+
 
 // Initialize Page
 document.addEventListener('DOMContentLoaded', () => {
@@ -210,6 +212,23 @@ function initAppEvents() {
         });
     }
 
+    const hudCityInput = document.getElementById('hud-map-style-city');
+    const hudCountryInput = document.getElementById('hud-map-style-country');
+    const handleHudLabelChange = () => {
+        if (currentRoute && currentMapStyle !== 'dark') {
+            applyMapStyle();
+        }
+    };
+    if (hudCityInput) {
+        hudCityInput.addEventListener('change', handleHudLabelChange);
+        hudCityInput.addEventListener('blur', handleHudLabelChange);
+    }
+    if (hudCountryInput) {
+        hudCountryInput.addEventListener('change', handleHudLabelChange);
+        hudCountryInput.addEventListener('blur', handleHudLabelChange);
+    }
+
+
     initSettingsFormats();
 
     // Back to Dashboard
@@ -383,6 +402,15 @@ function deselectRoute() {
     // Clean up poster background overlay and reset map
     const hud = document.getElementById('map-style-hud');
     if (hud) hud.classList.add('hidden');
+    
+    labelsLoadedForRouteId = null;
+    const cityInput = document.getElementById('hud-map-style-city');
+    const countryInput = document.getElementById('hud-map-style-country');
+    if (cityInput) cityInput.value = '';
+    if (countryInput) countryInput.value = '';
+    const labelsContainer = document.getElementById('hud-map-poster-labels');
+    if (labelsContainer) labelsContainer.classList.add('hidden');
+
     if (posterMapOverlay) {
         map.removeLayer(posterMapOverlay);
         posterMapOverlay = null;
@@ -394,6 +422,7 @@ function deselectRoute() {
     if (mapElement) {
         mapElement.style.backgroundColor = '';
     }
+
     
     currentRoute = null;
     showDashboardView(true);
@@ -2414,6 +2443,16 @@ async function applyMapStyle() {
         delete currentRoute.posterMapUrl;
         delete currentRoute.posterMapBounds;
         delete currentRoute.posterMapBgColor;
+
+        const labelsContainer = document.getElementById('hud-map-poster-labels');
+        if (labelsContainer) {
+            labelsContainer.classList.add('hidden');
+        }
+        const cityInput = document.getElementById('hud-map-style-city');
+        const countryInput = document.getElementById('hud-map-style-country');
+        if (cityInput) cityInput.value = '';
+        if (countryInput) countryInput.value = '';
+        labelsLoadedForRouteId = null;
     } else {
         // Poster map style active
         // Hide default tiles
@@ -2427,6 +2466,19 @@ async function applyMapStyle() {
             originalText = select.options[select.selectedIndex].text;
             select.options[select.selectedIndex].text = 'Loading Map...';
         }
+
+        const cityInput = document.getElementById('hud-map-style-city');
+        const countryInput = document.getElementById('hud-map-style-country');
+        const labelsContainer = document.getElementById('hud-map-poster-labels');
+        
+        if (labelsContainer) {
+            labelsContainer.classList.remove('hidden');
+        }
+
+        if (labelsLoadedForRouteId !== currentRoute.id) {
+            if (cityInput) cityInput.value = '';
+            if (countryInput) countryInput.value = '';
+        }
         
         try {
             // Get visible track coordinates (after privacy zone filter)
@@ -2438,6 +2490,15 @@ async function applyMapStyle() {
             });
             
             let url = `/api/routes/${currentRoute.id}/poster-map?theme=${currentMapStyle}`;
+
+            // If labels are loaded, read from inputs (which is user's edited state, even if empty).
+            // Otherwise, omit displayCity/displayCountry so the backend resolves defaults.
+            if (labelsLoadedForRouteId === currentRoute.id) {
+                const cityVal = cityInput ? cityInput.value : '';
+                const countryVal = countryInput ? countryInput.value : '';
+                url += `&displayCity=${encodeURIComponent(cityVal)}&displayCountry=${encodeURIComponent(countryVal)}`;
+            }
+
             if (coords.length > 0) {
                 const lats = coords.map(c => c[0]);
                 const lons = coords.map(c => c[1]);
@@ -2517,6 +2578,13 @@ async function applyMapStyle() {
             currentRoute.posterMapUrl = data.image_url;
             currentRoute.posterMapBounds = data.bounds;
             currentRoute.posterMapBgColor = data.bg_color;
+
+            if (labelsLoadedForRouteId !== currentRoute.id) {
+                if (cityInput) cityInput.value = data.display_city || '';
+                if (countryInput) countryInput.value = data.display_country || '';
+                labelsLoadedForRouteId = currentRoute.id;
+            }
+
             
         } catch (err) {
             console.error(err);

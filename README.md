@@ -16,6 +16,9 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
   - Configurable resolutions: Export in **720p**, **1080p**, or **2160p (4K)**.
   - Proportional vector scaling: Lines, markers, text, and layout scale automatically to remain visually identical at any resolution.
   - Configurable framerates: Export at **24**, **25**, **30**, **50**, or **60 FPS**.
+- **Minimalist Poster Background Maps (v0.5.0)**: Toggle between default Dark Matter tiles and 17 minimalist map themes (Noir, Blueprint, Sunset, Neon Cyberpunk, etc.). Maps are generated dynamically on-the-fly on the backend using `osmnx` (cached locally) and rendered at high resolution (300 DPI) via `matplotlib`.
+- **Start/Finish Privacy Zone (v0.4.0)**: Hide precise starting and endpoints of activities with a configurable buffer range (0m to 1000m in 200m increments), automatically updating timelines, previews, and exports.
+- **Garmin Connect Sync (v0.4.0)**: Seamless token-based passwordless sync for recent activities, supporting stateless multi-factor authentication (MFA) and bulk or single imports.
 - **Organization & Search**: CRUD operations for folder hierarchies, tagging support, and chronological timeline ledger.
 - **Tile Proxy & CORS Protection**: Serves tiles from the same origin to avoid Canvas staining, caching them locally on disk to protect external map services.
 - **Duplicate Prevention**: Computes SHA-256 hashes of uploaded GPX logs to reject duplicate uploads.
@@ -24,9 +27,10 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
 
 ## 🛠️ Technology Stack
 
-- **Backend**: Python 3.12, Flask, SQLite, Requests, Gunicorn
+- **Backend**: Python 3.14, Flask, SQLite, Requests, Gunicorn, OSMnx, Matplotlib, Geopandas, Pyproj, Shapely
 - **Frontend**: HTML5, Vanilla CSS3 (Glassmorphic HUD theme), Vanilla JS, Leaflet.js (bundled locally)
 - **Containerization**: Docker, Docker Compose
+
 
 ---
 

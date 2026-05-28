@@ -12,6 +12,9 @@ Blaeu is built using a lightweight **Python (Flask) backend** and a single-page 
 - **SQLite Database**: A database file (`blaeu.db`) is stored in the mounted volume `/data`. The database organizes route metadata, calculated statistics, folders, and tags.
 - **Physical GPX Files**: Uploaded files are saved on the filesystem as `/data/gpx/{sha256_hash}.gpx` to prevent duplicate files and allow quick coordinate retrieval.
 - **Map Tile Cache**: OpenStreetMap tiles are cached in `/data/tiles_cache/{z}/{x}/{y}.png`.
+- **Garmin OAuth Tokens**: Session and OAuth tokens for passwordless Garmin Connect authentication are persisted under `/data/garmin_tokens/<user_id>/`.
+- **Poster Maps Cache**: Rendered minimalist background map images are cached under `/data/poster_maps/`.
+- **OSMnx Cache**: Raw OSM data queries fetched by OSMnx are cached to `/data/osmnx_cache/` to minimize API limits and speed up subsequent builds.
 
 ---
 
@@ -32,6 +35,19 @@ To avoid dependency bloat and guarantee robustness, we implemented a custom XML 
 To enable HTML5 Canvas-based video exports, drawing map tiles onto the canvas cannot trigger browser CORS security exceptions.
 - The Flask endpoint `/api/tiles/<z>/<x>/<y>.png` acts as a local proxy fetching tiles from OpenStreetMap.
 - Once fetched, tiles are cached to the mounted volume `/data/tiles_cache/`. Subsequent loads serve directly from the disk cache, improving performance, saving bandwidth, and offering offline support for previously viewed maps.
+
+### C. Garmin Connect Integration (`app.py`)
+Provides seamless passwordless sync with Garmin:
+- Implements stateless login capturing MFA requirements, allowing users to enter codes in an overlay modal.
+- Extracts token sets, persists them locally, and triggers activity search (latest 15 items).
+- Automatically cleans up directory folders when authentication fails and correctly routes rate-limit responses (HTTP 429).
+
+### D. Minimalist Poster Map Generator (`poster_map.py`)
+Provides stunning map backdrops using OpenStreetMap:
+- Translates coordinates from EPSG:4326 to EPSG:3857 (Web Mercator) to achieve mathematically perfect alignment with Leaflet vectors.
+- Clamps aspect ratios (0.5 to 2.0) and adds padding to bounding boxes.
+- Queries street networks, water bodies, and parks using OSMnx, rendering them using custom thematic color configurations (loaded from `/static/themes/*.json`) via `matplotlib` at 300 DPI.
+
 
 ---
 

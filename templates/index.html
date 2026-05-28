@@ -214,10 +214,18 @@
                     <label for="hud-map-style-select" title="Change Map Style">
                         <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align: middle; display: block;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L12 15v3c0 1.1.9 2 2 2h-1v-.07zM18.62 14c-.1-.38-.46-.62-.87-.62h-1.75V11c0-.55-.45-1-1-1h-4V8h2c.55 0 1-.45 1-1V5h1c.88 0 1.69.53 2.05 1.34l1.2 2.68c.09.21.3.35.53.35H20c.41 0 .78-.25.88-.62C19.78 6.07 16.2 3.4 12 3.4c-4.2 0-7.78 2.67-8.88 6.28.1-.37.47-.62.88-.62h1v1c0 1.1.9 2 2 2h3v1c0 .55.45 1 1 1h2v3c0 .55.45 1 1 1h1v1.62c2.72-.88 4.79-3.23 5.62-6.28z" fill="currentColor"/></svg>
                     </label>
-                    <select id="hud-map-style-select">
-                        <option value="dark">Dark Matter (Default)</option>
-                    </select>
+                    <div class="hud-select-wrapper">
+                        <select id="hud-map-style-select">
+                            <option value="dark">Dark Matter (Default)</option>
+                        </select>
+                    </div>
+                    <div id="hud-map-poster-labels" class="hud-map-labels hidden">
+                        <input type="text" id="hud-map-style-city" placeholder="City" title="Display City name on poster">
+                        <input type="text" id="hud-map-style-country" placeholder="Country" title="Display Country name on poster">
+                    </div>
+
                 </div>
+
                 
                 <!-- HUD borders for high-tech overlay -->
                 <div class="hud-border hud-border-t"></div>

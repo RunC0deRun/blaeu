@@ -1184,3 +1184,48 @@ input[type="range"]::-webkit-slider-thumb:hover {
     width: 14px;
     height: 14px;
 }
+
+/* Garmin Activities Table Styles */
+.garmin-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 15px;
+    font-size: 0.9rem;
+    color: var(--text-main);
+}
+
+.garmin-table th, .garmin-table td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.garmin-table th {
+    font-family: var(--font-main);
+    font-weight: 600;
+    color: var(--primary);
+    background-color: rgba(7, 10, 19, 0.4);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.garmin-table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.garmin-table tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+}
+
+.garmin-table td {
+    vertical-align: middle;
+}
+
+.garmin-table input[type="checkbox"] {
+    cursor: pointer;
+    accent-color: var(--primary);
+    width: 16px;
+    height: 16px;
+}
+

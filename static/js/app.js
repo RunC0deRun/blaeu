@@ -132,6 +132,13 @@ function initAppEvents() {
 
     // Video Export
     document.getElementById('export-video-btn').addEventListener('click', exportVideo);
+    
+    // Save Image
+    const saveImageBtn = document.getElementById('save-image-btn');
+    if (saveImageBtn) {
+        saveImageBtn.addEventListener('click', saveImage);
+    }
+
 
     // Settings Modal
     document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
@@ -2602,4 +2609,376 @@ async function applyMapStyle() {
         }
     }
 }
+
+// Save static high-definition image of the entire track map
+async function saveImage() {
+    if (!currentRoute || animationPoints.length === 0) return;
+
+    pauseAnimation();
+
+    // Show Progress Dialog
+    const modal = document.getElementById('export-modal');
+    const fill = document.getElementById('export-progress-fill');
+    const statusText = document.getElementById('export-status-text');
+    const titleText = document.getElementById('export-status-title');
+    
+    if (titleText) titleText.textContent = 'Generating Image';
+    modal.classList.remove('hidden');
+    fill.style.width = '0%';
+    statusText.textContent = 'Preloading map background...';
+
+    // Helper to load image
+    function loadImage(url) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => resolve(img);
+            img.onerror = () => resolve(null);
+            img.src = url;
+        });
+    }
+
+    const canvas = document.getElementById('export-canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    const latitudes = animationPoints.map(p => p.lat);
+    const longitudes = animationPoints.map(p => p.lon);
+    const latMin = Math.min(...latitudes);
+    const latMax = Math.max(...latitudes);
+    const lonMin = Math.min(...longitudes);
+    const lonMax = Math.max(...longitudes);
+    
+    const centerLat = (latMin + latMax) / 2;
+    const centerLon = (lonMin + lonMax) / 2;
+
+    const isPosterActive = currentMapStyle !== 'dark' && currentRoute.posterMapUrl;
+
+    if (isPosterActive) {
+        // Load the background poster image
+        statusText.textContent = 'Loading poster background...';
+        const posterMapImg = await loadImage(currentRoute.posterMapUrl);
+        if (!posterMapImg) {
+            alert('Could not load poster background image.');
+            modal.classList.add('hidden');
+            return;
+        }
+
+        fill.style.width = '50%';
+        statusText.textContent = 'Rendering high-resolution poster...';
+
+        const width = posterMapImg.naturalWidth;
+        const height = posterMapImg.naturalHeight;
+        canvas.width = width;
+        canvas.height = height;
+
+        // Scale factor for drawing vectors relative to baseline 1080p height
+        const scaleFactor = height / 1080;
+
+        // Draw poster background image (takes up 100% of the canvas)
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(posterMapImg, 0, 0, width, height);
+
+        // Project coordinate bounds of the poster
+        const bounds = currentRoute.posterMapBounds;
+        const bLatMin = bounds[0][0];
+        const bLonMin = bounds[0][1];
+        const bLatMax = bounds[1][0];
+        const bLonMax = bounds[1][1];
+        
+        const pMin = map.options.crs.project(L.latLng(bLatMin, bLonMin));
+        const pMax = map.options.crs.project(L.latLng(bLatMax, bLonMax));
+        
+        const xMin = pMin.x;
+        const xMax = pMax.x;
+        const yMin = pMin.y;
+        const yMax = pMax.y;
+
+        // Map GPX coords to Poster Canvas pixels
+        function latLngToCanvasPx(lat, lng) {
+            const p = map.options.crs.project(L.latLng(lat, lng));
+            return {
+                x: ((p.x - xMin) / (xMax - xMin)) * width,
+                y: (1.0 - (p.y - yMin) / (yMax - yMin)) * height
+            };
+        }
+
+        // Draw Route Path
+        ctx.beginPath();
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 6 * scaleFactor;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        animationPoints.forEach((pt, idx) => {
+            const pos = latLngToCanvasPx(pt.lat, pt.lon);
+            if (idx === 0) ctx.moveTo(pos.x, pos.y);
+            else ctx.lineTo(pos.x, pos.y);
+        });
+        ctx.stroke();
+
+        // Draw Waypoints
+        getFilteredWaypoints().forEach(wpt => {
+            const pos = latLngToCanvasPx(wpt.lat, wpt.lon);
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 5 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#9333ea';
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 1.5 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+        });
+
+        // Draw Start/Finish Markers
+        if (animationPoints.length > 0) {
+            const startPt = animationPoints[0];
+            const startPos = latLngToCanvasPx(startPt.lat, startPt.lon);
+            ctx.beginPath();
+            ctx.arc(startPos.x, startPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#064e3b';
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            ctx.beginPath();
+            const sz = 3.5 * scaleFactor;
+            ctx.moveTo(startPos.x - sz * 0.6, startPos.y - sz);
+            ctx.lineTo(startPos.x + sz, startPos.y);
+            ctx.lineTo(startPos.x - sz * 0.6, startPos.y + sz);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            const finishPt = animationPoints[animationPoints.length - 1];
+            const finishPos = latLngToCanvasPx(finishPt.lat, finishPt.lon);
+            ctx.beginPath();
+            ctx.arc(finishPos.x, finishPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#7f1d1d';
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            const sq = 3 * scaleFactor;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x - sq, finishPos.y - sq, sq, sq);
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x, finishPos.y - sq, sq, sq);
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x - sq, finishPos.y, sq, sq);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x, finishPos.y, sq, sq);
+        }
+
+        // Draw Watermark
+        ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+        ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
+        ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
+        ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
+        ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
+        ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+
+    } else {
+        // Dark Matter Style
+        // Canvas resolution configuration
+        const resSelect = document.getElementById('res-select');
+        const resVal = resSelect ? resSelect.value : '1080';
+        let width = 1920;
+        let height = 1080;
+        
+        if (resVal === '720') {
+            width = 1280;
+            height = 720;
+        } else if (resVal === '2160') {
+            width = 3840;
+            height = 2160;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const scaleFactor = height / 1080;
+
+        // Use fitZoom to make sure the whole track is visible
+        const pBounds = L.latLngBounds(L.latLng(latMin, lonMin), L.latLng(latMax, lonMax));
+        const fitZoom = map.getBoundsZoom(pBounds);
+        const zoom = fitZoom;
+
+        // Web Mercator Formulas
+        function lngToX(lng, z) {
+            return (lng + 180) / 360 * Math.pow(2, z) * 256;
+        }
+        function latToY(lat, z) {
+            const latRad = lat * Math.PI / 180;
+            return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256;
+        }
+
+        const centerPxX = lngToX(centerLon, zoom);
+        const centerPxY = latToY(centerLat, zoom);
+        const minPxX = centerPxX - width / 2;
+        const minPxY = centerPxY - height / 2;
+
+        // Collect all tiles covering the viewport centered on the track
+        const tilesSet = new Set();
+        const frameTileMinX = Math.floor(minPxX / 256);
+        const frameTileMaxX = Math.floor((minPxX + width) / 256);
+        const frameTileMinY = Math.floor(minPxY / 256);
+        const frameTileMaxY = Math.floor((minPxY + height) / 256);
+
+        for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
+            for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
+                tilesSet.add(`${tx}_${ty}`);
+            }
+        }
+
+        const tilesToLoad = Array.from(tilesSet).map(key => {
+            const [tx, ty] = key.split('_').map(Number);
+            return { x: tx, y: ty, z: zoom };
+        });
+
+        const loadedTilesMap = {};
+        let loadedCount = 0;
+        for (const t of tilesToLoad) {
+            const tileUrl = `/api/tiles/${t.z}/${t.x}/${t.y}.png`;
+            const img = await loadImage(tileUrl);
+            if (img) {
+                loadedTilesMap[`${t.x}_${t.y}`] = img;
+            }
+            loadedCount++;
+            const progressPct = Math.round((loadedCount / tilesToLoad.length) * 50);
+            fill.style.width = `${progressPct}%`;
+            statusText.textContent = `Loading map background (${loadedCount}/${tilesToLoad.length})`;
+        }
+
+        statusText.textContent = 'Rendering image...';
+        fill.style.width = '80%';
+
+        // Map GPX coords to Canvas pixels
+        function latLngToCanvasPx(lat, lng) {
+            const pxX = lngToX(lng, zoom);
+            const pxY = latToY(lat, zoom);
+            return {
+                x: pxX - minPxX,
+                y: pxY - minPxY
+            };
+        }
+
+        // Draw Map Tiles
+        ctx.clearRect(0, 0, width, height);
+        ctx.save();
+        for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
+            for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
+                const img = loadedTilesMap[`${tx}_${ty}`];
+                if (img) {
+                    const dx = tx * 256 - minPxX;
+                    const dy = ty * 256 - minPxY;
+                    ctx.drawImage(img, dx, dy);
+                }
+            }
+        }
+        ctx.restore();
+
+        // 2. Overlay vignette
+        const grad = ctx.createRadialGradient(width/2, height/2, width/3, width/2, height/2, width/1.4);
+        grad.addColorStop(0, 'rgba(7, 10, 19, 0.0)');
+        grad.addColorStop(1, 'rgba(7, 10, 19, 0.65)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, width, height);
+
+        // 3. Draw Route Path
+        ctx.beginPath();
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 6 * scaleFactor;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        animationPoints.forEach((pt, idx) => {
+            const pos = latLngToCanvasPx(pt.lat, pt.lon);
+            if (idx === 0) ctx.moveTo(pos.x, pos.y);
+            else ctx.lineTo(pos.x, pos.y);
+        });
+        ctx.stroke();
+
+        // 4. Draw Waypoints
+        getFilteredWaypoints().forEach(wpt => {
+            const pos = latLngToCanvasPx(wpt.lat, wpt.lon);
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 5 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#9333ea';
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 1.5 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+        });
+
+        // 5. Draw Start/Finish Markers
+        if (animationPoints.length > 0) {
+            const startPt = animationPoints[0];
+            const startPos = latLngToCanvasPx(startPt.lat, startPt.lon);
+            ctx.beginPath();
+            ctx.arc(startPos.x, startPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#064e3b';
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            ctx.beginPath();
+            const sz = 3.5 * scaleFactor;
+            ctx.moveTo(startPos.x - sz * 0.6, startPos.y - sz);
+            ctx.lineTo(startPos.x + sz, startPos.y);
+            ctx.lineTo(startPos.x - sz * 0.6, startPos.y + sz);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            const finishPt = animationPoints[animationPoints.length - 1];
+            const finishPos = latLngToCanvasPx(finishPt.lat, finishPt.lon);
+
+            ctx.beginPath();
+            ctx.arc(finishPos.x, finishPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#7f1d1d';
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            const sq = 3 * scaleFactor;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x - sq, finishPos.y - sq, sq, sq);
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x, finishPos.y - sq, sq, sq);
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x - sq, finishPos.y, sq, sq);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x, finishPos.y, sq, sq);
+        }
+
+        // 6. Draw Watermark
+        ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+        ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
+        ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
+        ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
+        ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
+        ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+    }
+
+    // Save/Download
+    fill.style.width = '100%';
+    statusText.textContent = 'Saving image file...';
+    
+    setTimeout(() => {
+        const dataUrl = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.png`;
+        a.click();
+        
+        // Hide Modal & Restore title
+        modal.classList.add('hidden');
+        if (titleText) titleText.textContent = 'Generating Video';
+    }, 500);
+}
+
+
 

@@ -541,6 +541,16 @@ function renderDashboardGrid() {
 
         return `
             <div class="activity-card" onclick="selectRoute(${route.id})">
+                <div class="activity-card-user-banner" style="background: ${route.is_owner ? 'rgba(255,255,255,0.02)' : 'rgba(0, 240, 255, 0.04)'}; padding: 6px 16px; font-size: 0.78em; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;">
+                    <span>
+                        <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px; opacity: 0.8;" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                        <span style="opacity: 0.6; margin-right: 2px;">BY</span> <strong style="color: ${route.is_owner ? '#fff' : 'var(--primary)'}; font-weight: 700;">${escapeHTML(route.owner_username || 'Unknown')}</strong>
+                    </span>
+                    ${!route.is_owner ? 
+                        `<span style="color: var(--primary); font-size: 0.9em; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; background: rgba(0,240,255,0.1); padding: 2px 8px; border-radius: 4px; text-shadow: 0 0 4px rgba(0,240,255,0.25);">Public</span>` : 
+                        `<span style="color: #94a3b8; font-size: 0.9em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Owner</span>`
+                    }
+                </div>
                 <div class="activity-card-preview">
                     <canvas class="activity-mini-canvas" data-route-id="${route.id}"></canvas>
                 </div>

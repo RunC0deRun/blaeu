@@ -10,7 +10,8 @@ Blaeu is built using a lightweight **Python (Flask) backend** and a single-page 
 
 ### Storage & Persistence
 - **SQLite Database**: A database file (`blaeu.db`) is stored in the mounted volume `/data`. The database organizes route metadata, calculated statistics, folders, and tags.
-- **Physical GPX Files**: Uploaded files are saved on the filesystem as `/data/gpx/{sha256_hash}.gpx` to prevent duplicate files and allow quick coordinate retrieval.
+- **Physical GPX Files**: Uploaded or synchronized GPX logs are saved on the filesystem as `/data/gpx/{filename}` (where uploaded files are named `{sha256_hash}.gpx` and Garmin activities are named `garmin_{activity_id}.gpx`).
+- **Garmin Tokens Session Store**: Authenticated session tokens/credentials returned by Garmin Connect are persisted in `/data/garmin_tokens/{user_id}` for session restoration and token renewal.
 - **Map Tile Cache**: OpenStreetMap tiles are cached in `/data/tiles_cache/{z}/{x}/{y}.png`.
 - **Garmin OAuth Tokens**: Session and OAuth tokens for passwordless Garmin Connect authentication are persisted under `/data/garmin_tokens/<user_id>/`.
 - **Poster Maps Cache**: Rendered minimalist background map images are cached under `/data/poster_maps/`.
@@ -34,7 +35,19 @@ To avoid dependency bloat and guarantee robustness, we implemented a custom XML 
 ### B. Map Tile Proxy & Local Cache (`app.py`)
 To enable HTML5 Canvas-based video exports, drawing map tiles onto the canvas cannot trigger browser CORS security exceptions.
 - The Flask endpoint `/api/tiles/<z>/<x>/<y>.png` acts as a local proxy fetching tiles from OpenStreetMap.
-- Once fetched, tiles are cached to the mounted volume `/data/tiles_cache/`. Subsequent loads serve directly from the disk cache, improving performance, saving bandwidth, and offering offline support for previously viewed maps.
+- Once fetched, tiles are cached to the mounted volume `/data/tiles_cache/`. Subsequent loads serve directly from the disk cache, improving performance, saving bandwidth, and offering offline support.
+
+### C. Garmin Connect Integration (`app.py`)
+Integrates the `garminconnect` API to pull activities directly.
+- **Stateless Authentication**: Login credentials (email, password) are processed in memory and never stored in the database.
+- **MFA Interactive Flow**: Intercepts MFA email challenges by subclassing `GarminConnectAuthenticationError` into `MfaRequiredException` to signal the frontend to display a live verification code prompt.
+- **Token Store**: Persists session tokens to the filesystem to perform background token renewals without requiring repeated logins.
+- **Rate-Limiting**: Catches and translates Garmin's rate limits (429 HTTP) to keep server operations clean.
+
+### D. Server-Side Video Transcoder (`app.py`)
+Transcodes client-side WebM frame recordings into standardized video formats.
+- **Constant Framerate Alignment**: Invokes a local `ffmpeg` subprocess using the video filter `setpts=N/(FPS*TB)` to recalculate timestamps based on the frame index, forcing a constant framerate and preventing slow-motion playback.
+- **MP4 & WebM Support**: Converts input WebM streams into H.264 MP4 videos (`-c:v libx264 -crf 20 -pix_fmt yuv420p`) or high-quality WebM videos (`-c:v libvpx -crf 4`).
 
 ### C. Garmin Connect Integration (`app.py`)
 Provides seamless passwordless sync with Garmin:
@@ -57,26 +70,29 @@ The user interface is designed with a premium, modern dark-mode HUD (Heads-Up Di
 
 ### Aesthetics
 - **Color Palette**: Rich dark background (`#070a13`), panel backgrounds (`#0e1320`), neon cyan primary accents (`#00f0ff`), and glowing neon purple secondary accents (`#9333ea`).
-- **Typography**: Modern typography utilizing Google Fonts' "Outfit" for headers/text and "JetBrains Mono" for numeric displays and code-style elements.
+- **Typography**: Modern typography utilizing Google Fonts' "Outfit" for headers/text and "JetBrains Mono" for numeric displays.
 - **Map Visual Treatment**: Leaflet map tiles are styled with a modern dark-mode inversion filter (`invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%)`), coupled with a custom radial vignette overlay.
-- **Micro-Animations**:
-  - The HUD logo icon in the sidebar features a smooth rotational animation.
-  - The map compass needle rotates dynamically during route playback to align with the active heading of movement.
+- **Micro-Animations**: Features smooth rotational HUD logo animation and dynamic compass needle orientation.
 
-### Animation & Playback Scrubber
-- Route coordinates are flattened and animated frame-by-frame.
-- The path draws in a bright neon cyan line with a glowing marker over a low-opacity guide line.
+### Playback Control & Animation modes
+- **Real-Time Mode**: Plays back the route reflecting actual recorded velocities, ignoring long static pauses.
+- **Smooth Mode**: Applies a 7-point moving average filter over GPX coordinates to smooth out GPS jitter, providing fluid route tracing and viewport camera panning.
+
+### Start/Finish Privacy Zone
+- Masks precise start and finish coordinates within a user-configurable range from 0m to 1000m.
+- Performs client-side geodetic coordinate filtering using the Haversine formula dynamically in the browser.
+- Integrates seamlessly with all presentation layers: Leaflet map drawing, playback animations, video exports, and dashboard miniature preview cards.
 
 ---
 
-## 4. WebM Video Exporting
+## 4. Multi-Format Video Exporting
 
-The animation is recorded entirely client-side using the browser's native `MediaRecorder` API.
-1. Clicking **Export Video** preloads all tile images needed to cover a 1280x720 canvas viewport centered at the current map view and zoom.
+The animation is recorded client-side and refined server-side:
+1. Preloads all tile images needed to cover the canvas viewport centered at the current map view and zoom.
 2. A hidden `<canvas>` element draws the map tiles, applies the dark-mode inversion filter, renders a dark vignette overlay, and animates the GPX path.
-3. Waypoints are drawn as modern nodes (neon purple with cyan border), and the route is drawn in neon cyan step-by-step over a target video duration of 12 seconds.
-4. A custom watermark is drawn in the bottom-left corner of the video showing the route title and "BLAEU GPX CARTOGRAPHER" using the Outfit font.
-5. The `canvas.captureStream(30)` feeds the frame buffer to the WebM recorder, exporting a high-fidelity video.
+3. Proportional vector scaling maps lines, circles, and texts dynamically so that exports look identical at all resolutions (**720p**, **1080p**, **2160p/4K**).
+4. The `MediaRecorder` captures the stream at a user-defined FPS and posts the WebM blob to `/api/convert-video`.
+5. The backend transcoder outputs the selected video format (WebM or MP4) for download.
 
 ---
 
@@ -84,8 +100,8 @@ The animation is recorded entirely client-side using the browser's native `Media
 
 The test suite covers both backend logic and integration flows:
 - **`tests/test_gpx_parser.py`**: Validates the statistics logic against single-track, multi-track, and no-data edge cases.
-- **`tests/test_api.py`**: Verifies duplicate uploading hashes (returning `409 Conflict`), folder CRUD operations, tag filters, route detail edits, and chronological route timeline lists.
-- **`tests/test_integration.py`**: End-to-end browser integration tests utilizing Playwright. Simulates starting the server, loading the page, dragging and dropping a GPX file, playing the route animation, and downloading the exported WebM video file.
+- **`tests/test_api.py`**: Verifies duplicate uploading hashes, folder CRUD operations, tag filters, route detail edits, and Garmin sync/authentication mock flows.
+- **`tests/test_integration.py`**: Playwright integration tests simulating UI flows (uploading GPX, configuring privacy settings, playing animations).
 
 Run tests using:
 ```bash
@@ -98,7 +114,6 @@ PYTHONPATH=. ./venv/bin/pytest tests/
 
 Start the application inside the standalone Docker container:
 ```bash
-# Build and run using Docker Compose
-docker compose up -d
+docker compose up -d --build
 ```
-Access the application locally at `http://localhost:5000`. All persistence data (database, GPX logs, tile cache) is persisted inside the `blaeu_data` Docker volume.
+Access the application locally at `http://localhost:5000`. All persistent data is stored in the `blaeu_data` Docker volume.

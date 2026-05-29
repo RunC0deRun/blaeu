@@ -119,3 +119,24 @@ def test_generate_poster_map_with_custom_labels(client, mock_gis):
     assert res_data['display_city'] == 'Paris'
     assert res_data['display_country'] == 'France'
 
+
+def test_background_generation_on_upload(client, mock_gis):
+    # 1. Update the default map style for the current user to 'noir'
+    res = client.put('/api/auth/default-map-style', json={'default_map_style': 'noir'})
+    assert res.status_code == 200
+    
+    # 2. Upload a route
+    data = {
+        'file': (io.BytesIO(GPX_DATA_1.encode('utf-8')), 'test_route.gpx')
+    }
+    with patch('app.run_async_poster_generation') as mock_run:
+        upload_res = client.post('/api/upload', data=data, content_type='multipart/form-data')
+        assert upload_res.status_code == 201
+        route_id = json.loads(upload_res.data)['id']
+        
+        # Verify that run_async_poster_generation was called with the correct arguments
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        assert args[0] == route_id
+        assert args[2] == 'noir'
+

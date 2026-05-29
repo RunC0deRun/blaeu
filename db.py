@@ -35,7 +35,8 @@ def init_db():
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         is_admin INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        default_map_style TEXT DEFAULT 'dark'
     );
     """)
     
@@ -66,6 +67,7 @@ def init_db():
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         timezone TEXT,
         simplified_path TEXT,
+        poster_status TEXT,
         total_distance REAL,
         elevation_gain REAL,
         elevation_loss REAL,
@@ -83,6 +85,14 @@ def init_db():
     """)
 
     # Ensure user_id and is_public columns exist on routes (migration for existing DBs)
+    cursor.execute("PRAGMA table_info(users);")
+    user_columns = [row['name'] for row in cursor.fetchall()]
+    if 'default_map_style' not in user_columns:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN default_map_style TEXT DEFAULT 'dark';")
+        except sqlite3.OperationalError:
+            pass
+
     cursor.execute("PRAGMA table_info(routes);")
     columns = [row['name'] for row in cursor.fetchall()]
     if 'timezone' not in columns:
@@ -93,6 +103,11 @@ def init_db():
     if 'simplified_path' not in columns:
         try:
             cursor.execute("ALTER TABLE routes ADD COLUMN simplified_path TEXT;")
+        except sqlite3.OperationalError:
+            pass
+    if 'poster_status' not in columns:
+        try:
+            cursor.execute("ALTER TABLE routes ADD COLUMN poster_status TEXT;")
         except sqlite3.OperationalError:
             pass
     if 'user_id' not in columns:
@@ -154,6 +169,7 @@ def init_db():
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     timezone TEXT,
                     simplified_path TEXT,
+                    poster_status TEXT,
                     total_distance REAL,
                     elevation_gain REAL,
                     elevation_loss REAL,
@@ -177,7 +193,8 @@ def init_db():
                     'folder_id', 'user_id', 'is_public', 'created_at', 'timezone', 
                     'simplified_path', 'total_distance', 'elevation_gain', 'elevation_loss', 
                     'duration', 'avg_speed', 'avg_moving_speed', 'max_speed', 
-                    'waypoints_count', 'tracks_count', 'segments_count', 'points_count'
+                    'waypoints_count', 'tracks_count', 'segments_count', 'points_count',
+                    'poster_status'
                 ]
                 insert_cols = [col for col in common_cols if col in curr_cols]
                 cols_str = ", ".join(insert_cols)
@@ -335,6 +352,15 @@ def get_routes(user_id, folder_id=None):
                 route['simplified_path'] = []
         else:
             route['simplified_path'] = []
+            
+        # Deserialize poster_status
+        if 'poster_status' in route and route['poster_status']:
+            try:
+                route['poster_status'] = json.loads(route['poster_status'])
+            except Exception:
+                route['poster_status'] = None
+        else:
+            route['poster_status'] = None
         # Fetch tags
         cursor.execute("""
             SELECT t.name FROM tags t
@@ -372,6 +398,15 @@ def get_route(route_id):
             route['simplified_path'] = []
     else:
         route['simplified_path'] = []
+        
+    # Deserialize poster_status
+    if 'poster_status' in route and route['poster_status']:
+        try:
+            route['poster_status'] = json.loads(route['poster_status'])
+        except Exception:
+            route['poster_status'] = None
+    else:
+        route['poster_status'] = None
     # Fetch tags
     cursor.execute("""
         SELECT t.name FROM tags t
@@ -649,3 +684,28 @@ def count_users():
     row = cursor.fetchone()
     conn.close()
     return row['count']
+
+def update_user_default_map_style(user_id, default_map_style):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET default_map_style = ? WHERE id = ?", (default_map_style, user_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def update_route_poster_status(route_id, poster_status_dict):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        status_json = json.dumps(poster_status_dict) if poster_status_dict else None
+        cursor.execute("UPDATE routes SET poster_status = ? WHERE id = ?", (status_json, route_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()

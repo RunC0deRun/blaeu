@@ -9,6 +9,8 @@ let routesList = [];
 let foldersList = [];
 let activeFolderFilter = '';
 let activeTagFilter = '';
+let currentUser = null;
+let authMode = 'login';
 
 // Animation Playback State
 let animationPoints = []; // Flattened [{lat, lon, ele, time, elapsed}]
@@ -35,10 +37,7 @@ let labelsLoadedForRouteId = null;
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     initAppEvents();
-    loadFolders();
-    loadTags();
-    loadRoutes();
-    loadMapThemes();
+    checkAuthStatus();
 });
 
 // Initialize Leaflet Map
@@ -143,6 +142,24 @@ function initAppEvents() {
     // Settings Modal
     document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
     document.getElementById('close-settings-btn').addEventListener('click', closeSettingsModal);
+    
+    // Auth Form Submit
+    const loginForm = document.getElementById('login-form');
+    if (loginForm) {
+        loginForm.addEventListener('submit', handleAuthSubmit);
+    }
+    const loginToggleLink = document.getElementById('login-toggle-link');
+    if (loginToggleLink) {
+        loginToggleLink.addEventListener('click', toggleAuthMode);
+    }
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', handleLogout);
+    }
+    const privacyToggleBtn = document.getElementById('route-privacy-toggle-btn');
+    if (privacyToggleBtn) {
+        privacyToggleBtn.addEventListener('click', handlePrivacyToggle);
+    }
     
     // Load and bind Animation Mode Settings
     const modeSelect = document.getElementById('mode-select');
@@ -351,12 +368,17 @@ function renderRoutesLedger() {
             formattedDate += ` ${route.timezone_abbr}`;
         }
 
+        const privacyIcon = route.is_public ? 
+            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Public"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>` :
+            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Private"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+
         return `
             <div class="timeline-item ${activeClass}" onclick="selectRoute(${route.id})">
                 <div class="timeline-date">${formattedDate}</div>
                 <h4 class="timeline-title">${escapeHTML(route.name)}</h4>
                 <p class="timeline-desc">${escapeHTML(route.description || 'No description provided.')}</p>
                 <div class="timeline-meta">
+                    <span style="opacity: 0.7; display: inline-flex; align-items: center; margin-right: 8px;">${privacyIcon}</span>
                     ${folderBadge}
                     <span class="tag-badge btn-sm">${distanceStr}</span>
                     <span class="tag-badge btn-sm">${durationStr}</span>
@@ -496,13 +518,37 @@ function renderDashboardGrid() {
         
         const tagsHtml = route.tags ? route.tags.map(t => `<span class="tag-badge" onclick="event.stopPropagation(); toggleTagFilter('${t}')">#${escapeHTML(t)}</span>`).join('') : '';
 
+        const privacyIcon = route.is_public ? 
+            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Public"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>` :
+            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Private"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+
+        const actionsHtml = route.is_owner ? `
+            <div class="activity-card-actions">
+                <button class="btn-icon" onclick="editRouteFromDashboard(${route.id}, event)" title="Edit details">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                </button>
+                <button class="btn-icon" onclick="deleteRouteFromDashboard(${route.id}, '${escapeHTML(route.name)}', event)" title="Delete activity">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                </button>
+            </div>
+        ` : '';
+
         return `
             <div class="activity-card" onclick="selectRoute(${route.id})">
                 <div class="activity-card-preview">
                     <canvas class="activity-mini-canvas" data-route-id="${route.id}"></canvas>
                 </div>
                 <div class="activity-card-body">
-                    <div class="activity-card-time">${formattedDate}</div>
+                    <div class="activity-card-time" style="display: flex; align-items: center; justify-content: space-between;">
+                        <span>${formattedDate}</span>
+                        <span style="opacity: 0.7; display: inline-flex; align-items: center;">${privacyIcon}</span>
+                    </div>
                     <h3 class="activity-card-title" title="${escapeHTML(route.name)}">${escapeHTML(route.name)}</h3>
                     <p class="activity-card-desc">${escapeHTML(route.description || 'No description provided.')}</p>
                     <div class="activity-card-stats-grid">
@@ -529,20 +575,7 @@ function renderDashboardGrid() {
                         ${folderBadge}
                         ${tagsHtml}
                     </div>
-                    <div class="activity-card-actions">
-                        <button class="btn-icon" onclick="editRouteFromDashboard(${route.id}, event)" title="Edit details">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
-                        </button>
-                        <button class="btn-icon" onclick="deleteRouteFromDashboard(${route.id}, '${escapeHTML(route.name)}', event)" title="Delete activity">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                            </svg>
-                        </button>
-                    </div>
+                    ${actionsHtml}
                 </div>
             </div>
         `;
@@ -788,6 +821,37 @@ async function selectRoute(routeId) {
         document.getElementById('route-details-panel').classList.remove('hidden');
         document.getElementById('route-title').textContent = currentRoute.name;
         document.getElementById('route-desc').textContent = currentRoute.description || 'No description provided.';
+        
+        const privacyStatus = document.getElementById('route-privacy-status');
+        const privacyToggleBtn = document.getElementById('route-privacy-toggle-btn');
+        const editRouteBtn = document.getElementById('edit-route-btn');
+        const deleteRouteBtn = document.getElementById('delete-route-btn');
+        
+        if (currentRoute.is_owner) {
+            document.getElementById('route-privacy-container').style.display = 'inline-flex';
+            if (editRouteBtn) editRouteBtn.classList.remove('hidden');
+            if (deleteRouteBtn) deleteRouteBtn.classList.remove('hidden');
+            
+            const lockIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+            const globeIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>`;
+            
+            if (currentRoute.is_public) {
+                if (privacyStatus) privacyStatus.innerHTML = `${globeIcon} Public`;
+                if (privacyToggleBtn) privacyToggleBtn.textContent = 'Make Private';
+            } else {
+                if (privacyStatus) privacyStatus.innerHTML = `${lockIcon} Private`;
+                if (privacyToggleBtn) privacyToggleBtn.textContent = 'Make Public';
+            }
+            if (privacyToggleBtn) privacyToggleBtn.style.display = 'inline-block';
+        } else {
+            if (editRouteBtn) editRouteBtn.classList.add('hidden');
+            if (deleteRouteBtn) deleteRouteBtn.classList.add('hidden');
+            
+            const globeIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>`;
+            
+            if (privacyStatus) privacyStatus.innerHTML = `${globeIcon} Public (by ${escapeHTML(currentRoute.owner_username || 'Unknown')})`;
+            if (privacyToggleBtn) privacyToggleBtn.style.display = 'none';
+        }
         
         // Badges tags
         const metaTags = document.getElementById('route-meta-tags');
@@ -1860,6 +1924,14 @@ function closeFoldersModal() {
 function openSettingsModal() {
     document.getElementById('settings-modal').classList.remove('hidden');
     checkGarminStatus();
+    if (currentUser && currentUser.is_admin) {
+        const adminSec = document.getElementById('admin-user-section');
+        if (adminSec) adminSec.classList.remove('hidden');
+        loadAdminUserList();
+    } else {
+        const adminSec = document.getElementById('admin-user-section');
+        if (adminSec) adminSec.classList.add('hidden');
+    }
 }
 
 function closeSettingsModal() {
@@ -2979,6 +3051,243 @@ async function saveImage() {
         if (titleText) titleText.textContent = 'Generating Video';
     }, 500);
 }
+
+// ----------------------------------------------------
+// Authentication & User Management Logic
+// ----------------------------------------------------
+
+async function checkAuthStatus() {
+    try {
+        const res = await fetch('/api/auth/status');
+        const data = await res.json();
+        const loginModal = document.getElementById('login-modal');
+        
+        if (data.logged_in) {
+            currentUser = data.user;
+            if (loginModal) loginModal.style.display = 'none';
+            
+            // Set up UI header for logout visibility, etc.
+            const logoutBtn = document.getElementById('logout-btn');
+            if (logoutBtn) {
+                logoutBtn.style.display = 'flex';
+            }
+            
+            // Load app data
+            await loadFolders();
+            await loadTags();
+            await loadRoutes();
+            await loadMapThemes();
+            checkGarminStatus();
+        } else {
+            currentUser = null;
+            if (loginModal) loginModal.style.display = 'flex';
+            showAuthModal(data.no_users_exist);
+        }
+    } catch (err) {
+        console.error("Error checking auth status:", err);
+    }
+}
+
+function toggleAuthMode(e) {
+    if (e) e.preventDefault();
+    if (authMode === 'login') {
+        authMode = 'register';
+    } else {
+        authMode = 'login';
+    }
+    showAuthModal(false);
+}
+
+function showAuthModal(noUsersExist) {
+    const loginTitle = document.getElementById('login-title');
+    const submitBtn = document.getElementById('login-submit-btn');
+    const toggleText = document.getElementById('login-toggle-text');
+    const toggleLink = document.getElementById('login-toggle-link');
+    const errorMsg = document.getElementById('login-error-msg');
+    
+    if (errorMsg) errorMsg.style.display = 'none';
+    
+    if (noUsersExist) {
+        authMode = 'admin_setup';
+        if (loginTitle) loginTitle.textContent = 'Create Admin Account';
+        if (submitBtn) submitBtn.textContent = 'Create Admin';
+        if (toggleText) toggleText.parentElement.style.display = 'none';
+    } else {
+        if (authMode === 'register') {
+            if (loginTitle) loginTitle.textContent = 'Register';
+            if (submitBtn) submitBtn.textContent = 'Register';
+            if (toggleText) toggleText.textContent = "Already have an account?";
+            if (toggleLink) toggleLink.textContent = "Log In";
+            if (toggleText) toggleText.parentElement.style.display = 'block';
+        } else {
+            authMode = 'login';
+            if (loginTitle) loginTitle.textContent = 'Log In';
+            if (submitBtn) submitBtn.textContent = 'Log In';
+            if (toggleText) toggleText.textContent = "Don't have an account?";
+            if (toggleLink) toggleLink.textContent = "Register";
+            if (toggleText) toggleText.parentElement.style.display = 'block';
+        }
+    }
+}
+
+async function handleAuthSubmit(e) {
+    if (e) e.preventDefault();
+    
+    const usernameInput = document.getElementById('login-username');
+    const passwordInput = document.getElementById('login-password');
+    const errorMsg = document.getElementById('login-error-msg');
+    const submitBtn = document.getElementById('login-submit-btn');
+    
+    if (!usernameInput || !passwordInput) return;
+    
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value;
+    
+    if (!username || !password) return;
+    
+    if (errorMsg) errorMsg.style.display = 'none';
+    if (submitBtn) submitBtn.disabled = true;
+    
+    const url = (authMode === 'register' || authMode === 'admin_setup') ? '/api/auth/register' : '/api/auth/login';
+    
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        
+        if (!res.ok) {
+            throw new Error(data.error || 'Authentication failed');
+        }
+        
+        // Clear forms
+        usernameInput.value = '';
+        passwordInput.value = '';
+        
+        // Auth success
+        currentUser = data.user;
+        const loginModal = document.getElementById('login-modal');
+        if (loginModal) loginModal.style.display = 'none';
+        
+        // Load user data
+        await loadFolders();
+        await loadTags();
+        await loadRoutes();
+        await loadMapThemes();
+        checkGarminStatus();
+    } catch (err) {
+        if (errorMsg) {
+            errorMsg.textContent = err.message;
+            errorMsg.style.display = 'block';
+        }
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
+    }
+}
+
+async function handleLogout() {
+    try {
+        const res = await fetch('/api/auth/logout', { method: 'POST' });
+        if (!res.ok) throw new Error('Logout failed');
+        currentUser = null;
+        routesList = [];
+        foldersList = [];
+        deselectRoute();
+        const adminSec = document.getElementById('admin-user-section');
+        if (adminSec) adminSec.classList.add('hidden');
+        await checkAuthStatus();
+    } catch (err) {
+        console.error("Logout failed:", err);
+    }
+}
+
+async function handlePrivacyToggle() {
+    if (!currentRoute) return;
+    const newStatus = !currentRoute.is_public;
+    const privacyToggleBtn = document.getElementById('route-privacy-toggle-btn');
+    if (privacyToggleBtn) privacyToggleBtn.disabled = true;
+    
+    try {
+        const res = await fetch(`/api/routes/${currentRoute.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_public: newStatus })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to update privacy status');
+        
+        currentRoute.is_public = newStatus;
+        
+        const privacyStatus = document.getElementById('route-privacy-status');
+        const lockIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+        const globeIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>`;
+        
+        if (newStatus) {
+            if (privacyStatus) privacyStatus.innerHTML = `${globeIcon} Public`;
+            if (privacyToggleBtn) privacyToggleBtn.textContent = 'Make Private';
+        } else {
+            if (privacyStatus) privacyStatus.innerHTML = `${lockIcon} Private`;
+            if (privacyToggleBtn) privacyToggleBtn.textContent = 'Make Public';
+        }
+        
+        await loadRoutes();
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        if (privacyToggleBtn) privacyToggleBtn.disabled = false;
+    }
+}
+
+async function loadAdminUserList() {
+    const listBody = document.getElementById('admin-user-list');
+    if (!listBody) return;
+    listBody.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 10px;">Loading users...</td></tr>';
+    
+    try {
+        const res = await fetch('/api/auth/users');
+        if (!res.ok) throw new Error('Failed to fetch user list');
+        const users = await res.json();
+        
+        listBody.innerHTML = users.map(user => {
+            const role = user.is_admin ? '<span style="color: var(--primary);">Admin</span>' : 'User';
+            const isSelf = currentUser && currentUser.id === user.id;
+            const deleteBtn = isSelf ? 
+                '<span style="opacity: 0.5; font-size: 0.9em; padding: 4px 8px;">(You)</span>' :
+                `<button type="button" class="btn btn-sm btn-outline" style="border-color: #ef4444; color: #ef4444; padding: 2px 8px;" onclick="handleDeleteUser(${user.id}, '${escapeHTML(user.username)}')">Delete</button>`;
+            
+            return `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 8px 0; font-weight: 500;">${escapeHTML(user.username)}</td>
+                    <td style="padding: 8px 0;">${role}</td>
+                    <td style="padding: 8px 0; text-align: right;">${deleteBtn}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (err) {
+        listBody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #ef4444; padding: 10px;">${escapeHTML(err.message)}</td></tr>`;
+    }
+}
+
+async function handleDeleteUser(userId, username) {
+    if (!confirm(`Are you sure you want to delete the user account "${username}"? All their activities and folders will be deleted permanently.`)) return;
+    
+    try {
+        const res = await fetch(`/api/auth/users/${userId}`, {
+            method: 'DELETE'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to delete user');
+        
+        alert(`User "${username}" has been successfully deleted.`);
+        loadAdminUserList();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+window.handleDeleteUser = handleDeleteUser;
 
 
 

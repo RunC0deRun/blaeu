@@ -9,16 +9,19 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
 ## ✨ Features
 
 - **GPX Parsing & Stats Extraction**: Zero-dependency parser calculates **11 key statistics** (distance, duration, elevation gain/loss, total average speed, moving average speed, max speed, and counts for waypoints, tracks, segments, and points).
+- **Start/Finish Privacy Zone**: Configurable range from **0m (disabled) to 1000m** (in 200m increments) to mask exact starting and ending points. Coordinates and waypoints are dynamically cropped client-side on-the-fly across Leaflet maps, playback animations, video exports, and dashboard miniatures without modifying the source GPX file on disk.
+- **Automated Garmin Connect Integration**: Sync activities directly from Garmin Connect. Login credentials are processed securely in memory and never stored in the database. Supports Multi-Factor Authentication (MFA) via live interactive prompts, stateless session token persistence, and robust rate-limit (429 HTTP) error handling.
 - **Modern HUD Dark-Mode Interface**: Visual design styled with neon cyan and purple accents, glassmorphic panels, rotating compass micro-animations, and a native dark map theme (**CartoDB Dark Matter**).
-- **Smoothed Playback Animation**: Applies a 7-point moving average filter over GPX coordinates to smooth out GPS jitter, providing fluid route tracing and viewport camera panning.
+- **Selectable Playback Animation Modes**:
+  - **Real-Time Mode**: Plays back the route reflecting actual recorded velocities, ignoring long static pauses.
+  - **Smooth Mode**: Applies a 7-point moving average filter over GPX coordinates to smooth out GPS jitter, providing fluid route tracing and viewport camera panning.
 - **Customizable Video Exporter**: 
   - Dynamic camera-following tracking: Map tiles and vectors slide smoothly under a centered active marker.
   - Configurable resolutions: Export in **720p**, **1080p**, or **2160p (4K)**.
   - Proportional vector scaling: Lines, markers, text, and layout scale automatically to remain visually identical at any resolution.
   - Configurable framerates: Export at **24**, **25**, **30**, **50**, or **60 FPS**.
+  - Multiple formats: High-quality server-side transcoding (via FFmpeg in the container) supports **WebM** and **MP4 (H.264/YUV420p)** exports with constant framerate mapping.
 - **Minimalist Poster Background Maps (v0.5.0)**: Toggle between default Dark Matter tiles and 17 minimalist map themes (Noir, Blueprint, Sunset, Neon Cyberpunk, etc.). Maps are generated dynamically on-the-fly on the backend using `osmnx` (cached locally) and rendered at high resolution (300 DPI) via `matplotlib`.
-- **Start/Finish Privacy Zone (v0.4.0)**: Hide precise starting and endpoints of activities with a configurable buffer range (0m to 1000m in 200m increments), automatically updating timelines, previews, and exports.
-- **Garmin Connect Sync (v0.4.0)**: Seamless token-based passwordless sync for recent activities, supporting stateless multi-factor authentication (MFA) and bulk or single imports.
 - **Organization & Search**: CRUD operations for folder hierarchies, tagging support, and chronological timeline ledger.
 - **Tile Proxy & CORS Protection**: Serves tiles from the same origin to avoid Canvas staining, caching them locally on disk to protect external map services.
 - **Duplicate Prevention**: Computes SHA-256 hashes of uploaded GPX logs to reject duplicate uploads.
@@ -27,9 +30,10 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
 
 ## 🛠️ Technology Stack
 
-- **Backend**: Python 3.14, Flask, SQLite, Requests, Gunicorn, OSMnx, Matplotlib, Geopandas, Pyproj, Shapely
+- **Backend**: Python 3.14, Flask, SQLite, Gunicorn, GarminConnect, TimezoneFinder, FFmpeg, OSMnx, Matplotlib, Geopandas, Pyproj, Shapely, Requests
 - **Frontend**: HTML5, Vanilla CSS3 (Glassmorphic HUD theme), Vanilla JS, Leaflet.js (bundled locally)
 - **Containerization**: Docker, Docker Compose
+
 
 
 ---
@@ -37,10 +41,10 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
 ## 📁 Repository Structure
 
 ```text
-├── app.py                  # Main Flask server & API endpoints (cached tile proxy)
+├── app.py                  # Main Flask server & API endpoints (cached tile proxy, video transcoder, Garmin sync)
 ├── db.py                   # SQLite database schema, initialization, and CRUD
 ├── gpx_parser.py           # Custom GPX XML parser & statistics accumulator
-├── Dockerfile              # Python slim image with gunicorn
+├── Dockerfile              # Python slim image with Gunicorn and FFmpeg
 ├── docker-compose.yml      # Compose config mounting persistent /data volume
 ├── requirements.txt        # Python package dependencies
 ├── .gitignore              # Ignores local databases, venv, and caches
@@ -50,15 +54,15 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
 │   ├── css/
 │   │   └── styles.css      # Custom HUD dashboard styles
 │   ├── js/
-│   │   └── app.js          # Interactive map drawing, animation, and video recorder
+│   │   └── app.js          # Interactive map drawing, animation, video exporter, and Garmin handlers
 │   └── vendor/
 │       └── leaflet/        # Bundled Leaflet assets for offline/standalone execution
 ├── templates/
 │   └── index.html          # Main SPA layout and HUD control panel overlays
 └── tests/
-    ├── test_api.py         # Unit tests for Flask API endpoints
+    ├── test_api.py         # Unit tests for Flask API endpoints & Garmin mock logic
     ├── test_gpx_parser.py  # Unit tests for GPX statistics parsing
-    └── test_integration.py # Integration test skeleton (skipped on host without browser)
+    └── test_integration.py # Integration test suite utilizing Playwright
 ```
 
 ---
@@ -83,7 +87,7 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
    http://localhost:5000
    ```
 
-All persistent data (sqlite database, parsed GPX files, and cached map tiles) is stored in the mounted `blaeu_data` Docker volume.
+All persistent data (sqlite database, parsed GPX files, Garmin session tokens, and cached map tiles) is stored in the mounted `blaeu_data` Docker volume.
 
 ---
 
@@ -100,13 +104,15 @@ All persistent data (sqlite database, parsed GPX files, and cached map tiles) is
    pip install -r requirements.txt
    ```
 
-3. Set up path variables (defaults to directory `./data`) and run the Flask server:
+3. Ensure `ffmpeg` is installed on your host system for video format conversions.
+
+4. Set up path variables (defaults to directory `./data`) and run the Flask server:
    ```bash
    export FLASK_ENV=development
    python app.py
    ```
 
-4. Navigate to `http://127.0.0.1:5000` in your web browser.
+5. Navigate to `http://127.0.0.1:5000` in your web browser.
 
 ---
 

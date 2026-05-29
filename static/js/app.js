@@ -24,6 +24,12 @@ let routePolyline = null;
 let animatedPolyline = null;
 let animationMarker = null;
 let waypointMarkersGroup = null;
+let tileLayer = null;
+let posterMapOverlay = null;
+let mapThemes = [];
+let currentMapStyle = 'dark';
+let labelsLoadedForRouteId = null;
+
 
 // Initialize Page
 document.addEventListener('DOMContentLoaded', () => {
@@ -32,6 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadFolders();
     loadTags();
     loadRoutes();
+    loadMapThemes();
 });
 
 // Initialize Leaflet Map
@@ -43,7 +50,7 @@ function initMap() {
     }).setView([50.0, 10.0], 4);
 
     // Use our cached tile proxy endpoint
-    L.tileLayer('/api/tiles/{z}/{x}/{y}.png', {
+    tileLayer = L.tileLayer('/api/tiles/{z}/{x}/{y}.png', {
         maxZoom: 18,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
     }).addTo(map);
@@ -125,6 +132,13 @@ function initAppEvents() {
 
     // Video Export
     document.getElementById('export-video-btn').addEventListener('click', exportVideo);
+    
+    // Save Image
+    const saveImageBtn = document.getElementById('save-image-btn');
+    if (saveImageBtn) {
+        saveImageBtn.addEventListener('click', saveImage);
+    }
+
 
     // Settings Modal
     document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
@@ -189,9 +203,38 @@ function initAppEvents() {
             if (currentRoute) {
                 drawRouteOnMap();
                 prepareAnimationPoints();
+                if (currentMapStyle !== 'dark') {
+                    applyMapStyle();
+                }
             }
         });
     }
+
+    // Bind HUD Map Style Selector
+    const hudMapStyleSelect = document.getElementById('hud-map-style-select');
+    if (hudMapStyleSelect) {
+        hudMapStyleSelect.addEventListener('change', (e) => {
+            currentMapStyle = e.target.value;
+            applyMapStyle();
+        });
+    }
+
+    const hudCityInput = document.getElementById('hud-map-style-city');
+    const hudCountryInput = document.getElementById('hud-map-style-country');
+    const handleHudLabelChange = () => {
+        if (currentRoute && currentMapStyle !== 'dark') {
+            applyMapStyle();
+        }
+    };
+    if (hudCityInput) {
+        hudCityInput.addEventListener('change', handleHudLabelChange);
+        hudCityInput.addEventListener('blur', handleHudLabelChange);
+    }
+    if (hudCountryInput) {
+        hudCountryInput.addEventListener('change', handleHudLabelChange);
+        hudCountryInput.addEventListener('blur', handleHudLabelChange);
+    }
+
 
     initSettingsFormats();
 
@@ -362,6 +405,31 @@ function deselectRoute() {
     if (animatedPolyline) map.removeLayer(animatedPolyline);
     if (animationMarker) map.removeLayer(animationMarker);
     waypointMarkersGroup.clearLayers();
+    
+    // Clean up poster background overlay and reset map
+    const hud = document.getElementById('map-style-hud');
+    if (hud) hud.classList.add('hidden');
+    
+    labelsLoadedForRouteId = null;
+    const cityInput = document.getElementById('hud-map-style-city');
+    const countryInput = document.getElementById('hud-map-style-country');
+    if (cityInput) cityInput.value = '';
+    if (countryInput) countryInput.value = '';
+    const labelsContainer = document.getElementById('hud-map-poster-labels');
+    if (labelsContainer) labelsContainer.classList.add('hidden');
+
+    if (posterMapOverlay) {
+        map.removeLayer(posterMapOverlay);
+        posterMapOverlay = null;
+    }
+    if (!map.hasLayer(tileLayer)) {
+        tileLayer.addTo(map);
+    }
+    const mapElement = document.getElementById('map');
+    if (mapElement) {
+        mapElement.style.backgroundColor = '';
+    }
+
     
     currentRoute = null;
     showDashboardView(true);
@@ -748,6 +816,20 @@ async function selectRoute(routeId) {
         // Render on Map
         drawRouteOnMap();
         
+        // Load map style preference and show style selector HUD
+        const savedStyle = localStorage.getItem('blaeu_map_style') || 'dark';
+        currentMapStyle = savedStyle;
+        const hudSelect = document.getElementById('hud-map-style-select');
+        if (hudSelect) {
+            hudSelect.value = currentMapStyle;
+        }
+        const hud = document.getElementById('map-style-hud');
+        if (hud) hud.classList.remove('hidden');
+        
+        if (currentMapStyle !== 'dark') {
+            applyMapStyle();
+        }
+
         // Prepare playback animation points
         prepareAnimationPoints();
         
@@ -1303,27 +1385,6 @@ async function exportVideo() {
     let minPxX = 0;
     let minPxY = 0;
 
-    // Collect all tiles covering the entire route path animation to preload
-    const tilesSet = new Set();
-    animationPoints.forEach(pt => {
-        const pxX = lngToX(pt.lon, zoom);
-        const pxY = latToY(pt.lat, zoom);
-        const minTX = Math.floor((pxX - width / 2) / 256);
-        const maxTX = Math.floor((pxX + width / 2) / 256);
-        const minTY = Math.floor((pxY - height / 2) / 256);
-        const maxTY = Math.floor((pxY + height / 2) / 256);
-        for (let tx = minTX; tx <= maxTX; tx++) {
-            for (let ty = minTY; ty <= maxTY; ty++) {
-                tilesSet.add(`${tx}_${ty}`);
-            }
-        }
-    });
-
-    const tilesToLoad = Array.from(tilesSet).map(key => {
-        const [tx, ty] = key.split('_').map(Number);
-        return { x: tx, y: ty, z: zoom };
-    });
-
     // Helper to load image
     function loadImage(url) {
         return new Promise((resolve) => {
@@ -1335,20 +1396,50 @@ async function exportVideo() {
         });
     }
 
-    // Preload tiles via backend CORS-free caching proxy
+    let posterMapImg = null;
+    const isPosterActive = currentMapStyle !== 'dark' && currentRoute.posterMapUrl;
     const loadedTilesMap = {};
-    let loadedCount = 0;
-    
-    for (const t of tilesToLoad) {
-        const tileUrl = `/api/tiles/${t.z}/${t.x}/${t.y}.png`;
-        const img = await loadImage(tileUrl);
-        if (img) {
-            loadedTilesMap[`${t.x}_${t.y}`] = img;
+
+    if (isPosterActive) {
+        statusText.textContent = 'Loading map background...';
+        posterMapImg = await loadImage(currentRoute.posterMapUrl);
+        fill.style.width = '30%';
+    } else {
+        // Collect all tiles covering the entire route path animation to preload
+        const tilesSet = new Set();
+        animationPoints.forEach(pt => {
+            const pxX = lngToX(pt.lon, zoom);
+            const pxY = latToY(pt.lat, zoom);
+            const minTX = Math.floor((pxX - width / 2) / 256);
+            const maxTX = Math.floor((pxX + width / 2) / 256);
+            const minTY = Math.floor((pxY - height / 2) / 256);
+            const maxTY = Math.floor((pxY + height / 2) / 256);
+            for (let tx = minTX; tx <= maxTX; tx++) {
+                for (let ty = minTY; ty <= maxTY; ty++) {
+                    tilesSet.add(`${tx}_${ty}`);
+                }
+            }
+        });
+
+        const tilesToLoad = Array.from(tilesSet).map(key => {
+            const [tx, ty] = key.split('_').map(Number);
+            return { x: tx, y: ty, z: zoom };
+        });
+
+        // Preload tiles via backend CORS-free caching proxy
+        let loadedCount = 0;
+        
+        for (const t of tilesToLoad) {
+            const tileUrl = `/api/tiles/${t.z}/${t.x}/${t.y}.png`;
+            const img = await loadImage(tileUrl);
+            if (img) {
+                loadedTilesMap[`${t.x}_${t.y}`] = img;
+            }
+            loadedCount++;
+            const progressPct = Math.round((loadedCount / tilesToLoad.length) * 30); // 0-30% progress
+            fill.style.width = `${progressPct}%`;
+            statusText.textContent = `Loading map background (${loadedCount}/${tilesToLoad.length})`;
         }
-        loadedCount++;
-        const progressPct = Math.round((loadedCount / tilesToLoad.length) * 30); // 0-30% progress
-        fill.style.width = `${progressPct}%`;
-        statusText.textContent = `Loading map background (${loadedCount}/${tilesToLoad.length})`;
     }
 
     statusText.textContent = 'Rendering animation frames...';
@@ -1529,22 +1620,49 @@ async function exportVideo() {
         minPxX = activePxX - width / 2;
         minPxY = activePxY - height / 2;
 
-        // 1. Draw Map Tiles that cover the current viewport
+        // 1. Draw Map Tiles or Poster Background that cover the current viewport
         ctx.clearRect(0, 0, width, height);
         ctx.save();
         
-        const frameTileMinX = Math.floor(minPxX / 256);
-        const frameTileMaxX = Math.floor((minPxX + width) / 256);
-        const frameTileMinY = Math.floor(minPxY / 256);
-        const frameTileMaxY = Math.floor((minPxY + height) / 256);
+        if (isPosterActive) {
+            // Draw solid background color
+            ctx.fillStyle = currentRoute.posterMapBgColor || '#0e1320';
+            ctx.fillRect(0, 0, width, height);
+            
+            // Draw static poster map image oriented correctly
+            if (posterMapImg && currentRoute.posterMapBounds) {
+                const bounds = currentRoute.posterMapBounds;
+                const latMin = bounds[0][0];
+                const lonMin = bounds[0][1];
+                const latMax = bounds[1][0];
+                const lonMax = bounds[1][1];
+                
+                const xMin = lngToX(lonMin, zoom);
+                const xMax = lngToX(lonMax, zoom);
+                const yMin = latToY(latMax, zoom);
+                const yMax = latToY(latMin, zoom);
+                
+                const dx = xMin - minPxX;
+                const dy = yMin - minPxY;
+                const dw = xMax - xMin;
+                const dh = yMax - yMin;
+                
+                ctx.drawImage(posterMapImg, dx, dy, dw, dh);
+            }
+        } else {
+            const frameTileMinX = Math.floor(minPxX / 256);
+            const frameTileMaxX = Math.floor((minPxX + width) / 256);
+            const frameTileMinY = Math.floor(minPxY / 256);
+            const frameTileMaxY = Math.floor((minPxY + height) / 256);
 
-        for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
-            for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
-                const img = loadedTilesMap[`${tx}_${ty}`];
-                if (img) {
-                    const dx = tx * 256 - minPxX;
-                    const dy = ty * 256 - minPxY;
-                    ctx.drawImage(img, dx, dy);
+            for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
+                for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
+                    const img = loadedTilesMap[`${tx}_${ty}`];
+                    if (img) {
+                        const dx = tx * 256 - minPxX;
+                        const dy = ty * 256 - minPxY;
+                        ctx.drawImage(img, dx, dy);
+                    }
                 }
             }
         }
@@ -2281,3 +2399,586 @@ async function importSelectedGarminActivities() {
         document.getElementById('garmin-activities-modal').classList.add('hidden');
     }
 }
+
+// Load available map themes from backend
+async function loadMapThemes() {
+    try {
+        const res = await fetch('/api/map-themes');
+        if (!res.ok) throw new Error('Failed to load map themes');
+        mapThemes = await res.json();
+        
+        const select = document.getElementById('hud-map-style-select');
+        if (select) {
+            select.innerHTML = '<option value="dark">Dark Matter (Default)</option>';
+            mapThemes.forEach(theme => {
+                const opt = document.createElement('option');
+                opt.value = theme.id;
+                opt.textContent = theme.name;
+                select.appendChild(opt);
+            });
+        }
+    } catch (err) {
+        console.error('Error loading map themes:', err);
+    }
+}
+
+// Apply current map style (Dark Matter vs minimalist poster overlay)
+async function applyMapStyle() {
+    if (!currentRoute) return;
+    
+    // Remove existing poster overlay if present
+    if (posterMapOverlay) {
+        map.removeLayer(posterMapOverlay);
+        posterMapOverlay = null;
+    }
+    
+    const mapElement = document.getElementById('map');
+    
+    // Save preference
+    localStorage.setItem('blaeu_map_style', currentMapStyle);
+    
+    if (currentMapStyle === 'dark') {
+        // Restore default tile layer
+        if (!map.hasLayer(tileLayer)) {
+            tileLayer.addTo(map);
+        }
+        if (mapElement) {
+            mapElement.style.backgroundColor = '';
+        }
+        
+        // Remove background values stored on currentRoute
+        delete currentRoute.posterMapUrl;
+        delete currentRoute.posterMapBounds;
+        delete currentRoute.posterMapBgColor;
+
+        const labelsContainer = document.getElementById('hud-map-poster-labels');
+        if (labelsContainer) {
+            labelsContainer.classList.add('hidden');
+        }
+        const cityInput = document.getElementById('hud-map-style-city');
+        const countryInput = document.getElementById('hud-map-style-country');
+        if (cityInput) cityInput.value = '';
+        if (countryInput) countryInput.value = '';
+        labelsLoadedForRouteId = null;
+    } else {
+        // Poster map style active
+        // Hide default tiles
+        if (map.hasLayer(tileLayer)) {
+            map.removeLayer(tileLayer);
+        }
+        
+        const select = document.getElementById('hud-map-style-select');
+        let originalText = '';
+        if (select && select.selectedIndex >= 0) {
+            originalText = select.options[select.selectedIndex].text;
+            select.options[select.selectedIndex].text = 'Loading Map...';
+        }
+
+        const cityInput = document.getElementById('hud-map-style-city');
+        const countryInput = document.getElementById('hud-map-style-country');
+        const labelsContainer = document.getElementById('hud-map-poster-labels');
+        
+        if (labelsContainer) {
+            labelsContainer.classList.remove('hidden');
+        }
+
+        if (labelsLoadedForRouteId !== currentRoute.id) {
+            if (cityInput) cityInput.value = '';
+            if (countryInput) countryInput.value = '';
+        }
+        
+        try {
+            // Get visible track coordinates (after privacy zone filter)
+            const coords = [];
+            getFilteredTracks().forEach(track => {
+                track.segments.forEach(segment => {
+                    coords.push(...segment.map(pt => [pt.lat, pt.lon]));
+                });
+            });
+            
+            let url = `/api/routes/${currentRoute.id}/poster-map?theme=${currentMapStyle}`;
+
+            // If labels are loaded, read from inputs (which is user's edited state, even if empty).
+            // Otherwise, omit displayCity/displayCountry so the backend resolves defaults.
+            if (labelsLoadedForRouteId === currentRoute.id) {
+                const cityVal = cityInput ? cityInput.value : '';
+                const countryVal = countryInput ? countryInput.value : '';
+                url += `&displayCity=${encodeURIComponent(cityVal)}&displayCountry=${encodeURIComponent(countryVal)}`;
+            }
+
+            if (coords.length > 0) {
+                const lats = coords.map(c => c[0]);
+                const lons = coords.map(c => c[1]);
+                const latMin = Math.min(...lats);
+                const latMax = Math.max(...lats);
+                const lonMin = Math.min(...lons);
+                const lonMax = Math.max(...lons);
+                
+                // Calculate projected meters per pixel at current zoom
+                const z = map.getZoom();
+                const projectedMetersPerPixel = 40075016.686 / (256 * Math.pow(2, z));
+                
+                // Get maximum viewport dimensions (including video export resolutions)
+                let exportWidth = 1920;
+                let exportHeight = 1080;
+                const resSelect = document.getElementById('res-select');
+                const resVal = resSelect ? resSelect.value : '1080';
+                if (resVal === '720') {
+                    exportWidth = 1280;
+                    exportHeight = 720;
+                } else if (resVal === '2160') {
+                    exportWidth = 3840;
+                    exportHeight = 2160;
+                }
+                
+                const mapSize = map.getSize();
+                const viewportWidth = mapSize ? mapSize.x : 800;
+                const viewportHeight = mapSize ? mapSize.y : 600;
+                
+                const w = Math.max(viewportWidth, exportWidth);
+                const h = Math.max(viewportHeight, exportHeight);
+                
+                // Margins in projected meters (half of viewport size to account for camera centering on endpoints)
+                let marginX = (w / 2) * projectedMetersPerPixel;
+                let marginY = (h / 2) * projectedMetersPerPixel;
+                
+                // Cap margins to a maximum of 3000 meters to keep download size and processing times reasonable
+                marginX = Math.min(marginX, 3000);
+                marginY = Math.min(marginY, 3000);
+                
+                // Project route bounds to EPSG:3857 meters
+                const pMin = map.options.crs.project(L.latLng(latMin, lonMin));
+                const pMax = map.options.crs.project(L.latLng(latMax, lonMax));
+                
+                // Expand bounds by margins
+                const xMin = pMin.x - marginX;
+                const xMax = pMax.x + marginX;
+                const yMin = pMin.y - marginY;
+                const yMax = pMax.y + marginY;
+                
+                // Unproject back to EPSG:4326 (lat/lon)
+                const unprojectedMin = map.options.crs.unproject(L.point(xMin, yMin));
+                const unprojectedMax = map.options.crs.unproject(L.point(xMax, yMax));
+                
+                url += `&latMin=${unprojectedMin.lat}&latMax=${unprojectedMax.lat}&lonMin=${unprojectedMin.lng}&lonMax=${unprojectedMax.lng}`;
+            }
+            
+            const res = await fetch(url);
+            if (!res.ok) throw new Error('Could not generate poster map');
+            const data = await res.json();
+            
+            // Set map container background color
+            if (mapElement) {
+                mapElement.style.backgroundColor = data.bg_color;
+            }
+            
+            // Add static image overlay
+            posterMapOverlay = L.imageOverlay(data.image_url, data.bounds, {
+                opacity: 1.0,
+                zIndex: 1
+            }).addTo(map);
+            
+            // Ensure overlay stays behind route lines and markers
+            posterMapOverlay.bringToBack();
+            
+            // Store details on currentRoute for video export
+            currentRoute.posterMapUrl = data.image_url;
+            currentRoute.posterMapBounds = data.bounds;
+            currentRoute.posterMapBgColor = data.bg_color;
+
+            if (labelsLoadedForRouteId !== currentRoute.id) {
+                if (cityInput) cityInput.value = data.display_city || '';
+                if (countryInput) countryInput.value = data.display_country || '';
+                labelsLoadedForRouteId = currentRoute.id;
+            }
+
+            
+        } catch (err) {
+            console.error(err);
+            alert('Map style generation failed: ' + err.message);
+            // Fallback to dark
+            currentMapStyle = 'dark';
+            if (select) select.value = 'dark';
+            if (!map.hasLayer(tileLayer)) tileLayer.addTo(map);
+            if (mapElement) mapElement.style.backgroundColor = '';
+        } finally {
+            if (select && select.selectedIndex >= 0) {
+                const activeTheme = mapThemes.find(t => t.id === currentMapStyle);
+                select.options[select.selectedIndex].text = activeTheme ? activeTheme.name : 'Dark Matter (Default)';
+            }
+        }
+    }
+}
+
+// Save static high-definition image of the entire track map
+async function saveImage() {
+    if (!currentRoute || animationPoints.length === 0) return;
+
+    pauseAnimation();
+
+    // Show Progress Dialog
+    const modal = document.getElementById('export-modal');
+    const fill = document.getElementById('export-progress-fill');
+    const statusText = document.getElementById('export-status-text');
+    const titleText = document.getElementById('export-status-title');
+    
+    if (titleText) titleText.textContent = 'Generating Image';
+    modal.classList.remove('hidden');
+    fill.style.width = '0%';
+    statusText.textContent = 'Preloading map background...';
+
+    // Helper to load image
+    function loadImage(url) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => resolve(img);
+            img.onerror = () => resolve(null);
+            img.src = url;
+        });
+    }
+
+    const canvas = document.getElementById('export-canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    const latitudes = animationPoints.map(p => p.lat);
+    const longitudes = animationPoints.map(p => p.lon);
+    const latMin = Math.min(...latitudes);
+    const latMax = Math.max(...latitudes);
+    const lonMin = Math.min(...longitudes);
+    const lonMax = Math.max(...longitudes);
+    
+    const centerLat = (latMin + latMax) / 2;
+    const centerLon = (lonMin + lonMax) / 2;
+
+    const isPosterActive = currentMapStyle !== 'dark' && currentRoute.posterMapUrl;
+
+    if (isPosterActive) {
+        // Load the background poster image
+        statusText.textContent = 'Loading poster background...';
+        const posterMapImg = await loadImage(currentRoute.posterMapUrl);
+        if (!posterMapImg) {
+            alert('Could not load poster background image.');
+            modal.classList.add('hidden');
+            return;
+        }
+
+        fill.style.width = '50%';
+        statusText.textContent = 'Rendering high-resolution poster...';
+
+        const width = posterMapImg.naturalWidth;
+        const height = posterMapImg.naturalHeight;
+        canvas.width = width;
+        canvas.height = height;
+
+        // Scale factor for drawing vectors relative to baseline 1080p height
+        const scaleFactor = height / 1080;
+
+        // Draw poster background image (takes up 100% of the canvas)
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(posterMapImg, 0, 0, width, height);
+
+        // Project coordinate bounds of the poster
+        const bounds = currentRoute.posterMapBounds;
+        const bLatMin = bounds[0][0];
+        const bLonMin = bounds[0][1];
+        const bLatMax = bounds[1][0];
+        const bLonMax = bounds[1][1];
+        
+        const pMin = map.options.crs.project(L.latLng(bLatMin, bLonMin));
+        const pMax = map.options.crs.project(L.latLng(bLatMax, bLonMax));
+        
+        const xMin = pMin.x;
+        const xMax = pMax.x;
+        const yMin = pMin.y;
+        const yMax = pMax.y;
+
+        // Map GPX coords to Poster Canvas pixels
+        function latLngToCanvasPx(lat, lng) {
+            const p = map.options.crs.project(L.latLng(lat, lng));
+            return {
+                x: ((p.x - xMin) / (xMax - xMin)) * width,
+                y: (1.0 - (p.y - yMin) / (yMax - yMin)) * height
+            };
+        }
+
+        // Draw Route Path
+        ctx.beginPath();
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 6 * scaleFactor;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        animationPoints.forEach((pt, idx) => {
+            const pos = latLngToCanvasPx(pt.lat, pt.lon);
+            if (idx === 0) ctx.moveTo(pos.x, pos.y);
+            else ctx.lineTo(pos.x, pos.y);
+        });
+        ctx.stroke();
+
+        // Draw Waypoints
+        getFilteredWaypoints().forEach(wpt => {
+            const pos = latLngToCanvasPx(wpt.lat, wpt.lon);
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 5 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#9333ea';
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 1.5 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+        });
+
+        // Draw Start/Finish Markers
+        if (animationPoints.length > 0) {
+            const startPt = animationPoints[0];
+            const startPos = latLngToCanvasPx(startPt.lat, startPt.lon);
+            ctx.beginPath();
+            ctx.arc(startPos.x, startPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#064e3b';
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            ctx.beginPath();
+            const sz = 3.5 * scaleFactor;
+            ctx.moveTo(startPos.x - sz * 0.6, startPos.y - sz);
+            ctx.lineTo(startPos.x + sz, startPos.y);
+            ctx.lineTo(startPos.x - sz * 0.6, startPos.y + sz);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            const finishPt = animationPoints[animationPoints.length - 1];
+            const finishPos = latLngToCanvasPx(finishPt.lat, finishPt.lon);
+            ctx.beginPath();
+            ctx.arc(finishPos.x, finishPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#7f1d1d';
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            const sq = 3 * scaleFactor;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x - sq, finishPos.y - sq, sq, sq);
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x, finishPos.y - sq, sq, sq);
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x - sq, finishPos.y, sq, sq);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x, finishPos.y, sq, sq);
+        }
+
+        // Draw Watermark
+        ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+        ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
+        ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
+        ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
+        ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
+        ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+
+    } else {
+        // Dark Matter Style
+        // Canvas resolution configuration
+        const resSelect = document.getElementById('res-select');
+        const resVal = resSelect ? resSelect.value : '1080';
+        let width = 1920;
+        let height = 1080;
+        
+        if (resVal === '720') {
+            width = 1280;
+            height = 720;
+        } else if (resVal === '2160') {
+            width = 3840;
+            height = 2160;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const scaleFactor = height / 1080;
+
+        // Use fitZoom to make sure the whole track is visible
+        const pBounds = L.latLngBounds(L.latLng(latMin, lonMin), L.latLng(latMax, lonMax));
+        const fitZoom = map.getBoundsZoom(pBounds);
+        const zoom = fitZoom;
+
+        // Web Mercator Formulas
+        function lngToX(lng, z) {
+            return (lng + 180) / 360 * Math.pow(2, z) * 256;
+        }
+        function latToY(lat, z) {
+            const latRad = lat * Math.PI / 180;
+            return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256;
+        }
+
+        const centerPxX = lngToX(centerLon, zoom);
+        const centerPxY = latToY(centerLat, zoom);
+        const minPxX = centerPxX - width / 2;
+        const minPxY = centerPxY - height / 2;
+
+        // Collect all tiles covering the viewport centered on the track
+        const tilesSet = new Set();
+        const frameTileMinX = Math.floor(minPxX / 256);
+        const frameTileMaxX = Math.floor((minPxX + width) / 256);
+        const frameTileMinY = Math.floor(minPxY / 256);
+        const frameTileMaxY = Math.floor((minPxY + height) / 256);
+
+        for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
+            for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
+                tilesSet.add(`${tx}_${ty}`);
+            }
+        }
+
+        const tilesToLoad = Array.from(tilesSet).map(key => {
+            const [tx, ty] = key.split('_').map(Number);
+            return { x: tx, y: ty, z: zoom };
+        });
+
+        const loadedTilesMap = {};
+        let loadedCount = 0;
+        for (const t of tilesToLoad) {
+            const tileUrl = `/api/tiles/${t.z}/${t.x}/${t.y}.png`;
+            const img = await loadImage(tileUrl);
+            if (img) {
+                loadedTilesMap[`${t.x}_${t.y}`] = img;
+            }
+            loadedCount++;
+            const progressPct = Math.round((loadedCount / tilesToLoad.length) * 50);
+            fill.style.width = `${progressPct}%`;
+            statusText.textContent = `Loading map background (${loadedCount}/${tilesToLoad.length})`;
+        }
+
+        statusText.textContent = 'Rendering image...';
+        fill.style.width = '80%';
+
+        // Map GPX coords to Canvas pixels
+        function latLngToCanvasPx(lat, lng) {
+            const pxX = lngToX(lng, zoom);
+            const pxY = latToY(lat, zoom);
+            return {
+                x: pxX - minPxX,
+                y: pxY - minPxY
+            };
+        }
+
+        // Draw Map Tiles
+        ctx.clearRect(0, 0, width, height);
+        ctx.save();
+        for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
+            for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
+                const img = loadedTilesMap[`${tx}_${ty}`];
+                if (img) {
+                    const dx = tx * 256 - minPxX;
+                    const dy = ty * 256 - minPxY;
+                    ctx.drawImage(img, dx, dy);
+                }
+            }
+        }
+        ctx.restore();
+
+        // 2. Overlay vignette
+        const grad = ctx.createRadialGradient(width/2, height/2, width/3, width/2, height/2, width/1.4);
+        grad.addColorStop(0, 'rgba(7, 10, 19, 0.0)');
+        grad.addColorStop(1, 'rgba(7, 10, 19, 0.65)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, width, height);
+
+        // 3. Draw Route Path
+        ctx.beginPath();
+        ctx.strokeStyle = '#00f0ff';
+        ctx.lineWidth = 6 * scaleFactor;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        animationPoints.forEach((pt, idx) => {
+            const pos = latLngToCanvasPx(pt.lat, pt.lon);
+            if (idx === 0) ctx.moveTo(pos.x, pos.y);
+            else ctx.lineTo(pos.x, pos.y);
+        });
+        ctx.stroke();
+
+        // 4. Draw Waypoints
+        getFilteredWaypoints().forEach(wpt => {
+            const pos = latLngToCanvasPx(wpt.lat, wpt.lon);
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 5 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#9333ea';
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 1.5 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+        });
+
+        // 5. Draw Start/Finish Markers
+        if (animationPoints.length > 0) {
+            const startPt = animationPoints[0];
+            const startPos = latLngToCanvasPx(startPt.lat, startPt.lon);
+            ctx.beginPath();
+            ctx.arc(startPos.x, startPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#064e3b';
+            ctx.strokeStyle = '#10b981';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            ctx.beginPath();
+            const sz = 3.5 * scaleFactor;
+            ctx.moveTo(startPos.x - sz * 0.6, startPos.y - sz);
+            ctx.lineTo(startPos.x + sz, startPos.y);
+            ctx.lineTo(startPos.x - sz * 0.6, startPos.y + sz);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            const finishPt = animationPoints[animationPoints.length - 1];
+            const finishPos = latLngToCanvasPx(finishPt.lat, finishPt.lon);
+
+            ctx.beginPath();
+            ctx.arc(finishPos.x, finishPos.y, 9 * scaleFactor, 0, 2 * Math.PI);
+            ctx.fillStyle = '#7f1d1d';
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.fill();
+            ctx.stroke();
+            
+            const sq = 3 * scaleFactor;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x - sq, finishPos.y - sq, sq, sq);
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x, finishPos.y - sq, sq, sq);
+            ctx.fillStyle = '#111827';
+            ctx.fillRect(finishPos.x - sq, finishPos.y, sq, sq);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(finishPos.x, finishPos.y, sq, sq);
+        }
+
+        // 6. Draw Watermark
+        ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+        ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
+        ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
+        ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
+        ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
+        ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+    }
+
+    // Save/Download
+    fill.style.width = '100%';
+    statusText.textContent = 'Saving image file...';
+    
+    setTimeout(() => {
+        const dataUrl = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = `${currentRoute.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.png`;
+        a.click();
+        
+        // Hide Modal & Restore title
+        modal.classList.add('hidden');
+        if (titleText) titleText.textContent = 'Generating Video';
+    }, 500);
+}
+
+
+

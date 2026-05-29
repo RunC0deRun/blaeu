@@ -17,3 +17,7 @@ blaeu_data/
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Cloned dependency
+maptoposter_src/
+

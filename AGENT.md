@@ -13,6 +13,9 @@ Blaeu is built using a lightweight **Python (Flask) backend** and a single-page 
 - **Physical GPX Files**: Uploaded or synchronized GPX logs are saved on the filesystem as `/data/gpx/{filename}` (where uploaded files are named `{sha256_hash}.gpx` and Garmin activities are named `garmin_{activity_id}.gpx`).
 - **Garmin Tokens Session Store**: Authenticated session tokens/credentials returned by Garmin Connect are persisted in `/data/garmin_tokens/{user_id}` for session restoration and token renewal.
 - **Map Tile Cache**: OpenStreetMap tiles are cached in `/data/tiles_cache/{z}/{x}/{y}.png`.
+- **Garmin OAuth Tokens**: Session and OAuth tokens for passwordless Garmin Connect authentication are persisted under `/data/garmin_tokens/<user_id>/`.
+- **Poster Maps Cache**: Rendered minimalist background map images are cached under `/data/poster_maps/`.
+- **OSMnx Cache**: Raw OSM data queries fetched by OSMnx are cached to `/data/osmnx_cache/` to minimize API limits and speed up subsequent builds.
 
 ---
 
@@ -45,6 +48,19 @@ Integrates the `garminconnect` API to pull activities directly.
 Transcodes client-side WebM frame recordings into standardized video formats.
 - **Constant Framerate Alignment**: Invokes a local `ffmpeg` subprocess using the video filter `setpts=N/(FPS*TB)` to recalculate timestamps based on the frame index, forcing a constant framerate and preventing slow-motion playback.
 - **MP4 & WebM Support**: Converts input WebM streams into H.264 MP4 videos (`-c:v libx264 -crf 20 -pix_fmt yuv420p`) or high-quality WebM videos (`-c:v libvpx -crf 4`).
+
+### C. Garmin Connect Integration (`app.py`)
+Provides seamless passwordless sync with Garmin:
+- Implements stateless login capturing MFA requirements, allowing users to enter codes in an overlay modal.
+- Extracts token sets, persists them locally, and triggers activity search (latest 15 items).
+- Automatically cleans up directory folders when authentication fails and correctly routes rate-limit responses (HTTP 429).
+
+### D. Minimalist Poster Map Generator (`poster_map.py`)
+Provides stunning map backdrops using OpenStreetMap:
+- Translates coordinates from EPSG:4326 to EPSG:3857 (Web Mercator) to achieve mathematically perfect alignment with Leaflet vectors.
+- Clamps aspect ratios (0.5 to 2.0) and adds padding to bounding boxes.
+- Queries street networks, water bodies, and parks using OSMnx, rendering them using custom thematic color configurations (loaded from `/static/themes/*.json`) via `matplotlib` at 300 DPI.
+
 
 ---
 

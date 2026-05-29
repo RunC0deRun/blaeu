@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
-COPY app.py db.py gpx_parser.py ./
+COPY app.py db.py gpx_parser.py poster_map.py ./
 COPY static/ ./static/
 COPY templates/ ./templates/
 
@@ -22,5 +22,5 @@ RUN mkdir -p /data
 
 EXPOSE 5000
 
-# Run with gunicorn
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]
+# Run with gunicorn and a 120s timeout for heavy video/map rendering
+CMD ["gunicorn", "-w", "4", "-t", "120", "-b", "0.0.0.0:5000", "app:app"]

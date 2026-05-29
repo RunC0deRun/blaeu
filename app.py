@@ -547,6 +547,105 @@ def import_garmin_activity():
             return jsonify({'error': f"Garmin import failed: {err_msg}"}), 429
         return jsonify({'error': f"Garmin import failed: {err_msg}"}), 500
 
+# Map Poster Generation Endpoints
+@app.route('/api/map-themes', methods=['GET'])
+def list_map_themes():
+    themes_dir = os.path.join(app.root_path, 'static', 'themes')
+    if not os.path.exists(themes_dir):
+        return jsonify([])
+    
+    themes = []
+    for file in sorted(os.listdir(themes_dir)):
+        if file.endswith('.json'):
+            theme_id = file[:-5]
+            try:
+                with open(os.path.join(themes_dir, file), 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                themes.append({
+                    'id': theme_id,
+                    'name': data.get('name', theme_id),
+                    'description': data.get('description', ''),
+                    'bg': data.get('bg', '#FFFFFF'),
+                    'text': data.get('text', '#000000')
+                })
+            except Exception:
+                continue
+    return jsonify(themes)
+
+
+@app.route('/api/poster-maps/<filename>', methods=['GET'])
+def get_poster_map_image(filename):
+    from poster_map import POSTER_MAPS_DIR
+    filename = os.path.basename(filename)
+    file_path = os.path.join(POSTER_MAPS_DIR, filename)
+    if os.path.exists(file_path):
+        return send_file(file_path, mimetype='image/png')
+    else:
+        return jsonify({'error': 'Image not found'}), 404
+
+
+@app.route('/api/routes/<int:route_id>/poster-map', methods=['GET'])
+def get_route_poster_map(route_id):
+    theme_name = request.args.get('theme', 'noir')
+    display_city = request.args.get('displayCity')
+    display_country = request.args.get('displayCountry')
+    
+    # Bounding box query parameters (optional)
+    lat_min = request.args.get('latMin')
+    lat_max = request.args.get('latMax')
+    lon_min = request.args.get('lonMin')
+    lon_max = request.args.get('lonMax')
+    
+    if not (lat_min and lat_max and lon_min and lon_max):
+        route = get_route(route_id)
+        if not route:
+            return jsonify({'error': 'Route not found'}), 404
+        
+        pts = route.get('simplified_path', [])
+        if not pts:
+            try:
+                with open(route['file_path'], 'rb') as f:
+                    content = f.read()
+                parsed = parse_gpx(content)
+                pts = []
+                for trk in parsed.get('tracks', []):
+                    for seg in trk.get('segments', []):
+                        for pt in seg:
+                            pts.append([pt['lat'], pt['lon']])
+            except Exception as e:
+                return jsonify({'error': f'Could not read route coordinates to compute bounds: {str(e)}'}), 500
+        
+        if not pts:
+            return jsonify({'error': 'No coordinate points in route'}), 400
+            
+        latitudes = [p[0] for p in pts]
+        longitudes = [p[1] for p in pts]
+        lat_min = min(latitudes)
+        lat_max = max(latitudes)
+        lon_min = min(longitudes)
+        lon_max = max(longitudes)
+    else:
+        try:
+            lat_min = float(lat_min)
+            lat_max = float(lat_max)
+            lon_min = float(lon_min)
+            lon_max = float(lon_max)
+        except ValueError:
+            return jsonify({'error': 'Invalid bounding box parameters'}), 400
+
+    from poster_map import generate_poster_background
+    try:
+        data = generate_poster_background(
+            route_id, lat_min, lat_max, lon_min, lon_max, theme_name,
+            display_city=display_city, display_country=display_country
+        )
+        return jsonify(data)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Poster map generation failed: {str(e)}'}), 500
+
+
 
 if __name__ == '__main__':
     # Run the server

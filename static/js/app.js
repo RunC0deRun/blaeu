@@ -31,6 +31,7 @@ let posterMapOverlay = null;
 let mapThemes = [];
 let currentMapStyle = 'dark';
 let labelsLoadedForRouteId = null;
+let posterPollingInterval = null;
 
 
 // Initialize Page
@@ -236,6 +237,38 @@ function initAppEvents() {
         });
     }
 
+    // Bind Default Map Style Selector
+    const defaultMapStyleSelect = document.getElementById('default-map-style-select');
+    if (defaultMapStyleSelect) {
+        defaultMapStyleSelect.addEventListener('change', async (e) => {
+            const val = e.target.value;
+            try {
+                const res = await fetch('/api/auth/default-map-style', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ default_map_style: val })
+                });
+                if (res.ok) {
+                    if (currentUser) {
+                        currentUser.default_map_style = val;
+                    }
+                    if (currentRoute) {
+                        currentMapStyle = val;
+                        const hudSelect = document.getElementById('hud-map-style-select');
+                        if (hudSelect) {
+                            hudSelect.value = val;
+                        }
+                        applyMapStyle();
+                    }
+                } else {
+                    console.error('Failed to update default map style');
+                }
+            } catch (err) {
+                console.error('Error updating default map style:', err);
+            }
+        });
+    }
+
     const hudCityInput = document.getElementById('hud-map-style-city');
     const hudCountryInput = document.getElementById('hud-map-style-country');
     const handleHudLabelChange = () => {
@@ -327,8 +360,39 @@ async function loadRoutes() {
         } else {
             showDashboardView(true);
         }
+        
+        checkAndStartPolling();
     } catch (err) {
         console.error("Error loading routes", err);
+    }
+}
+
+function checkAndStartPolling() {
+    const isGenerating = routesList.some(r => r.poster_status && r.poster_status.status === 'generating');
+    if (isGenerating) {
+        if (!posterPollingInterval) {
+            posterPollingInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/routes');
+                    routesList = await res.json();
+                    renderRoutesLedger();
+                    renderDashboardGrid();
+                    
+                    const stillGenerating = routesList.some(r => r.poster_status && r.poster_status.status === 'generating');
+                    if (!stillGenerating) {
+                        clearInterval(posterPollingInterval);
+                        posterPollingInterval = null;
+                    }
+                } catch (err) {
+                    console.error("Error polling routes", err);
+                }
+            }, 1000);
+        }
+    } else {
+        if (posterPollingInterval) {
+            clearInterval(posterPollingInterval);
+            posterPollingInterval = null;
+        }
     }
 }
 
@@ -597,18 +661,79 @@ function renderDashboardGrid() {
         const routeId = parseInt(canvas.getAttribute('data-route-id'), 10);
         const route = filtered.find(r => r.id === routeId);
         if (route && route.simplified_path) {
-            drawRouteMiniature(canvas, route.simplified_path);
+            drawRouteMiniature(canvas, route.simplified_path, route.poster_status);
         }
     });
 }
 
 // Draw a glowing neon route path miniature on a card canvas
-function drawRouteMiniature(canvas, coords) {
+function drawRouteMiniature(canvas, coords, posterStatus) {
     const ctx = canvas.getContext('2d');
     
     // Set actual canvas size to match layout size
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
+    
+    if (posterStatus && posterStatus.status === 'generating') {
+        const progress = posterStatus.progress || 0;
+        
+        // Draw dark glassmorphic background
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.4)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        const centerY = canvas.height / 2 - 5;
+        
+        // Determine active stage text description
+        let activeLabel = "Initializing...";
+        if (progress === 1) {
+            activeLabel = "Loading street networks...";
+        } else if (progress === 2) {
+            activeLabel = "Analyzing water bodies...";
+        } else if (progress === 3) {
+            activeLabel = "Querying parks & greenery...";
+        } else if (progress === 4) {
+            activeLabel = "Rendering poster layout...";
+        }
+        
+        // Draw header
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.font = 'bold 9px Outfit, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText("GENERATING MAP BACKGROUND", canvas.width / 2, centerY - 18);
+        
+        // Draw 5 progress blocks
+        const blockW = 16;
+        const blockH = 12;
+        const gap = 6;
+        const totalW = 5 * blockW + 4 * gap;
+        const startX = (canvas.width - totalW) / 2;
+        
+        for (let i = 0; i < 5; i++) {
+            const x = startX + i * (blockW + gap);
+            // Block i turns green when stage i has completed.
+            // Since progress represents the number of completed tasks (1 to 5),
+            // block i is green if progress > i.
+            const completed = (progress > i);
+            
+            if (completed) {
+                ctx.fillStyle = '#10b981';
+                ctx.shadowColor = 'rgba(16, 185, 129, 0.6)';
+                ctx.shadowBlur = 6;
+                ctx.fillRect(x, centerY, blockW, blockH);
+                ctx.shadowBlur = 0;
+            } else {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                ctx.fillRect(x, centerY, blockW, blockH);
+            }
+        }
+        
+        // Draw footer active label
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.font = '10px Outfit, sans-serif';
+        ctx.fillText(activeLabel, canvas.width / 2, centerY + 30);
+        return;
+    }
     
     if (!coords || coords.length < 2) {
         // Draw centered placeholder text
@@ -891,7 +1016,7 @@ async function selectRoute(routeId) {
         drawRouteOnMap();
         
         // Load map style preference and show style selector HUD
-        const savedStyle = localStorage.getItem('blaeu_map_style') || 'dark';
+        const savedStyle = (currentUser && currentUser.default_map_style) || localStorage.getItem('blaeu_map_style') || 'dark';
         currentMapStyle = savedStyle;
         const hudSelect = document.getElementById('hud-map-style-select');
         if (hudSelect) {
@@ -2499,6 +2624,20 @@ async function loadMapThemes() {
                 select.appendChild(opt);
             });
         }
+        
+        const defaultStyleSelect = document.getElementById('default-map-style-select');
+        if (defaultStyleSelect) {
+            defaultStyleSelect.innerHTML = '<option value="dark">Dark Matter (Default)</option>';
+            mapThemes.forEach(theme => {
+                const opt = document.createElement('option');
+                opt.value = theme.id;
+                opt.textContent = theme.name;
+                defaultStyleSelect.appendChild(opt);
+            });
+            if (currentUser) {
+                defaultStyleSelect.value = currentUser.default_map_style || 'dark';
+            }
+        }
     } catch (err) {
         console.error('Error loading map themes:', err);
     }
@@ -2550,12 +2689,6 @@ async function applyMapStyle() {
         }
         
         const select = document.getElementById('hud-map-style-select');
-        let originalText = '';
-        if (select && select.selectedIndex >= 0) {
-            originalText = select.options[select.selectedIndex].text;
-            select.options[select.selectedIndex].text = 'Loading Map...';
-        }
-
         const cityInput = document.getElementById('hud-map-style-city');
         const countryInput = document.getElementById('hud-map-style-country');
         const labelsContainer = document.getElementById('hud-map-poster-labels');
@@ -2564,129 +2697,90 @@ async function applyMapStyle() {
             labelsContainer.classList.remove('hidden');
         }
 
-        if (labelsLoadedForRouteId !== currentRoute.id) {
-            if (cityInput) cityInput.value = '';
-            if (countryInput) countryInput.value = '';
+        // Check if there is completed poster map data matching our active style in database-cached status
+        let cachedData = null;
+        if (currentRoute.poster_status && 
+            currentRoute.poster_status.status === 'completed' && 
+            currentRoute.poster_status.theme === currentMapStyle && 
+            labelsLoadedForRouteId !== currentRoute.id) {
+            cachedData = currentRoute.poster_status;
         }
-        
-        try {
-            // Get visible track coordinates (after privacy zone filter)
-            const coords = [];
-            getFilteredTracks().forEach(track => {
-                track.segments.forEach(segment => {
-                    coords.push(...segment.map(pt => [pt.lat, pt.lon]));
-                });
-            });
-            
-            let url = `/api/routes/${currentRoute.id}/poster-map?theme=${currentMapStyle}`;
 
-            // If labels are loaded, read from inputs (which is user's edited state, even if empty).
-            // Otherwise, omit displayCity/displayCountry so the backend resolves defaults.
-            if (labelsLoadedForRouteId === currentRoute.id) {
-                const cityVal = cityInput ? cityInput.value : '';
-                const countryVal = countryInput ? countryInput.value : '';
-                url += `&displayCity=${encodeURIComponent(cityVal)}&displayCountry=${encodeURIComponent(countryVal)}`;
-            }
-
-            if (coords.length > 0) {
-                const lats = coords.map(c => c[0]);
-                const lons = coords.map(c => c[1]);
-                const latMin = Math.min(...lats);
-                const latMax = Math.max(...lats);
-                const lonMin = Math.min(...lons);
-                const lonMax = Math.max(...lons);
-                
-                // Calculate projected meters per pixel at current zoom
-                const z = map.getZoom();
-                const projectedMetersPerPixel = 40075016.686 / (256 * Math.pow(2, z));
-                
-                // Get maximum viewport dimensions (including video export resolutions)
-                let exportWidth = 1920;
-                let exportHeight = 1080;
-                const resSelect = document.getElementById('res-select');
-                const resVal = resSelect ? resSelect.value : '1080';
-                if (resVal === '720') {
-                    exportWidth = 1280;
-                    exportHeight = 720;
-                } else if (resVal === '2160') {
-                    exportWidth = 3840;
-                    exportHeight = 2160;
-                }
-                
-                const mapSize = map.getSize();
-                const viewportWidth = mapSize ? mapSize.x : 800;
-                const viewportHeight = mapSize ? mapSize.y : 600;
-                
-                const w = Math.max(viewportWidth, exportWidth);
-                const h = Math.max(viewportHeight, exportHeight);
-                
-                // Margins in projected meters (half of viewport size to account for camera centering on endpoints)
-                let marginX = (w / 2) * projectedMetersPerPixel;
-                let marginY = (h / 2) * projectedMetersPerPixel;
-                
-                // Cap margins to a maximum of 3000 meters to keep download size and processing times reasonable
-                marginX = Math.min(marginX, 3000);
-                marginY = Math.min(marginY, 3000);
-                
-                // Project route bounds to EPSG:3857 meters
-                const pMin = map.options.crs.project(L.latLng(latMin, lonMin));
-                const pMax = map.options.crs.project(L.latLng(latMax, lonMax));
-                
-                // Expand bounds by margins
-                const xMin = pMin.x - marginX;
-                const xMax = pMax.x + marginX;
-                const yMin = pMin.y - marginY;
-                const yMax = pMax.y + marginY;
-                
-                // Unproject back to EPSG:4326 (lat/lon)
-                const unprojectedMin = map.options.crs.unproject(L.point(xMin, yMin));
-                const unprojectedMax = map.options.crs.unproject(L.point(xMax, yMax));
-                
-                url += `&latMin=${unprojectedMin.lat}&latMax=${unprojectedMax.lat}&lonMin=${unprojectedMin.lng}&lonMax=${unprojectedMax.lng}`;
-            }
-            
-            const res = await fetch(url);
-            if (!res.ok) throw new Error('Could not generate poster map');
-            const data = await res.json();
-            
-            // Set map container background color
+        if (cachedData) {
+            // Apply cached poster map immediately (no fetch, no loader status text changes!)
             if (mapElement) {
-                mapElement.style.backgroundColor = data.bg_color;
+                mapElement.style.backgroundColor = cachedData.bg_color;
             }
-            
-            // Add static image overlay
-            posterMapOverlay = L.imageOverlay(data.image_url, data.bounds, {
+            posterMapOverlay = L.imageOverlay(cachedData.image_url, cachedData.bounds, {
                 opacity: 1.0,
                 zIndex: 1
             }).addTo(map);
-            
-            // Ensure overlay stays behind route lines and markers
             posterMapOverlay.bringToBack();
-            
-            // Store details on currentRoute for video export
-            currentRoute.posterMapUrl = data.image_url;
-            currentRoute.posterMapBounds = data.bounds;
-            currentRoute.posterMapBgColor = data.bg_color;
+
+            currentRoute.posterMapUrl = cachedData.image_url;
+            currentRoute.posterMapBounds = cachedData.bounds;
+            currentRoute.posterMapBgColor = cachedData.bg_color;
 
             if (labelsLoadedForRouteId !== currentRoute.id) {
-                if (cityInput) cityInput.value = data.display_city || '';
-                if (countryInput) countryInput.value = data.display_country || '';
+                if (cityInput) cityInput.value = cachedData.display_city || '';
+                if (countryInput) countryInput.value = cachedData.display_country || '';
                 labelsLoadedForRouteId = currentRoute.id;
             }
-
-            
-        } catch (err) {
-            console.error(err);
-            alert('Map style generation failed: ' + err.message);
-            // Fallback to dark
-            currentMapStyle = 'dark';
-            if (select) select.value = 'dark';
-            if (!map.hasLayer(tileLayer)) tileLayer.addTo(map);
-            if (mapElement) mapElement.style.backgroundColor = '';
-        } finally {
+        } else {
+            // Cache miss or manually editing labels/switching theme: fetch from backend
+            let originalText = '';
             if (select && select.selectedIndex >= 0) {
-                const activeTheme = mapThemes.find(t => t.id === currentMapStyle);
-                select.options[select.selectedIndex].text = activeTheme ? activeTheme.name : 'Dark Matter (Default)';
+                originalText = select.options[select.selectedIndex].text;
+                select.options[select.selectedIndex].text = 'Loading Map...';
+            }
+
+            if (labelsLoadedForRouteId !== currentRoute.id) {
+                if (cityInput) cityInput.value = '';
+                if (countryInput) countryInput.value = '';
+            }
+
+            try {
+                let url = `/api/routes/${currentRoute.id}/poster-map?theme=${currentMapStyle}`;
+                if (labelsLoadedForRouteId === currentRoute.id) {
+                    const cityVal = cityInput ? cityInput.value : '';
+                    const countryVal = countryInput ? countryInput.value : '';
+                    url += `&displayCity=${encodeURIComponent(cityVal)}&displayCountry=${encodeURIComponent(countryVal)}`;
+                }
+
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Could not generate poster map');
+                const data = await res.json();
+
+                if (mapElement) {
+                    mapElement.style.backgroundColor = data.bg_color;
+                }
+                posterMapOverlay = L.imageOverlay(data.image_url, data.bounds, {
+                    opacity: 1.0,
+                    zIndex: 1
+                }).addTo(map);
+                posterMapOverlay.bringToBack();
+
+                currentRoute.posterMapUrl = data.image_url;
+                currentRoute.posterMapBounds = data.bounds;
+                currentRoute.posterMapBgColor = data.bg_color;
+
+                if (labelsLoadedForRouteId !== currentRoute.id) {
+                    if (cityInput) cityInput.value = data.display_city || '';
+                    if (countryInput) countryInput.value = data.display_country || '';
+                    labelsLoadedForRouteId = currentRoute.id;
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Map style generation failed: ' + err.message);
+                currentMapStyle = 'dark';
+                if (select) select.value = 'dark';
+                if (!map.hasLayer(tileLayer)) tileLayer.addTo(map);
+                if (mapElement) mapElement.style.backgroundColor = '';
+            } finally {
+                if (select && select.selectedIndex >= 0) {
+                    const activeTheme = mapThemes.find(t => t.id === currentMapStyle);
+                    select.options[select.selectedIndex].text = activeTheme ? activeTheme.name : 'Dark Matter (Default)';
+                }
             }
         }
     }

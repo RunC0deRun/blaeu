@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import osmnx as ox
 from shapely.geometry import Point
 from pyproj import Transformer
-from db import DATA_DIR
+from db import DATA_DIR, update_route_poster_status
 import requests
 import numpy as np
 import matplotlib.colors as mcolors
@@ -121,7 +121,7 @@ os.makedirs(ox.settings.cache_folder, exist_ok=True)
 to_3857 = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 to_4326 = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
 
-def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, theme_name, display_city=None, display_country=None):
+def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, theme_name, display_city=None, display_country=None, apply_padding=True):
     """
     Generates a minimalist styled background map centered and scaled to the bounding box.
     Returns metadata including bounds and static URL.
@@ -149,14 +149,15 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         y_max = center_y + 250
         height_m = 500
         
-    # Add 10% padding on each side (total 20% width/height addition)
-    padding = 0.10
-    x_min -= width_m * padding
-    x_max += width_m * padding
-    y_min -= height_m * padding
-    y_max += height_m * padding
-    width_m = x_max - x_min
-    height_m = y_max - y_min
+    # Add 2000m padding on each side to accommodate camera pans in video exports
+    if apply_padding:
+        padding_m = 2000
+        x_min -= padding_m
+        x_max += padding_m
+        y_min -= padding_m
+        y_max += padding_m
+        width_m = x_max - x_min
+        height_m = y_max - y_min
     
     # Clamp aspect ratio between 0.5 (tall) and 2.0 (wide) to look nice
     aspect = width_m / height_m
@@ -252,6 +253,12 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     except Exception as e:
         print(f"Error fetching OSMnx graph: {e}")
         raise e
+    finally:
+        update_route_poster_status(route_id, {
+            'status': 'generating',
+            'progress': 2,
+            'error': None
+        })
         
     # 2. Fetch water features (optional)
     water = None
@@ -259,6 +266,12 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         water = ox.features_from_point(point, tags={"natural": ["water", "bay", "strait"], "waterway": "riverbank"}, dist=corner_dist)
     except Exception as e:
         print(f"No water features found or error: {e}")
+    finally:
+        update_route_poster_status(route_id, {
+            'status': 'generating',
+            'progress': 3,
+            'error': None
+        })
         
     # 3. Fetch parks (optional)
     parks = None
@@ -266,6 +279,12 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         parks = ox.features_from_point(point, tags={"leisure": "park", "landuse": "grass"}, dist=corner_dist)
     except Exception as e:
         print(f"No parks found or error: {e}")
+    finally:
+        update_route_poster_status(route_id, {
+            'status': 'generating',
+            'progress': 4,
+            'error': None
+        })
         
     # 4. Render the matplotlib figure
     fig_width = 12.0

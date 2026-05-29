@@ -274,3 +274,39 @@ def test_admin_user_management(client):
     users2 = json.loads(res_list2.data)
     assert len(users2) == 1
     assert users2[0]['username'] == 'admin_user'
+
+
+def test_default_map_style_profile(client):
+    # Try to set style while unauthorized
+    res = client.put('/api/auth/default-map-style', json={'default_map_style': 'noir'})
+    assert res.status_code == 401
+    
+    # Register and login
+    res = client.post('/api/auth/register', json={
+        'username': 'style_user',
+        'password': 'password123'
+    })
+    assert res.status_code == 201
+    user_data = json.loads(res.data)['user']
+    assert user_data['default_map_style'] == 'dark' # default
+    
+    # Update default map style
+    res = client.put('/api/auth/default-map-style', json={'default_map_style': 'blueprint'})
+    assert res.status_code == 200
+    assert json.loads(res.data)['default_map_style'] == 'blueprint'
+    
+    # Status check should reflect updated default style
+    res = client.get('/api/auth/status')
+    assert res.status_code == 200
+    assert json.loads(res.data)['user']['default_map_style'] == 'blueprint'
+    
+    # Log out
+    client.post('/api/auth/logout')
+    
+    # Login check should reflect updated default style
+    res = client.post('/api/auth/login', json={
+        'username': 'style_user',
+        'password': 'password123'
+    })
+    assert res.status_code == 200
+    assert json.loads(res.data)['user']['default_map_style'] == 'blueprint'

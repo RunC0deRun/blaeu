@@ -2,13 +2,15 @@ import os
 import hashlib
 import requests
 import json
+import threading
 from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from db import (
     init_db, add_route, get_routes, get_route, update_route, delete_route,
     create_folder, get_folders, delete_folder, get_all_tags, DATA_DIR, get_db,
     save_garmin_connection, get_garmin_connection, delete_garmin_connection, update_garmin_last_sync,
-    add_user, get_user_by_username, get_user_by_id, get_users, delete_user, backfill_ownerless_data, count_users
+    add_user, get_user_by_username, get_user_by_id, get_users, delete_user, backfill_ownerless_data, count_users,
+    update_user_default_map_style, update_route_poster_status
 )
 from gpx_parser import parse_gpx
 
@@ -26,8 +28,91 @@ os.makedirs(GPX_STORE_DIR, exist_ok=True)
 TILES_CACHE_DIR = os.path.join(DATA_DIR, 'tiles_cache')
 os.makedirs(TILES_CACHE_DIR, exist_ok=True)
 
+# Background poster generation tracking state
+poster_generations = {}
+poster_generations_lock = threading.Lock()
+
 def get_current_user_id():
     return session.get('user_id')
+
+
+def run_async_poster_generation(route_id, user_id, theme_name):
+    initial_status = {
+        'status': 'generating',
+        'progress': 0,
+        'error': None
+    }
+    update_route_poster_status(route_id, initial_status)
+
+    def worker():
+        try:
+            with app.app_context():
+                route = get_route(route_id)
+                if not route:
+                    update_route_poster_status(route_id, {'status': 'failed', 'progress': 0, 'error': 'Route not found'})
+                    return
+                
+                pts = route.get('simplified_path', [])
+                if not pts:
+                    try:
+                        with open(route['file_path'], 'rb') as f:
+                            content = f.read()
+                        parsed = parse_gpx(content)
+                        pts = []
+                        for trk in parsed.get('tracks', []):
+                            for seg in trk.get('segments', []):
+                                for pt in seg:
+                                    pts.append([pt['lat'], pt['lon']])
+                    except Exception as e:
+                        update_route_poster_status(route_id, {'status': 'failed', 'progress': 0, 'error': str(e)})
+                        return
+                
+                if not pts:
+                    update_route_poster_status(route_id, {'status': 'failed', 'progress': 0, 'error': 'No coordinates'})
+                    return
+                
+                latitudes = [p[0] for p in pts]
+                longitudes = [p[1] for p in pts]
+                lat_min = min(latitudes)
+                lat_max = max(latitudes)
+                lon_min = min(longitudes)
+                lon_max = max(longitudes)
+                
+                update_route_poster_status(route_id, {
+                    'status': 'generating',
+                    'progress': 1,
+                    'error': None
+                })
+                
+                from poster_map import generate_poster_background
+                data = generate_poster_background(
+                    route_id, lat_min, lat_max, lon_min, lon_max, theme_name
+                )
+                
+                update_route_poster_status(route_id, {
+                    'status': 'completed',
+                    'progress': 5,
+                    'error': None,
+                    'theme': theme_name,
+                    'image_url': data['image_url'],
+                    'bounds': data['bounds'],
+                    'bg_color': data['bg_color'],
+                    'text_color': data['text_color'],
+                    'display_city': data['display_city'],
+                    'display_country': data['display_country']
+                })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            update_route_poster_status(route_id, {
+                'status': 'failed',
+                'progress': 0,
+                'error': str(e)
+            })
+                
+    thread = threading.Thread(target=worker)
+    thread.daemon = True
+    thread.start()
 
 
 @app.route('/')
@@ -109,6 +194,12 @@ def upload_gpx():
         }
         
         route_id = add_route(route_metadata, parsed['statistics'])
+        
+        # Trigger background poster generation if default style is not 'dark'
+        user = get_user_by_id(user_id)
+        default_style = user.get('default_map_style', 'dark') if user else 'dark'
+        if default_style and default_style != 'dark':
+            run_async_poster_generation(route_id, user_id, default_style)
         
         # Add initial tags if provided
         tags_raw = request.form.get('tags', '')
@@ -618,6 +709,12 @@ def import_garmin_activity():
         
         route_id = add_route(route_metadata, parsed['statistics'])
         
+        # Trigger background poster generation if default style is not 'dark'
+        user = get_user_by_id(user_id)
+        default_style = user.get('default_map_style', 'dark') if user else 'dark'
+        if default_style and default_style != 'dark':
+            run_async_poster_generation(route_id, user_id, default_style)
+            
         # Update last sync timestamp
         from datetime import datetime
         update_garmin_last_sync(user_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
@@ -733,12 +830,39 @@ def get_route_poster_map(route_id):
         except ValueError:
             return jsonify({'error': 'Invalid bounding box parameters'}), 400
 
+    # Check if bounds are passed. If so, don't apply padding.
+    lat_min_arg = request.args.get('latMin')
+    lat_max_arg = request.args.get('latMax')
+    lon_min_arg = request.args.get('lonMin')
+    lon_max_arg = request.args.get('lonMax')
+    
+    apply_padding = True
+    if lat_min_arg and lat_max_arg and lon_min_arg and lon_max_arg:
+        apply_padding = False
+
     from poster_map import generate_poster_background
     try:
         data = generate_poster_background(
             route_id, lat_min, lat_max, lon_min, lon_max, theme_name,
-            display_city=display_city, display_country=display_country
+            display_city=display_city, display_country=display_country,
+            apply_padding=apply_padding
         )
+        
+        # Save completed details in poster_status column of DB if this is a default padding map
+        if apply_padding:
+            update_route_poster_status(route_id, {
+                'status': 'completed',
+                'progress': 5,
+                'error': None,
+                'theme': theme_name,
+                'image_url': data['image_url'],
+                'bounds': data['bounds'],
+                'bg_color': data['bg_color'],
+                'text_color': data['text_color'],
+                'display_city': data['display_city'],
+                'display_country': data['display_country']
+            })
+            
         return jsonify(data)
     except Exception as e:
         import traceback
@@ -780,7 +904,8 @@ def register():
             'user': {
                 'id': user_id,
                 'username': username,
-                'is_admin': is_admin
+                'is_admin': is_admin,
+                'default_map_style': 'dark'
             }
         }), 201
     except ValueError as e:
@@ -808,7 +933,8 @@ def login():
         'user': {
             'id': user['id'],
             'username': user['username'],
-            'is_admin': user['is_admin']
+            'is_admin': user['is_admin'],
+            'default_map_style': user.get('default_map_style', 'dark')
         }
     })
 
@@ -839,9 +965,31 @@ def auth_status():
         'user': {
             'id': user['id'],
             'username': user['username'],
-            'is_admin': user['is_admin']
+            'is_admin': user['is_admin'],
+            'default_map_style': user.get('default_map_style', 'dark')
         }
     })
+
+
+@app.route('/api/auth/default-map-style', methods=['PUT'])
+def update_default_style():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
+    data = request.json or {}
+    default_style = data.get('default_map_style')
+    if not default_style:
+        return jsonify({'error': 'default_map_style is required'}), 400
+        
+    try:
+        update_user_default_map_style(user_id, default_style)
+        return jsonify({
+            'success': True,
+            'default_map_style': default_style
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/auth/users', methods=['GET'])

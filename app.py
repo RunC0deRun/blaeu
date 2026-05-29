@@ -2,15 +2,18 @@ import os
 import hashlib
 import requests
 import json
-from flask import Flask, request, jsonify, render_template, send_file, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, session
+from werkzeug.security import generate_password_hash, check_password_hash
 from db import (
     init_db, add_route, get_routes, get_route, update_route, delete_route,
     create_folder, get_folders, delete_folder, get_all_tags, DATA_DIR, get_db,
-    save_garmin_connection, get_garmin_connection, delete_garmin_connection, update_garmin_last_sync
+    save_garmin_connection, get_garmin_connection, delete_garmin_connection, update_garmin_last_sync,
+    add_user, get_user_by_username, get_user_by_id, get_users, delete_user, backfill_ownerless_data, count_users
 )
 from gpx_parser import parse_gpx
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
+app.secret_key = os.getenv('SECRET_KEY', 'blaeu-default-super-secret-key-998877')
 
 # Initialize DB on load
 init_db()
@@ -22,6 +25,9 @@ os.makedirs(GPX_STORE_DIR, exist_ok=True)
 # Create directory to store cached map tiles
 TILES_CACHE_DIR = os.path.join(DATA_DIR, 'tiles_cache')
 os.makedirs(TILES_CACHE_DIR, exist_ok=True)
+
+def get_current_user_id():
+    return session.get('user_id')
 
 
 @app.route('/')
@@ -36,6 +42,10 @@ def favicon():
 
 @app.route('/api/upload', methods=['POST'])
 def upload_gpx():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded'}), 400
         
@@ -47,10 +57,10 @@ def upload_gpx():
         content = file.read()
         file_hash = hashlib.sha256(content).hexdigest()
         
-        # Check for duplicates in DB
+        # Check for duplicates in DB (scoped per user)
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM routes WHERE file_hash = ?", (file_hash,))
+        cursor.execute("SELECT id FROM routes WHERE file_hash = ? AND user_id = ?", (file_hash, user_id))
         existing = cursor.fetchone()
         conn.close()
         
@@ -91,6 +101,8 @@ def upload_gpx():
             'file_hash': file_hash,
             'file_path': file_path,
             'folder_id': folder_id,
+            'user_id': user_id,
+            'is_public': False, # private by default
             'timezone': parsed.get('timezone'),
             'created_at': parsed.get('start_time'),
             'simplified_path': json.dumps(parsed.get('simplified_path', []))
@@ -105,6 +117,8 @@ def upload_gpx():
             update_route(route_id, tags=tags)
             
         new_route = get_route(route_id)
+        if new_route:
+            new_route['is_owner'] = True
         return jsonify(new_route), 201
         
     except ValueError as e:
@@ -117,21 +131,36 @@ def upload_gpx():
 
 @app.route('/api/routes', methods=['GET'])
 def list_routes():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     folder_id = request.args.get('folder_id')
     if folder_id:
         try:
             folder_id = int(folder_id)
         except ValueError:
             folder_id = None
-    routes = get_routes(folder_id)
+    routes = get_routes(user_id, folder_id)
+    # Add ownership property for client UI
+    for r in routes:
+        r['is_owner'] = (r['user_id'] == user_id)
     return jsonify(routes)
 
 
 @app.route('/api/routes/<int:route_id>', methods=['GET'])
 def get_route_details(route_id):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     route = get_route(route_id)
     if not route:
         return jsonify({'error': 'Route not found'}), 404
+        
+    # Check access permission
+    if route['user_id'] != user_id and not route['is_public']:
+        return jsonify({'error': 'Access denied to this private route'}), 403
         
     # Read the GPX file from disk to get coordinate paths and waypoints
     try:
@@ -143,6 +172,7 @@ def get_route_details(route_id):
         response_data = dict(route)
         response_data['tracks'] = parsed['tracks']
         response_data['waypoints'] = parsed['waypoints']
+        response_data['is_owner'] = (route['user_id'] == user_id)
         return jsonify(response_data)
     except Exception as e:
         return jsonify({'error': f"Could not read route coordinates: {str(e)}"}), 500
@@ -150,17 +180,30 @@ def get_route_details(route_id):
 
 @app.route('/api/routes/<int:route_id>', methods=['PUT'])
 def edit_route(route_id):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
+    route = get_route(route_id)
+    if not route:
+        return jsonify({'error': 'Route not found'}), 404
+        
+    if route['user_id'] != user_id:
+        return jsonify({'error': 'Permission denied. You do not own this route.'}), 403
+        
     data = request.json or {}
     name = data.get('name')
     description = data.get('description')
     folder_id = data.get('folder_id')
     tags = data.get('tags')
+    is_public = data.get('is_public')
     
     try:
-        update_route(route_id, name=name, description=description, folder_id=folder_id, tags=tags)
+        update_route(route_id, name=name, description=description, folder_id=folder_id, tags=tags, is_public=is_public)
         updated = get_route(route_id)
         if not updated:
             return jsonify({'error': 'Route not found'}), 404
+        updated['is_owner'] = True
         return jsonify(updated)
     except Exception as e:
         return jsonify({'error': f"Could not update route: {str(e)}"}), 500
@@ -168,9 +211,17 @@ def edit_route(route_id):
 
 @app.route('/api/routes/<int:route_id>', methods=['DELETE'])
 def remove_route(route_id):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     route = get_route(route_id)
     if not route:
         return jsonify({'error': 'Route not found'}), 404
+        
+    if route['user_id'] != user_id:
+        return jsonify({'error': 'Permission denied. You do not own this route.'}), 403
+        
     try:
         delete_route(route_id)
         return jsonify({'success': True})
@@ -180,26 +231,34 @@ def remove_route(route_id):
 
 @app.route('/api/folders', methods=['GET', 'POST'])
 def handle_folders():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     if request.method == 'POST':
         data = request.json or {}
         name = data.get('name')
         if not name or not name.strip():
             return jsonify({'error': 'Folder name required'}), 400
         try:
-            folder_id = create_folder(name)
+            folder_id = create_folder(name, user_id)
             return jsonify({'id': folder_id, 'name': name.strip()}), 201
         except ValueError as e:
             return jsonify({'error': str(e)}), 409
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     else:
-        return jsonify(get_folders())
+        return jsonify(get_folders(user_id))
 
 
 @app.route('/api/folders/<int:folder_id>', methods=['DELETE'])
 def remove_folder(folder_id):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     try:
-        delete_folder(folder_id)
+        delete_folder(folder_id, user_id)
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': f"Could not delete folder: {str(e)}"}), 500
@@ -207,12 +266,20 @@ def remove_folder(folder_id):
 
 @app.route('/api/tags', methods=['GET'])
 def list_tags():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     return jsonify(get_all_tags())
 
 
 # Tile Proxy endpoint with local filesystem cache
 @app.route('/api/tiles/<int:z>/<int:x>/<int:y>.png', methods=['GET'])
 def get_map_tile(z, x, y):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     tile_dir = os.path.join(TILES_CACHE_DIR, str(z), str(x))
     tile_path = os.path.join(tile_dir, f"{y}.png")
     
@@ -241,6 +308,10 @@ def get_map_tile(z, x, y):
         return jsonify({'error': f"Tile proxy error: {str(e)}"}), 500
 @app.route('/api/convert-video', methods=['POST'])
 def convert_video():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     if 'file' not in request.files:
         return jsonify({'error': 'No file uploaded'}), 400
         
@@ -350,7 +421,10 @@ class MfaRequiredException(GarminConnectAuthenticationError):
 
 @app.route('/api/garmin/status', methods=['GET'])
 def get_garmin_status():
-    user_id = 1 # Default single-user
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     connection = get_garmin_connection(user_id)
     if connection:
         return jsonify({
@@ -364,7 +438,10 @@ def get_garmin_status():
 
 @app.route('/api/garmin/connect', methods=['POST'])
 def connect_garmin():
-    user_id = 1 # Default single-user
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     data = request.json or {}
     email = data.get('email')
     password = data.get('password')
@@ -424,7 +501,10 @@ def connect_garmin():
 
 @app.route('/api/garmin/disconnect', methods=['POST'])
 def disconnect_garmin():
-    user_id = 1 # Default single-user
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     delete_garmin_connection(user_id)
     token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
     if os.path.exists(token_store):
@@ -437,7 +517,10 @@ def disconnect_garmin():
 
 @app.route('/api/garmin/activities', methods=['GET'])
 def get_garmin_activities():
-    user_id = 1 # Default single-user
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     connection = get_garmin_connection(user_id)
     if not connection:
         return jsonify({'error': 'Garmin not connected'}), 400
@@ -477,7 +560,10 @@ def get_garmin_activities():
 
 @app.route('/api/garmin/import', methods=['POST'])
 def import_garmin_activity():
-    user_id = 1 # Default single-user
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     connection = get_garmin_connection(user_id)
     if not connection:
         return jsonify({'error': 'Garmin not connected'}), 400
@@ -515,7 +601,7 @@ def import_garmin_activity():
             track_name = parsed['tracks'][0].get('name')
         if not track_name:
             track_name = f"Garmin Activity {activity_id}"
-
+ 
         # Register in SQLite database routes
         route_metadata = {
             'name': track_name,
@@ -524,6 +610,8 @@ def import_garmin_activity():
             'file_hash': file_hash,
             'file_path': file_path,
             'folder_id': None,
+            'user_id': user_id,
+            'is_public': False, # private by default
             'timezone': parsed.get('timezone'),
             'simplified_path': json.dumps(parsed.get('simplified_path', []))
         }
@@ -575,6 +663,10 @@ def list_map_themes():
 
 @app.route('/api/poster-maps/<filename>', methods=['GET'])
 def get_poster_map_image(filename):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
     from poster_map import POSTER_MAPS_DIR
     filename = os.path.basename(filename)
     file_path = os.path.join(POSTER_MAPS_DIR, filename)
@@ -586,6 +678,18 @@ def get_poster_map_image(filename):
 
 @app.route('/api/routes/<int:route_id>/poster-map', methods=['GET'])
 def get_route_poster_map(route_id):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
+    route = get_route(route_id)
+    if not route:
+        return jsonify({'error': 'Route not found'}), 404
+        
+    # Check access permission
+    if route['user_id'] != user_id and not route['is_public']:
+        return jsonify({'error': 'Access denied to this private route'}), 403
+        
     theme_name = request.args.get('theme', 'noir')
     display_city = request.args.get('displayCity')
     display_country = request.args.get('displayCountry')
@@ -597,10 +701,6 @@ def get_route_poster_map(route_id):
     lon_max = request.args.get('lonMax')
     
     if not (lat_min and lat_max and lon_min and lon_max):
-        route = get_route(route_id)
-        if not route:
-            return jsonify({'error': 'Route not found'}), 404
-        
         pts = route.get('simplified_path', [])
         if not pts:
             try:
@@ -645,6 +745,136 @@ def get_route_poster_map(route_id):
         traceback.print_exc()
         return jsonify({'error': f'Poster map generation failed: {str(e)}'}), 500
 
+
+# ==========================================
+# User Authentication & Management Endpoints
+# ==========================================
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    data = request.json or {}
+    username = data.get('username')
+    password = data.get('password')
+    
+    if not username or not password:
+        return jsonify({'error': 'Username and password are required'}), 400
+        
+    username = username.strip()
+    if len(username) < 3 or len(password) < 4:
+        return jsonify({'error': 'Username must be at least 3 chars, password at least 4 chars'}), 400
+        
+    try:
+        is_first = (count_users() == 0)
+        is_admin = 1 if is_first else 0
+        
+        password_hash = generate_password_hash(password)
+        user_id = add_user(username, password_hash, is_admin)
+        
+        # Backfill existing ownerless data to the first admin user
+        if is_first:
+            backfill_ownerless_data(user_id)
+            
+        session['user_id'] = user_id
+        return jsonify({
+            'success': True,
+            'user': {
+                'id': user_id,
+                'username': username,
+                'is_admin': is_admin
+            }
+        }), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f"Registration failed: {str(e)}"}), 500
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    data = request.json or {}
+    username = data.get('username')
+    password = data.get('password')
+    
+    if not username or not password:
+        return jsonify({'error': 'Username and password are required'}), 400
+        
+    user = get_user_by_username(username)
+    if not user or not check_password_hash(user['password_hash'], password):
+        return jsonify({'error': 'Invalid username or password'}), 401
+        
+    session['user_id'] = user['id']
+    return jsonify({
+        'success': True,
+        'user': {
+            'id': user['id'],
+            'username': user['username'],
+            'is_admin': user['is_admin']
+        }
+    })
+
+
+@app.route('/api/auth/logout', methods=['POST'])
+def logout():
+    session.pop('user_id', None)
+    return jsonify({'success': True})
+
+
+@app.route('/api/auth/status', methods=['GET'])
+def auth_status():
+    user_id = session.get('user_id')
+    if not user_id:
+        no_users_exist = (count_users() == 0)
+        return jsonify({
+            'logged_in': False,
+            'no_users_exist': no_users_exist
+        })
+        
+    user = get_user_by_id(user_id)
+    if not user:
+        session.pop('user_id', None)
+        return jsonify({'logged_in': False, 'no_users_exist': count_users() == 0})
+        
+    return jsonify({
+        'logged_in': True,
+        'user': {
+            'id': user['id'],
+            'username': user['username'],
+            'is_admin': user['is_admin']
+        }
+    })
+
+
+@app.route('/api/auth/users', methods=['GET'])
+def list_users():
+    admin_id = session.get('user_id')
+    if not admin_id:
+        return jsonify({'error': 'Unauthorized'}), 401
+        
+    admin = get_user_by_id(admin_id)
+    if not admin or not admin['is_admin']:
+        return jsonify({'error': 'Forbidden. Admin privileges required.'}), 403
+        
+    return jsonify(get_users())
+
+
+@app.route('/api/auth/users/<int:delete_user_id>', methods=['DELETE'])
+def remove_user(delete_user_id):
+    admin_id = session.get('user_id')
+    if not admin_id:
+        return jsonify({'error': 'Unauthorized'}), 401
+        
+    admin = get_user_by_id(admin_id)
+    if not admin or not admin['is_admin']:
+        return jsonify({'error': 'Forbidden. Admin privileges required.'}), 403
+        
+    if admin_id == delete_user_id:
+        return jsonify({'error': 'Cannot delete your own administrator account.'}), 400
+        
+    try:
+        delete_user(delete_user_id)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': f"Failed to delete user: {str(e)}"}), 500
 
 
 if __name__ == '__main__':

@@ -24,10 +24,15 @@ def client(monkeypatch):
     
     app.config.update({
         'TESTING': True,
-        'PROPAGATE_EXCEPTIONS': True
+        'PROPAGATE_EXCEPTIONS': True,
+        'SECRET_KEY': 'test-secret-key'
     })
     
     with app.test_client() as client:
+        client.post('/api/auth/register', json={
+            'username': 'test_user',
+            'password': 'password123'
+        })
         yield client
         
     os.close(db_fd)

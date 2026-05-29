@@ -99,10 +99,15 @@
             </div>
 
             <!-- Sidebar Footer with Settings Button -->
-            <div class="sidebar-footer">
-                <button class="btn btn-outline" id="settings-btn">
-                    <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align: middle; margin-right: 6px; position: relative; top: -1px;"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" fill="currentColor"/></svg>
+            <!-- Sidebar Footer with Settings & Logout Buttons -->
+            <div class="sidebar-footer" style="display: flex; gap: 8px;">
+                <button class="btn btn-outline" id="settings-btn" style="flex: 1; padding: 10px 6px;">
+                    <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: middle; margin-right: 4px; position: relative; top: -1px;"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" fill="currentColor"/></svg>
                     Settings
+                </button>
+                <button class="btn btn-outline" id="logout-btn" style="flex: 1; padding: 10px 6px; border-color: #ef4444; color: #ef4444;">
+                    <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: middle; margin-right: 4px; position: relative; top: -1px;"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" fill="currentColor"/></svg>
+                    Log Out
                 </button>
             </div>
         </aside>
@@ -275,6 +280,15 @@
                                 <option value="500">500x</option>
                             </select>
                         </div>
+                        
+                        <!-- Route Privacy Toggle/Status Container -->
+                        <div id="route-privacy-container" style="display: inline-flex; align-items: center; margin-right: 15px; font-size: 0.85em; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 4px;">
+                            <span id="route-privacy-status" style="opacity: 0.8; margin-right: 8px; font-weight: 500; display: flex; align-items: center;">
+                                <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>
+                                Private
+                            </span>
+                            <button class="btn btn-sm btn-outline" id="route-privacy-toggle-btn" style="padding: 2px 6px; font-size: 0.8em; margin: 0; line-height: 1;">Make Public</button>
+                        </div>
 
                         <button class="btn btn-sm btn-primary" id="export-video-btn">
                             <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: middle; margin-right: 4px;"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/></svg>
@@ -431,6 +445,25 @@
                         <button type="button" class="btn btn-outline" id="garmin-disconnect-btn" style="width: 100%; border-color: #ef4444; color: #ef4444;">Disconnect</button>
                     </div>
                     
+                    <!-- Admin User Management Panel (hidden by default) -->
+                    <div id="admin-user-section" class="hidden" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
+                        <h4 style="color: var(--primary); margin-bottom: 12px; font-family: 'Outfit', sans-serif;">User Account Management</h4>
+                        <div style="max-height: 180px; overflow-y: auto; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 10px;" id="admin-user-list-container">
+                            <table style="width: 100%; font-size: 0.85em; border-collapse: collapse;">
+                                <thead>
+                                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.1); text-align: left; opacity: 0.7;">
+                                        <th style="padding-bottom: 6px;">Username</th>
+                                        <th style="padding-bottom: 6px;">Role</th>
+                                        <th style="padding-bottom: 6px; text-align: right;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="admin-user-list">
+                                    <!-- Populated dynamically via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
                     <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
                         <button type="button" class="btn btn-primary" id="close-settings-btn">Save & Close</button>
                     </div>
@@ -495,6 +528,38 @@
 
     <!-- WebM Duration Fixer -->
     <script src="/static/vendor/fix-webm-duration.js"></script>
+
+    <!-- Logon Overlay Screen -->
+    <div class="modal" id="login-modal" style="z-index: 3000; background: rgba(7, 10, 19, 0.96); backdrop-filter: blur(20px); display: flex; align-items: center; justify-content: center; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;">
+        <div class="modal-content card" style="max-width: 420px; width: 90%; padding: 35px; box-shadow: 0 0 40px rgba(0, 240, 255, 0.15); border: 1px solid rgba(0, 240, 255, 0.2); background: rgba(13, 17, 30, 0.75);">
+            <div style="text-align: center; margin-bottom: 30px;">
+                <h1 class="app-title" style="margin: 0; font-size: 2.5em; letter-spacing: 5px; font-weight: 800; color: #fff; text-shadow: 0 0 10px rgba(0,240,255,0.4);">BLAEU</h1>
+                <p style="font-size: 0.8em; color: var(--secondary); letter-spacing: 3px; font-weight: 600; margin-top: 5px;">GPX CARTOGRAPHER</p>
+            </div>
+            
+            <h3 class="card-title" id="login-title" style="margin-bottom: 20px; text-align: center; font-size: 1.3em; font-family: 'Outfit', sans-serif;">Log In</h3>
+            
+            <div id="login-error-msg" style="color: #ef4444; font-size: 0.85em; margin-bottom: 15px; text-align: center; display: none; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); padding: 8px; border-radius: 4px;"></div>
+            
+            <form id="login-form" onsubmit="event.preventDefault();">
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="login-username" style="color: var(--secondary); font-size: 0.85em;">Username</label>
+                    <input type="text" id="login-username" required style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.3); color: #fff; font-family: inherit;">
+                </div>
+                <div class="form-group" style="margin-bottom: 25px;">
+                    <label for="login-password" style="color: var(--secondary); font-size: 0.85em;">Password</label>
+                    <input type="password" id="login-password" required style="width: 100%; padding: 10px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); background: rgba(0,0,0,0.3); color: #fff; font-family: inherit;">
+                </div>
+                
+                <button type="submit" class="btn btn-primary" id="login-submit-btn" style="width: 100%; padding: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; font-family: 'Outfit', sans-serif;">Log In</button>
+                
+                <div style="text-align: center; margin-top: 25px; font-size: 0.85em; opacity: 0.9;">
+                    <span id="login-toggle-text">Don't have an account?</span>
+                    <a href="#" id="login-toggle-link" style="color: var(--primary); text-decoration: none; margin-left: 5px; font-weight: bold; text-shadow: 0 0 5px rgba(0,240,255,0.2);">Register</a>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- Main Frontend Script -->
     <script src="/static/js/app.js?v=3"></script>

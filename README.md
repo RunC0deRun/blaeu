@@ -19,8 +19,9 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
   - Dynamic camera-following tracking: Map tiles and vectors slide smoothly under a centered active marker.
   - Configurable resolutions: Export in **720p**, **1080p**, or **2160p (4K)**.
   - Proportional vector scaling: Lines, markers, text, and layout scale automatically to remain visually identical at any resolution.
-  - Configurable framerates (**24**, **25**, **30**, **50**, or **60 FPS**).
+  - Configurable framerates: Export at **24**, **25**, **30**, **50**, or **60 FPS**.
   - Multiple formats: High-quality server-side transcoding (via FFmpeg in the container) supports **WebM** and **MP4 (H.264/YUV420p)** exports with constant framerate mapping.
+- **Minimalist Poster Background Maps (v0.5.0)**: Toggle between default Dark Matter tiles and 17 minimalist map themes (Noir, Blueprint, Sunset, Neon Cyberpunk, etc.). Maps are generated dynamically on-the-fly on the backend using `osmnx` (cached locally) and rendered at high resolution (300 DPI) via `matplotlib`.
 - **Organization & Search**: CRUD operations for folder hierarchies, tagging support, and chronological timeline ledger.
 - **Tile Proxy & CORS Protection**: Serves tiles from the same origin to avoid Canvas staining, caching them locally on disk to protect external map services.
 - **Duplicate Prevention**: Computes SHA-256 hashes of uploaded GPX logs to reject duplicate uploads.
@@ -29,9 +30,11 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
 
 ## 🛠️ Technology Stack
 
-- **Backend**: Python 3.14, Flask, SQLite, Gunicorn, GarminConnect, TimezoneFinder, FFmpeg
+- **Backend**: Python 3.14, Flask, SQLite, Gunicorn, GarminConnect, TimezoneFinder, FFmpeg, OSMnx, Matplotlib, Geopandas, Pyproj, Shapely, Requests
 - **Frontend**: HTML5, Vanilla CSS3 (Glassmorphic HUD theme), Vanilla JS, Leaflet.js (bundled locally)
 - **Containerization**: Docker, Docker Compose
+
+
 
 ---
 

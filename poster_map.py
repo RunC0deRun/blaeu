@@ -102,7 +102,9 @@ def create_gradient_fade(ax, color, location="bottom", zorder=10):
         aspect="auto",
         cmap=custom_cmap,
         zorder=zorder,
+        origin="lower"
     )
+
 
 
 # Set up directories

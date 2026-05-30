@@ -666,5 +666,11 @@ def test_tile_proxy_boundaries(client, monkeypatch):
     assert res_invalid_y.status_code == 400
     assert b"Tile coordinates out of bounds" in res_invalid_y.data
 
+def test_session_cookie_flags():
+    assert app.config['SESSION_COOKIE_HTTPONLY'] is True
+    assert app.config['SESSION_COOKIE_SAMESITE'] == 'Lax'
+    assert app.config['SESSION_COOKIE_SECURE'] is True
+
+
 
 

@@ -14,6 +14,7 @@ def client(monkeypatch):
     
     # Configure app env vars for testing
     monkeypatch.setenv("DATA_DIR", temp_gpx_dir)
+    monkeypatch.setenv("BLAEU_ALLOW_REGISTRATION", "true")
     monkeypatch.setattr("db.DB_PATH", temp_db_path)
     monkeypatch.setattr("db.DATA_DIR", temp_gpx_dir)
     monkeypatch.setattr("app.GPX_STORE_DIR", os.path.join(temp_gpx_dir, 'gpx'))

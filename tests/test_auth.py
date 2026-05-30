@@ -13,6 +13,7 @@ def client(monkeypatch):
     
     # Configure app env vars for testing
     monkeypatch.setenv("DATA_DIR", temp_gpx_dir)
+    monkeypatch.setenv("BLAEU_ALLOW_REGISTRATION", "true")
     monkeypatch.setattr("db.DB_PATH", temp_db_path)
     monkeypatch.setattr("db.DATA_DIR", temp_gpx_dir)
     monkeypatch.setattr("app.GPX_STORE_DIR", os.path.join(temp_gpx_dir, 'gpx'))
@@ -310,3 +311,22 @@ def test_default_map_style_profile(client):
     })
     assert res.status_code == 200
     assert json.loads(res.data)['user']['default_map_style'] == 'blueprint'
+
+def test_registration_disabled_after_first_user(client, monkeypatch):
+    # Register first user
+    res1 = client.post('/api/auth/register', json={
+        'username': 'first_user',
+        'password': 'password123'
+    })
+    assert res1.status_code == 201
+
+    # Temporarily disable registration by clearing/setting env var to false
+    monkeypatch.setenv("BLAEU_ALLOW_REGISTRATION", "false")
+
+    # Attempt to register second user
+    res2 = client.post('/api/auth/register', json={
+        'username': 'second_user',
+        'password': 'password123'
+    })
+    assert res2.status_code == 403
+    assert b"Registration is closed" in res2.data

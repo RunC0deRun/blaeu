@@ -1065,7 +1065,12 @@ def register():
         return jsonify({'error': 'Username must be at least 3 chars, password at least 4 chars'}), 400
         
     try:
-        is_first = (count_users() == 0)
+        user_count = count_users()
+        allow_registration = os.getenv('BLAEU_ALLOW_REGISTRATION', 'false').lower() == 'true'
+        if user_count > 0 and not allow_registration:
+            return jsonify({'error': 'Registration is closed on this instance.'}), 403
+
+        is_first = (user_count == 0)
         is_admin = 1 if is_first else 0
         
         password_hash = generate_password_hash(password)
@@ -1125,17 +1130,25 @@ def logout():
 @app.route('/api/auth/status', methods=['GET'])
 def auth_status():
     user_id = session.get('user_id')
+    user_count = count_users()
+    allow_registration = os.getenv('BLAEU_ALLOW_REGISTRATION', 'false').lower() == 'true'
+    registration_open = (user_count == 0) or allow_registration
+    
     if not user_id:
-        no_users_exist = (count_users() == 0)
         return jsonify({
             'logged_in': False,
-            'no_users_exist': no_users_exist
+            'no_users_exist': user_count == 0,
+            'registration_open': registration_open
         })
         
     user = get_user_by_id(user_id)
     if not user:
         session.pop('user_id', None)
-        return jsonify({'logged_in': False, 'no_users_exist': count_users() == 0})
+        return jsonify({
+            'logged_in': False,
+            'no_users_exist': user_count == 0,
+            'registration_open': registration_open
+        })
         
     return jsonify({
         'logged_in': True,

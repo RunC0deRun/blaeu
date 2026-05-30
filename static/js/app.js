@@ -904,9 +904,6 @@ async function handleUpload() {
         if (res.status === 409) {
             const data = await res.json();
             alert(data.error);
-            if (data.route_id) {
-                selectRoute(data.route_id);
-            }
             return;
         }
 
@@ -925,9 +922,6 @@ async function handleUpload() {
         await loadFolders();
         await loadTags();
         await loadRoutes();
-        
-        // Select new route
-        selectRoute(newRoute.id);
         
     } catch (err) {
         alert(err.message);

@@ -749,13 +749,29 @@ function drawRouteMiniature(canvas, coords, posterStatus) {
     if (privacyDistance > 0 && coords.length > 0) {
         const originalStart = coords[0];
         const originalFinish = coords[coords.length - 1];
-        const filtered = coords.filter(pt => {
+        
+        let firstKeepIdx = 0;
+        while (firstKeepIdx < coords.length) {
+            const pt = coords[firstKeepIdx];
             const dStart = getDistanceMeters(pt[0], pt[1], originalStart[0], originalStart[1]);
+            if (dStart > privacyDistance) {
+                break;
+            }
+            firstKeepIdx++;
+        }
+        
+        let lastKeepIdx = coords.length - 1;
+        while (lastKeepIdx >= firstKeepIdx) {
+            const pt = coords[lastKeepIdx];
             const dFinish = getDistanceMeters(pt[0], pt[1], originalFinish[0], originalFinish[1]);
-            return dStart > privacyDistance && dFinish > privacyDistance;
-        });
-        if (filtered.length >= 2) {
-            coords = filtered;
+            if (dFinish > privacyDistance) {
+                break;
+            }
+            lastKeepIdx--;
+        }
+        
+        if (firstKeepIdx <= lastKeepIdx && (lastKeepIdx - firstKeepIdx + 1) >= 2) {
+            coords = coords.slice(firstKeepIdx, lastKeepIdx + 1);
         } else {
             ctx.fillStyle = '#94a3b8';
             ctx.font = '12px Outfit';
@@ -1188,14 +1204,55 @@ function getFilteredTracks() {
         return currentRoute.tracks;
     }
     
+    // Flatten all points chronologically to find the global start and end keep indices
+    const allPts = [];
+    currentRoute.tracks.forEach(track => {
+        track.segments.forEach(segment => {
+            segment.forEach(pt => {
+                allPts.push(pt);
+            });
+        });
+    });
+
+    if (allPts.length === 0) return [];
+
+    let firstKeepIdx = 0;
+    while (firstKeepIdx < allPts.length) {
+        const pt = allPts[firstKeepIdx];
+        const dStart = getDistanceMeters(pt.lat, pt.lon, originalStartPoint.lat, originalStartPoint.lon);
+        if (dStart > privacyDistance) {
+            break;
+        }
+        firstKeepIdx++;
+    }
+
+    let lastKeepIdx = allPts.length - 1;
+    while (lastKeepIdx >= firstKeepIdx) {
+        const pt = allPts[lastKeepIdx];
+        const dFinish = getDistanceMeters(pt.lat, pt.lon, originalFinishPoint.lat, originalFinishPoint.lon);
+        if (dFinish > privacyDistance) {
+            break;
+        }
+        lastKeepIdx--;
+    }
+
+    if (firstKeepIdx > lastKeepIdx) {
+        return [];
+    }
+
+    // Reconstruct tracks and segments keeping only points within [firstKeepIdx, lastKeepIdx]
     const filteredTracks = [];
+    let globalIdx = 0;
+
     currentRoute.tracks.forEach(track => {
         const filteredSegments = [];
         track.segments.forEach(segment => {
-            const filteredSegment = segment.filter(pt => {
-                const dStart = getDistanceMeters(pt.lat, pt.lon, originalStartPoint.lat, originalStartPoint.lon);
-                const dFinish = getDistanceMeters(pt.lat, pt.lon, originalFinishPoint.lat, originalFinishPoint.lon);
-                return dStart > privacyDistance && dFinish > privacyDistance;
+            const filteredSegment = [];
+            segment.forEach(pt => {
+                if (globalIdx >= firstKeepIdx && globalIdx <= lastKeepIdx) {
+                    filteredSegment.push(pt);
+                }
+                globalIdx++;
             });
             if (filteredSegment.length > 0) {
                 filteredSegments.push(filteredSegment);
@@ -1210,6 +1267,7 @@ function getFilteredTracks() {
     });
     return filteredTracks;
 }
+
 
 function getFilteredWaypoints() {
     if (!currentRoute || !currentRoute.waypoints) {

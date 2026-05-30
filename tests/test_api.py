@@ -561,3 +561,15 @@ def test_route_sorting_and_sql_injection_fallback(client):
     assert len(routes_sqli_order) == 2
     assert routes_sqli_order[0]['name'] == 'Route B'
     assert routes_sqli_order[1]['name'] == 'Route A'
+
+def test_upload_file_too_large(client):
+    # Try uploading a 51MB file
+    large_data = b"X" * (51 * 1024 * 1024)
+    data = {
+        'file': (io.BytesIO(large_data), 'large_route.gpx')
+    }
+    response = client.post('/api/upload', data=data, content_type='multipart/form-data')
+    assert response.status_code == 413
+    json_data = json.loads(response.data)
+    assert "File too large" in json_data['error']
+

@@ -15,6 +15,11 @@ from db import (
 from gpx_parser import parse_gpx
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB limit
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({'error': 'File too large. Maximum size allowed is 50MB.'}), 413
 
 # Initialize session secret key securely
 secret_key = os.getenv('SECRET_KEY')

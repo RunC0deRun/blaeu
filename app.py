@@ -545,6 +545,7 @@ def import_single_garmin_activity(user_id, client, activity_id, activity_name=No
         'user_id': user_id,
         'is_public': False, # private by default
         'timezone': parsed.get('timezone'),
+        'created_at': parsed.get('start_time'),
         'simplified_path': json.dumps(parsed.get('simplified_path', []))
     }
     

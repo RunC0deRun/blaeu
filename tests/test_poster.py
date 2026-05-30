@@ -140,3 +140,33 @@ def test_background_generation_on_upload(client, mock_gis):
         assert args[0] == route_id
         assert args[2] == 'noir'
 
+
+def test_garmin_auto_sync(client):
+    # 1. Connect Garmin mock connection first
+    from db import save_garmin_connection
+    save_garmin_connection(1, "test@example.com", "Test User")
+    
+    # 2. Get status, should show auto_sync_interval as 'off' by default
+    res = client.get('/api/garmin/status')
+    assert res.status_code == 200
+    status_data = json.loads(res.data)
+    assert status_data['status'] == 'connected'
+    assert status_data['auto_sync_interval'] == 'off'
+    
+    # 3. Update auto-sync to '3h'
+    res = client.put('/api/garmin/auto-sync', json={'auto_sync_interval': '3h'})
+    assert res.status_code == 200
+    res_data = json.loads(res.data)
+    assert res_data['status'] == 'success'
+    assert res_data['auto_sync_interval'] == '3h'
+    
+    # 4. Get status again, should be '3h'
+    res = client.get('/api/garmin/status')
+    assert res.status_code == 200
+    status_data = json.loads(res.data)
+    assert status_data['auto_sync_interval'] == '3h'
+    
+    # 5. Test invalid interval
+    res = client.put('/api/garmin/auto-sync', json={'auto_sync_interval': 'invalid'})
+    assert res.status_code == 400
+

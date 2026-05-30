@@ -2271,9 +2271,30 @@ function initGarminIntegration() {
         disconnectBtn.addEventListener('click', disconnectGarmin);
     }
 
-    const syncBtn = document.getElementById('garmin-sync-btn');
+    const syncBtn = document.getElementById('sidebar-garmin-sync-btn');
     if (syncBtn) {
         syncBtn.addEventListener('click', syncGarminActivities);
+    }
+
+    const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
+    if (autoSyncSelect) {
+        autoSyncSelect.addEventListener('change', async (e) => {
+            const interval = e.target.value;
+            try {
+                const res = await fetch('/api/garmin/auto-sync', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ auto_sync_interval: interval })
+                });
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to update auto-sync setting');
+                }
+            } catch (err) {
+                alert(err.message);
+                checkGarminStatus();
+            }
+        });
     }
 
     const closeActivitiesBtn = document.getElementById('close-garmin-activities-btn');
@@ -2309,15 +2330,23 @@ async function checkGarminStatus() {
         const disconnectedSection = document.getElementById('garmin-disconnected-section');
         const connectedSection = document.getElementById('garmin-connected-section');
         
+        const sidebarBtn = document.getElementById('sidebar-garmin-sync-btn');
         if (data.status === 'connected') {
             disconnectedSection.classList.add('hidden');
             connectedSection.classList.remove('hidden');
+            if (sidebarBtn) sidebarBtn.classList.remove('hidden');
             
             document.getElementById('garmin-connected-name').textContent = data.display_name || 'Garmin Connected';
             document.getElementById('garmin-connected-email').textContent = data.email;
+            
+            const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
+            if (autoSyncSelect) {
+                autoSyncSelect.value = data.auto_sync_interval || 'off';
+            }
         } else {
             disconnectedSection.classList.remove('hidden');
             connectedSection.classList.add('hidden');
+            if (sidebarBtn) sidebarBtn.classList.add('hidden');
             
             document.getElementById('garmin-email').value = '';
             document.getElementById('garmin-password').value = '';
@@ -2406,7 +2435,7 @@ async function disconnectGarmin() {
 }
 
 async function syncGarminActivities() {
-    const syncBtn = document.getElementById('garmin-sync-btn');
+    const syncBtn = document.getElementById('sidebar-garmin-sync-btn');
     const originalText = syncBtn.innerHTML;
     
     syncBtn.disabled = true;

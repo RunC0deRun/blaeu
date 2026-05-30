@@ -331,7 +331,7 @@ def add_route(route_metadata, stats):
     finally:
         conn.close()
 
-def get_routes(user_id, folder_id=None):
+def get_routes(user_id, folder_id=None, sort_by=None, sort_order=None):
     conn = get_db()
     cursor = conn.cursor()
     
@@ -347,7 +347,26 @@ def get_routes(user_id, folder_id=None):
         query += " AND r.folder_id = ?"
         params.append(folder_id)
         
-    query += " ORDER BY r.created_at DESC, r.id DESC"
+    # Whitelist sort parameters to prevent SQL injection
+    ALLOWED_SORT_COLUMNS = {
+        'name': 'r.name',
+        'date': 'r.created_at',
+        'created_at': 'r.created_at',
+        'distance': 'r.total_distance',
+        'total_distance': 'r.total_distance',
+        'duration': 'r.duration'
+    }
+    ALLOWED_SORT_ORDERS = {'ASC', 'DESC'}
+
+    sort_col = 'r.created_at'
+    sort_dir = 'DESC'
+
+    if sort_by in ALLOWED_SORT_COLUMNS:
+        sort_col = ALLOWED_SORT_COLUMNS[sort_by]
+    if sort_order and sort_order.upper() in ALLOWED_SORT_ORDERS:
+        sort_dir = sort_order.upper()
+
+    query += f" ORDER BY {sort_col} {sort_dir}, r.id DESC"
     cursor.execute(query, params)
     rows = cursor.fetchall()
     

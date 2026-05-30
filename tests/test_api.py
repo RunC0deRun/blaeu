@@ -501,4 +501,63 @@ def test_garmin_connect_fallback_rate_limit(client, monkeypatch):
     assert "failed to acquire persistent DI OAuth tokens" in data['error']
 
 
+def test_route_sorting_and_sql_injection_fallback(client):
+    # Upload Route A (created at 13:00)
+    client.post('/api/upload', data={
+        'file': (io.BytesIO(GPX_DATA_1.encode('utf-8')), 'route1.gpx'),
+        'name': 'Route A'
+    }, content_type='multipart/form-data')
+    
+    # Upload Route B (created at 14:00)
+    client.post('/api/upload', data={
+        'file': (io.BytesIO(GPX_DATA_2.encode('utf-8')), 'route2.gpx'),
+        'name': 'Route B'
+    }, content_type='multipart/form-data')
+    
+    # 1. Sort by name ASC
+    res_name_asc = client.get('/api/routes?sort_by=name&sort_order=asc')
+    assert res_name_asc.status_code == 200
+    routes_name_asc = json.loads(res_name_asc.data)
+    assert len(routes_name_asc) == 2
+    assert routes_name_asc[0]['name'] == 'Route A'
+    assert routes_name_asc[1]['name'] == 'Route B'
 
+    # 2. Sort by name DESC
+    res_name_desc = client.get('/api/routes?sort_by=name&sort_order=desc')
+    assert res_name_desc.status_code == 200
+    routes_name_desc = json.loads(res_name_desc.data)
+    assert routes_name_desc[0]['name'] == 'Route B'
+    assert routes_name_desc[1]['name'] == 'Route A'
+
+    # 3. Sort by date ASC
+    res_date_asc = client.get('/api/routes?sort_by=date&sort_order=asc')
+    assert res_date_asc.status_code == 200
+    routes_date_asc = json.loads(res_date_asc.data)
+    assert routes_date_asc[0]['name'] == 'Route A'
+    assert routes_date_asc[1]['name'] == 'Route B'
+
+    # 4. Fallback on invalid sort_by
+    res_invalid_by = client.get('/api/routes?sort_by=invalid_column')
+    assert res_invalid_by.status_code == 200
+    # Should fallback to default (date DESC)
+    routes_invalid_by = json.loads(res_invalid_by.data)
+    assert routes_invalid_by[0]['name'] == 'Route B'
+    assert routes_invalid_by[1]['name'] == 'Route A'
+
+    # 5. Fallback on SQL injection in sort_by
+    res_sqli_by = client.get('/api/routes?sort_by=name;+DROP+TABLE+routes;--')
+    assert res_sqli_by.status_code == 200
+    routes_sqli_by = json.loads(res_sqli_by.data)
+    # Should fallback to default (date DESC) and not raise/execute the SQL injection
+    assert len(routes_sqli_by) == 2
+    assert routes_sqli_by[0]['name'] == 'Route B'
+    assert routes_sqli_by[1]['name'] == 'Route A'
+
+    # 6. Fallback on SQL injection in sort_order
+    res_sqli_order = client.get('/api/routes?sort_by=name&sort_order=asc;+DROP+TABLE+routes;--')
+    assert res_sqli_order.status_code == 200
+    routes_sqli_order = json.loads(res_sqli_order.data)
+    # Should fallback to default direction (DESC) for the whitelisted column (name)
+    assert len(routes_sqli_order) == 2
+    assert routes_sqli_order[0]['name'] == 'Route B'
+    assert routes_sqli_order[1]['name'] == 'Route A'

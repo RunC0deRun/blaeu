@@ -15,7 +15,28 @@ from db import (
 from gpx_parser import parse_gpx
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
-app.secret_key = os.getenv('SECRET_KEY', 'blaeu-default-super-secret-key-998877')
+
+# Initialize session secret key securely
+secret_key = os.getenv('SECRET_KEY')
+if not secret_key:
+    secret_key_path = os.path.join(DATA_DIR, 'secret_key')
+    if os.path.exists(secret_key_path):
+        try:
+            with open(secret_key_path, 'r', encoding='utf-8') as f:
+                secret_key = f.read().strip()
+        except Exception:
+            pass
+    if not secret_key:
+        import secrets
+        secret_key = secrets.token_hex(32)
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(secret_key_path, 'w', encoding='utf-8') as f:
+                f.write(secret_key)
+        except Exception:
+            pass
+
+app.secret_key = secret_key
 
 # Initialize DB on load
 init_db()

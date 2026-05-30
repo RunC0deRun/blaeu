@@ -11,6 +11,27 @@ let activeFolderFilter = '';
 let activeTagFilter = '';
 let currentUser = null;
 let authMode = 'login';
+let registrationOpen = true;
+let csrfToken = null;
+
+// Intercept all fetch requests to automatically attach CSRF token for state-changing operations
+const originalFetch = window.fetch;
+window.fetch = async function(resource, options = {}) {
+    const method = (options.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'DELETE'].includes(method) && csrfToken) {
+        options.headers = options.headers || {};
+        if (options.headers instanceof Headers) {
+            options.headers.set('X-CSRF-Token', csrfToken);
+        } else if (Array.isArray(options.headers)) {
+            if (!options.headers.some(h => h[0].toLowerCase() === 'x-csrf-token')) {
+                options.headers.push(['X-CSRF-Token', csrfToken]);
+            }
+        } else {
+            options.headers['X-CSRF-Token'] = csrfToken;
+        }
+    }
+    return originalFetch(resource, options);
+};
 
 // Animation Playback State
 let animationPoints = []; // Flattened [{lat, lon, ele, time, elapsed}]
@@ -200,6 +221,49 @@ function initAppEvents() {
     document.getElementById('back-to-dashboard-btn').addEventListener('click', deselectRoute);
 
     initGarminIntegration();
+
+    // Delegated click listeners to prevent XSS in inline event handlers
+    document.addEventListener('click', (e) => {
+        // Tag filter toggle
+        const tagBadge = e.target.closest('.tag-badge');
+        if (tagBadge) {
+            if (tagBadge.closest('.activity-card')) {
+                e.stopPropagation();
+            }
+            const tagName = tagBadge.getAttribute('data-tag-name');
+            if (tagName) {
+                toggleTagFilter(tagName);
+            }
+            return;
+        }
+
+        // Delete route from dashboard
+        const deleteRouteBtn = e.target.closest('.btn-delete-route');
+        if (deleteRouteBtn) {
+            e.stopPropagation();
+            const routeId = parseInt(deleteRouteBtn.getAttribute('data-route-id'), 10);
+            const routeName = deleteRouteBtn.getAttribute('data-route-name');
+            deleteRouteFromDashboard(routeId, routeName, e);
+            return;
+        }
+
+        // Import Garmin activity
+        const importGarminBtn = e.target.closest('.btn-import-single');
+        if (importGarminBtn) {
+            const activityId = importGarminBtn.getAttribute('data-id');
+            importSingleGarminActivity(activityId, importGarminBtn);
+            return;
+        }
+
+        // Delete user account
+        const deleteUserBtn = e.target.closest('.btn-delete-user');
+        if (deleteUserBtn) {
+            const userId = parseInt(deleteUserBtn.getAttribute('data-user-id'), 10);
+            const username = deleteUserBtn.getAttribute('data-username');
+            handleDeleteUser(userId, username);
+            return;
+        }
+    });
 }
 
 // ----------------------------------------------------
@@ -239,7 +303,7 @@ async function loadTags() {
 
         filterList.innerHTML = tags.map(tag => {
             const activeClass = activeTagFilter === tag.name ? 'active' : '';
-            return `<span class="tag-badge ${activeClass}" onclick="toggleTagFilter('${tag.name}')">#${escapeHTML(tag.name)}</span>`;
+            return `<span class="tag-badge ${activeClass}" data-tag-name="${escapeHTML(tag.name)}">#${escapeHTML(tag.name)}</span>`;
         }).join('');
     } catch (err) {
         console.error("Error loading tags", err);
@@ -337,7 +401,7 @@ function renderRoutesLedger() {
         }
         let formattedDate = dateObj.toLocaleDateString(undefined, formatOptions);
         if (route.timezone_abbr) {
-            formattedDate += ` ${route.timezone_abbr}`;
+            formattedDate += ` ${escapeHTML(route.timezone_abbr)}`;
         }
 
         const privacyIcon = route.is_public ? 
@@ -485,10 +549,10 @@ function renderDashboardGrid() {
         }
         let formattedDate = dateObj.toLocaleDateString(undefined, formatOptions);
         if (route.timezone_abbr) {
-            formattedDate += ` ${route.timezone_abbr}`;
+            formattedDate += ` ${escapeHTML(route.timezone_abbr)}`;
         }
         
-        const tagsHtml = route.tags ? route.tags.map(t => `<span class="tag-badge" onclick="event.stopPropagation(); toggleTagFilter('${t}')">#${escapeHTML(t)}</span>`).join('') : '';
+        const tagsHtml = route.tags ? route.tags.map(t => `<span class="tag-badge" data-tag-name="${escapeHTML(t)}">#${escapeHTML(t)}</span>`).join('') : '';
 
         const privacyIcon = route.is_public ? 
             `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Public"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>` :
@@ -502,7 +566,7 @@ function renderDashboardGrid() {
                         <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                     </svg>
                 </button>
-                <button class="btn-icon" onclick="deleteRouteFromDashboard(${route.id}, '${escapeHTML(route.name)}', event)" title="Delete activity">
+                <button class="btn-icon btn-delete-route" data-route-id="${route.id}" data-route-name="${escapeHTML(route.name)}" title="Delete activity">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="3 6 5 6 21 6"></polyline>
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -2571,11 +2635,11 @@ function renderGarminActivitiesList() {
                 </td>
                 <td style="padding: 12px 10px;">${dateStr}</td>
                 <td style="padding: 12px 10px; font-weight: 500;" title="${escapeHTML(act.activityName)}">${escapeHTML(act.activityName)}</td>
-                <td style="padding: 12px 10px;"><span class="tag-badge btn-sm">${typeStr}</span></td>
+                <td style="padding: 12px 10px;"><span class="tag-badge btn-sm">${escapeHTML(typeStr)}</span></td>
                 <td style="padding: 12px 10px;">${distKm}</td>
                 <td style="padding: 12px 10px;">${durStr}</td>
                 <td style="padding: 12px 10px; text-align: right;">
-                    <button type="button" class="btn btn-sm btn-primary btn-import-single" data-id="${act.activityId}" onclick="importSingleGarminActivity('${act.activityId}', this)">Import</button>
+                    <button type="button" class="btn btn-sm btn-primary btn-import-single" data-id="${act.activityId}">Import</button>
                 </td>
             </tr>
         `;
@@ -3266,6 +3330,7 @@ async function checkAuthStatus() {
         
         if (data.logged_in) {
             currentUser = data.user;
+            csrfToken = data.csrf_token;
             if (loginModal) loginModal.style.display = 'none';
             
             // Set up UI header for logout visibility, etc.
@@ -3282,8 +3347,10 @@ async function checkAuthStatus() {
             checkGarminStatus();
         } else {
             currentUser = null;
+            csrfToken = data.csrf_token;
+            registrationOpen = data.registration_open;
             if (loginModal) loginModal.style.display = 'flex';
-            showAuthModal(data.no_users_exist);
+            showAuthModal(data.no_users_exist, data.registration_open);
         }
     } catch (err) {
         console.error("Error checking auth status:", err);
@@ -3292,15 +3359,20 @@ async function checkAuthStatus() {
 
 function toggleAuthMode(e) {
     if (e) e.preventDefault();
+    if (!registrationOpen) {
+        authMode = 'login';
+        showAuthModal(false, false);
+        return;
+    }
     if (authMode === 'login') {
         authMode = 'register';
     } else {
         authMode = 'login';
     }
-    showAuthModal(false);
+    showAuthModal(false, true);
 }
 
-function showAuthModal(noUsersExist) {
+function showAuthModal(noUsersExist, registrationOpen) {
     const loginTitle = document.getElementById('login-title');
     const submitBtn = document.getElementById('login-submit-btn');
     const toggleText = document.getElementById('login-toggle-text');
@@ -3315,7 +3387,7 @@ function showAuthModal(noUsersExist) {
         if (submitBtn) submitBtn.textContent = 'Create Admin';
         if (toggleText) toggleText.parentElement.style.display = 'none';
     } else {
-        if (authMode === 'register') {
+        if (authMode === 'register' && registrationOpen) {
             if (loginTitle) loginTitle.textContent = 'Register';
             if (submitBtn) submitBtn.textContent = 'Register';
             if (toggleText) toggleText.textContent = "Already have an account?";
@@ -3325,9 +3397,15 @@ function showAuthModal(noUsersExist) {
             authMode = 'login';
             if (loginTitle) loginTitle.textContent = 'Log In';
             if (submitBtn) submitBtn.textContent = 'Log In';
-            if (toggleText) toggleText.textContent = "Don't have an account?";
-            if (toggleLink) toggleLink.textContent = "Register";
-            if (toggleText) toggleText.parentElement.style.display = 'block';
+            if (toggleText) {
+                if (registrationOpen) {
+                    toggleText.textContent = "Don't have an account?";
+                    if (toggleLink) toggleLink.textContent = "Register";
+                    toggleText.parentElement.style.display = 'block';
+                } else {
+                    toggleText.parentElement.style.display = 'none';
+                }
+            }
         }
     }
 }
@@ -3370,6 +3448,7 @@ async function handleAuthSubmit(e) {
         
         // Auth success
         currentUser = data.user;
+        csrfToken = data.csrf_token;
         const loginModal = document.getElementById('login-modal');
         if (loginModal) loginModal.style.display = 'none';
         
@@ -3394,6 +3473,7 @@ async function handleLogout() {
         const res = await fetch('/api/auth/logout', { method: 'POST' });
         if (!res.ok) throw new Error('Logout failed');
         currentUser = null;
+        csrfToken = null;
         routesList = [];
         foldersList = [];
         deselectRoute();
@@ -3457,7 +3537,7 @@ async function loadAdminUserList() {
             const isSelf = currentUser && currentUser.id === user.id;
             const deleteBtn = isSelf ? 
                 '<span style="opacity: 0.5; font-size: 0.9em; padding: 4px 8px;">(You)</span>' :
-                `<button type="button" class="btn btn-sm btn-outline" style="border-color: #ef4444; color: #ef4444; padding: 2px 8px;" onclick="handleDeleteUser(${user.id}, '${escapeHTML(user.username)}')">Delete</button>`;
+                `<button type="button" class="btn btn-sm btn-outline btn-delete-user" data-user-id="${user.id}" data-username="${escapeHTML(user.username)}" style="border-color: #ef4444; color: #ef4444; padding: 2px 8px;">Delete</button>`;
             
             return `
                 <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">

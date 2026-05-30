@@ -13,6 +13,7 @@ def client(monkeypatch):
     
     # Configure app env vars for testing
     monkeypatch.setenv("DATA_DIR", temp_gpx_dir)
+    monkeypatch.setenv("BLAEU_ALLOW_REGISTRATION", "true")
     monkeypatch.setattr("db.DB_PATH", temp_db_path)
     monkeypatch.setattr("db.DATA_DIR", temp_gpx_dir)
     monkeypatch.setattr("app.GPX_STORE_DIR", os.path.join(temp_gpx_dir, 'gpx'))
@@ -310,3 +311,53 @@ def test_default_map_style_profile(client):
     })
     assert res.status_code == 200
     assert json.loads(res.data)['user']['default_map_style'] == 'blueprint'
+
+def test_registration_disabled_after_first_user(client, monkeypatch):
+    # Register first user
+    res1 = client.post('/api/auth/register', json={
+        'username': 'first_user',
+        'password': 'password123'
+    })
+    assert res1.status_code == 201
+
+    # Temporarily disable registration by clearing/setting env var to false
+    monkeypatch.setenv("BLAEU_ALLOW_REGISTRATION", "false")
+
+    # Attempt to register second user
+    res2 = client.post('/api/auth/register', json={
+        'username': 'second_user',
+        'password': 'password123'
+    })
+    assert res2.status_code == 403
+    assert b"Registration is closed" in res2.data
+
+def test_csrf_protection_enforced(client, monkeypatch):
+    # Register first user
+    res_reg = client.post('/api/auth/register', json={
+        'username': 'csrf_user',
+        'password': 'password123'
+    })
+    assert res_reg.status_code == 201
+    csrf_token = json.loads(res_reg.data)['csrf_token']
+    assert csrf_token is not None
+
+    # Enable CSRF checks by temporarily disabling testing mode in app config
+    monkeypatch.setitem(app.config, 'TESTING', False)
+
+    try:
+        # 1. State-changing request WITHOUT CSRF header should fail with 400 Bad Request
+        res_fail = client.post('/api/folders', json={'name': 'No CSRF Folder'})
+        assert res_fail.status_code == 400
+        assert b"CSRF token validation failed" in res_fail.data
+
+        # 2. State-changing request with WRONG CSRF header should fail with 400 Bad Request
+        res_fail_wrong = client.post('/api/folders', json={'name': 'Wrong CSRF Folder'}, headers={'X-CSRF-Token': 'wrong_token'})
+        assert res_fail_wrong.status_code == 400
+
+        # 3. State-changing request with CORRECT CSRF header should succeed
+        res_success = client.post('/api/folders', json={'name': 'CSRF Folder'}, headers={'X-CSRF-Token': csrf_token})
+        assert res_success.status_code == 201
+        assert json.loads(res_success.data)['name'] == 'CSRF Folder'
+    finally:
+        # Always restore TESTING mode
+        app.config['TESTING'] = True

@@ -3,6 +3,8 @@ import hashlib
 import requests
 import json
 import threading
+import time
+from functools import wraps
 from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from db import (
@@ -15,10 +17,64 @@ from db import (
 from gpx_parser import parse_gpx
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
-app.secret_key = os.getenv('SECRET_KEY', 'blaeu-default-super-secret-key-998877')
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB limit
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+# Secure cookies by default, but allow override for local dev setups not using localhost
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'true').lower() == 'true'
+
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    return jsonify({'error': 'File too large. Maximum size allowed is 50MB.'}), 413
+
+# Initialize session secret key securely
+secret_key = os.getenv('SECRET_KEY')
+if not secret_key:
+    secret_key_path = os.path.join(DATA_DIR, 'secret_key')
+    if os.path.exists(secret_key_path):
+        try:
+            with open(secret_key_path, 'r', encoding='utf-8') as f:
+                secret_key = f.read().strip()
+        except Exception:
+            pass
+    if not secret_key:
+        import secrets
+        secret_key = secrets.token_hex(32)
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(secret_key_path, 'w', encoding='utf-8') as f:
+                f.write(secret_key)
+        except Exception:
+            pass
+
+app.secret_key = secret_key
 
 # Initialize DB on load
 init_db()
+
+import secrets
+
+def get_csrf_token():
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_hex(32)
+    return session['csrf_token']
+
+@app.before_request
+def csrf_protect():
+    # Allow bypassing CSRF check in tests
+    if app.config.get('TESTING'):
+        return
+        
+    if request.method in ['POST', 'PUT', 'DELETE']:
+        exempt_paths = ['/api/auth/login', '/api/auth/register']
+        if request.path in exempt_paths:
+            return
+            
+        session_token = session.get('csrf_token')
+        header_token = request.headers.get('X-CSRF-Token')
+        
+        if not session_token or not header_token or session_token != header_token:
+            return jsonify({'error': 'CSRF token validation failed. Please refresh the page.'}), 400
 
 # Create directory to store actual GPX files
 GPX_STORE_DIR = os.path.join(DATA_DIR, 'gpx')
@@ -31,6 +87,35 @@ os.makedirs(TILES_CACHE_DIR, exist_ok=True)
 # Background poster generation tracking state
 poster_generations = {}
 poster_generations_lock = threading.Lock()
+
+# Simple in-memory rate-limiter for key API endpoints
+from collections import defaultdict
+rate_limit_records = defaultdict(list)
+rate_limit_lock = threading.Lock()
+
+def rate_limit(limit, period):
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            if app.config.get('TESTING'):
+                return f(*args, **kwargs)
+                
+            ip = request.remote_addr
+            if request.headers.getlist("X-Forwarded-For"):
+                ip = request.headers.getlist("X-Forwarded-For")[0]
+            
+            key = f"{f.__name__}:{ip}"
+            now = time.time()
+            
+            with rate_limit_lock:
+                rate_limit_records[key] = [t for t in rate_limit_records[key] if now - t < period]
+                if len(rate_limit_records[key]) >= limit:
+                    return jsonify({'error': 'Rate limit exceeded. Please try again later.'}), 429
+                rate_limit_records[key].append(now)
+                
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
 
 def get_current_user_id():
     return session.get('user_id')
@@ -126,6 +211,7 @@ def favicon():
 
 
 @app.route('/api/upload', methods=['POST'])
+@rate_limit(limit=10, period=60)
 def upload_gpx():
     user_id = get_current_user_id()
     if not user_id:
@@ -232,7 +318,9 @@ def list_routes():
             folder_id = int(folder_id)
         except ValueError:
             folder_id = None
-    routes = get_routes(user_id, folder_id)
+    sort_by = request.args.get('sort_by')
+    sort_order = request.args.get('sort_order')
+    routes = get_routes(user_id, folder_id, sort_by=sort_by, sort_order=sort_order)
     # Add ownership property for client UI
     for r in routes:
         r['is_owner'] = (r['user_id'] == user_id)
@@ -371,6 +459,13 @@ def get_map_tile(z, x, y):
     if not user_id:
         return jsonify({'error': 'Unauthorized. Please log in.'}), 401
         
+    if not (0 <= z <= 19):
+        return jsonify({'error': 'Invalid zoom level. Zoom must be between 0 and 19.'}), 400
+        
+    max_val = 1 << z
+    if not (0 <= x < max_val) or not (0 <= y < max_val):
+        return jsonify({'error': 'Tile coordinates out of bounds.'}), 400
+        
     tile_dir = os.path.join(TILES_CACHE_DIR, str(z), str(x))
     tile_path = os.path.join(tile_dir, f"{y}.png")
     
@@ -398,6 +493,7 @@ def get_map_tile(z, x, y):
     except Exception as e:
         return jsonify({'error': f"Tile proxy error: {str(e)}"}), 500
 @app.route('/api/convert-video', methods=['POST'])
+@rate_limit(limit=3, period=60)
 def convert_video():
     user_id = get_current_user_id()
     if not user_id:
@@ -444,7 +540,7 @@ def convert_video():
         bitrate = request.form.get('bitrate', '12000000')
         try:
             bitrate_val = int(bitrate)
-            if bitrate_val <= 0:
+            if bitrate_val <= 0 or bitrate_val > 100000000:
                 bitrate_val = 12000000
         except ValueError:
             bitrate_val = 12000000
@@ -571,7 +667,7 @@ def get_interval_seconds(interval_str):
 
 def sync_user_garmin_activities_in_background(user_id):
     from garminconnect import Garmin
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(int(user_id)))
     if not os.path.exists(token_store):
         return
         
@@ -725,6 +821,7 @@ def update_garmin_auto_sync():
         return jsonify({'error': f'Failed to update auto-sync interval: {str(e)}'}), 500
 
 @app.route('/api/garmin/connect', methods=['POST'])
+@rate_limit(limit=5, period=60)
 def connect_garmin():
     user_id = get_current_user_id()
     if not user_id:
@@ -739,8 +836,18 @@ def connect_garmin():
         return jsonify({'error': 'Email and password are required'}), 400
         
     from garminconnect import Garmin
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    tokens_parent = os.path.join(DATA_DIR, 'garmin_tokens')
+    os.makedirs(tokens_parent, exist_ok=True)
+    try:
+        os.chmod(tokens_parent, 0o700)
+    except Exception:
+        pass
+    token_store = os.path.join(tokens_parent, str(int(user_id)))
     os.makedirs(token_store, exist_ok=True)
+    try:
+        os.chmod(token_store, 0o700)
+    except Exception:
+        pass
     
     try:
         if mfa_code:
@@ -794,7 +901,7 @@ def disconnect_garmin():
         return jsonify({'error': 'Unauthorized. Please log in.'}), 401
         
     delete_garmin_connection(user_id)
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(int(user_id)))
     if os.path.exists(token_store):
         import shutil
         try:
@@ -814,7 +921,7 @@ def get_garmin_activities():
         return jsonify({'error': 'Garmin not connected'}), 400
         
     from garminconnect import Garmin
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(int(user_id)))
     
     try:
         client = Garmin()
@@ -862,7 +969,7 @@ def import_garmin_activity():
         return jsonify({'error': 'activityId is required'}), 400
         
     from garminconnect import Garmin
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(int(user_id)))
     
     try:
         client = Garmin()
@@ -1031,6 +1138,7 @@ def get_route_poster_map(route_id):
 # ==========================================
 
 @app.route('/api/auth/register', methods=['POST'])
+@rate_limit(limit=3, period=60)
 def register():
     data = request.json or {}
     username = data.get('username')
@@ -1044,7 +1152,12 @@ def register():
         return jsonify({'error': 'Username must be at least 3 chars, password at least 4 chars'}), 400
         
     try:
-        is_first = (count_users() == 0)
+        user_count = count_users()
+        allow_registration = os.getenv('BLAEU_ALLOW_REGISTRATION', 'false').lower() == 'true'
+        if user_count > 0 and not allow_registration:
+            return jsonify({'error': 'Registration is closed on this instance.'}), 403
+
+        is_first = (user_count == 0)
         is_admin = 1 if is_first else 0
         
         password_hash = generate_password_hash(password)
@@ -1055,6 +1168,7 @@ def register():
             backfill_ownerless_data(user_id)
             
         session['user_id'] = user_id
+        csrf_token = get_csrf_token()
         return jsonify({
             'success': True,
             'user': {
@@ -1062,7 +1176,8 @@ def register():
                 'username': username,
                 'is_admin': is_admin,
                 'default_map_style': 'dark'
-            }
+            },
+            'csrf_token': csrf_token
         }), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
@@ -1071,6 +1186,7 @@ def register():
 
 
 @app.route('/api/auth/login', methods=['POST'])
+@rate_limit(limit=5, period=60)
 def login():
     data = request.json or {}
     username = data.get('username')
@@ -1084,6 +1200,7 @@ def login():
         return jsonify({'error': 'Invalid username or password'}), 401
         
     session['user_id'] = user['id']
+    csrf_token = get_csrf_token()
     return jsonify({
         'success': True,
         'user': {
@@ -1091,30 +1208,43 @@ def login():
             'username': user['username'],
             'is_admin': user['is_admin'],
             'default_map_style': user.get('default_map_style', 'dark')
-        }
+        },
+        'csrf_token': csrf_token
     })
 
 
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
     session.pop('user_id', None)
+    session.pop('csrf_token', None)
     return jsonify({'success': True})
 
 
 @app.route('/api/auth/status', methods=['GET'])
 def auth_status():
     user_id = session.get('user_id')
+    user_count = count_users()
+    allow_registration = os.getenv('BLAEU_ALLOW_REGISTRATION', 'false').lower() == 'true'
+    registration_open = (user_count == 0) or allow_registration
+    csrf_token = get_csrf_token()
+    
     if not user_id:
-        no_users_exist = (count_users() == 0)
         return jsonify({
             'logged_in': False,
-            'no_users_exist': no_users_exist
+            'no_users_exist': user_count == 0,
+            'registration_open': registration_open,
+            'csrf_token': csrf_token
         })
         
     user = get_user_by_id(user_id)
     if not user:
         session.pop('user_id', None)
-        return jsonify({'logged_in': False, 'no_users_exist': count_users() == 0})
+        return jsonify({
+            'logged_in': False,
+            'no_users_exist': user_count == 0,
+            'registration_open': registration_open,
+            'csrf_token': csrf_token
+        })
         
     return jsonify({
         'logged_in': True,
@@ -1123,7 +1253,8 @@ def auth_status():
             'username': user['username'],
             'is_admin': user['is_admin'],
             'default_map_style': user.get('default_map_style', 'dark')
-        }
+        },
+        'csrf_token': csrf_token
     })
 
 
@@ -1183,4 +1314,5 @@ def remove_user(delete_user_id):
 
 if __name__ == '__main__':
     # Run the server
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode)

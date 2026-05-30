@@ -17,6 +17,7 @@ def server():
     
     # Override paths using environment variables
     os.environ["DATA_DIR"] = temp_data_dir
+    os.environ["BLAEU_ALLOW_REGISTRATION"] = "true"
     
     # Import and configure inside the scope to apply env overrides
     import db as app_db

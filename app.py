@@ -630,7 +630,7 @@ def get_interval_seconds(interval_str):
 
 def sync_user_garmin_activities_in_background(user_id):
     from garminconnect import Garmin
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(int(user_id)))
     if not os.path.exists(token_store):
         return
         
@@ -798,8 +798,18 @@ def connect_garmin():
         return jsonify({'error': 'Email and password are required'}), 400
         
     from garminconnect import Garmin
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    tokens_parent = os.path.join(DATA_DIR, 'garmin_tokens')
+    os.makedirs(tokens_parent, exist_ok=True)
+    try:
+        os.chmod(tokens_parent, 0o700)
+    except Exception:
+        pass
+    token_store = os.path.join(tokens_parent, str(int(user_id)))
     os.makedirs(token_store, exist_ok=True)
+    try:
+        os.chmod(token_store, 0o700)
+    except Exception:
+        pass
     
     try:
         if mfa_code:
@@ -853,7 +863,7 @@ def disconnect_garmin():
         return jsonify({'error': 'Unauthorized. Please log in.'}), 401
         
     delete_garmin_connection(user_id)
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(int(user_id)))
     if os.path.exists(token_store):
         import shutil
         try:
@@ -873,7 +883,7 @@ def get_garmin_activities():
         return jsonify({'error': 'Garmin not connected'}), 400
         
     from garminconnect import Garmin
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(int(user_id)))
     
     try:
         client = Garmin()
@@ -921,7 +931,7 @@ def import_garmin_activity():
         return jsonify({'error': 'activityId is required'}), 400
         
     from garminconnect import Garmin
-    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+    token_store = os.path.join(DATA_DIR, 'garmin_tokens', str(int(user_id)))
     
     try:
         client = Garmin()

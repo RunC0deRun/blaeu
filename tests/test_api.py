@@ -17,6 +17,7 @@ def client(monkeypatch):
     monkeypatch.setenv("BLAEU_ALLOW_REGISTRATION", "true")
     monkeypatch.setattr("db.DB_PATH", temp_db_path)
     monkeypatch.setattr("db.DATA_DIR", temp_gpx_dir)
+    monkeypatch.setattr("app.DATA_DIR", temp_gpx_dir)
     monkeypatch.setattr("app.GPX_STORE_DIR", os.path.join(temp_gpx_dir, 'gpx'))
     monkeypatch.setattr("app.TILES_CACHE_DIR", os.path.join(temp_gpx_dir, 'tiles_cache'))
     
@@ -332,6 +333,19 @@ def test_garmin_connect_success(client, monkeypatch):
     assert status_data['status'] == 'connected'
     assert status_data['email'] == 'test@example.com'
     assert status_data['display_name'] == 'Garmin Champ'
+
+    # Verify token directory permissions
+    import stat
+    parent_path = os.path.join(os.environ["DATA_DIR"], 'garmin_tokens')
+    assert os.path.exists(parent_path)
+    parent_mode = os.stat(parent_path).st_mode
+    assert stat.S_IMODE(parent_mode) == 0o700
+    
+    user_dir_path = os.path.join(parent_path, '1')
+    assert os.path.exists(user_dir_path)
+    user_dir_mode = os.stat(user_dir_path).st_mode
+    assert stat.S_IMODE(user_dir_mode) == 0o700
+
 
 
 def test_garmin_disconnect(client, monkeypatch):

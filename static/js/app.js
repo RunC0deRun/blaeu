@@ -32,6 +32,7 @@ let mapThemes = [];
 let currentMapStyle = 'dark';
 let labelsLoadedForRouteId = null;
 let posterPollingInterval = null;
+let currentGarminAutoSync = 'off';
 
 
 // Initialize Page
@@ -142,7 +143,12 @@ function initAppEvents() {
 
     // Settings Modal
     document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
-    document.getElementById('close-settings-btn').addEventListener('click', closeSettingsModal);
+    document.getElementById('close-settings-btn').addEventListener('click', saveSettingsModal);
+    const cancelSettingsBtn = document.getElementById('cancel-settings-btn');
+    if (cancelSettingsBtn) {
+        cancelSettingsBtn.addEventListener('click', cancelSettingsModal);
+    }
+    loadSettingsIntoModal();
     
     // Auth Form Submit
     const loginForm = document.getElementById('login-form');
@@ -161,72 +167,6 @@ function initAppEvents() {
     if (privacyToggleBtn) {
         privacyToggleBtn.addEventListener('click', handlePrivacyToggle);
     }
-    
-    // Load and bind Animation Mode Settings
-    const modeSelect = document.getElementById('mode-select');
-    const savedMode = localStorage.getItem('blaeu_animation_mode');
-    if (savedMode && modeSelect) {
-        modeSelect.value = savedMode;
-    }
-    if (modeSelect) {
-        modeSelect.addEventListener('change', (e) => {
-            localStorage.setItem('blaeu_animation_mode', e.target.value);
-            if (currentRoute) {
-                prepareAnimationPoints();
-            }
-        });
-    }
-
-    // Load and bind Resolution Settings
-    const resSelect = document.getElementById('res-select');
-    const savedRes = localStorage.getItem('blaeu_video_res');
-    if (savedRes && resSelect) {
-        resSelect.value = savedRes;
-    }
-    if (resSelect) {
-        resSelect.addEventListener('change', (e) => {
-            localStorage.setItem('blaeu_video_res', e.target.value);
-        });
-    }
-
-    // Load and bind FPS Settings
-    const fpsSelect = document.getElementById('fps-select');
-    const savedFps = localStorage.getItem('blaeu_video_fps');
-    if (savedFps && fpsSelect) {
-        fpsSelect.value = savedFps;
-    }
-    if (fpsSelect) {
-        fpsSelect.addEventListener('change', (e) => {
-            localStorage.setItem('blaeu_video_fps', e.target.value);
-        });
-    }
-
-    // Bind Format Settings (loading happens inside initSettingsFormats)
-    const formatSelect = document.getElementById('format-select');
-    if (formatSelect) {
-        formatSelect.addEventListener('change', (e) => {
-            localStorage.setItem('blaeu_video_format', e.target.value);
-        });
-    }
-
-    // Load and bind Privacy Settings
-    const privacySelect = document.getElementById('privacy-select');
-    const savedPrivacy = localStorage.getItem('blaeu_privacy_distance');
-    if (savedPrivacy && privacySelect) {
-        privacySelect.value = savedPrivacy;
-    }
-    if (privacySelect) {
-        privacySelect.addEventListener('change', (e) => {
-            localStorage.setItem('blaeu_privacy_distance', e.target.value);
-            if (currentRoute) {
-                drawRouteOnMap();
-                prepareAnimationPoints();
-                if (currentMapStyle !== 'dark') {
-                    applyMapStyle();
-                }
-            }
-        });
-    }
 
     // Bind HUD Map Style Selector
     const hudMapStyleSelect = document.getElementById('hud-map-style-select');
@@ -234,38 +174,6 @@ function initAppEvents() {
         hudMapStyleSelect.addEventListener('change', (e) => {
             currentMapStyle = e.target.value;
             applyMapStyle();
-        });
-    }
-
-    // Bind Default Map Style Selector
-    const defaultMapStyleSelect = document.getElementById('default-map-style-select');
-    if (defaultMapStyleSelect) {
-        defaultMapStyleSelect.addEventListener('change', async (e) => {
-            const val = e.target.value;
-            try {
-                const res = await fetch('/api/auth/default-map-style', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ default_map_style: val })
-                });
-                if (res.ok) {
-                    if (currentUser) {
-                        currentUser.default_map_style = val;
-                    }
-                    if (currentRoute) {
-                        currentMapStyle = val;
-                        const hudSelect = document.getElementById('hud-map-style-select');
-                        if (hudSelect) {
-                            hudSelect.value = val;
-                        }
-                        applyMapStyle();
-                    }
-                } else {
-                    console.error('Failed to update default map style');
-                }
-            } catch (err) {
-                console.error('Error updating default map style:', err);
-            }
         });
     }
 
@@ -2109,6 +2017,7 @@ function closeFoldersModal() {
 
 // Settings Modal Operations
 function openSettingsModal() {
+    loadSettingsIntoModal();
     document.getElementById('settings-modal').classList.remove('hidden');
     checkGarminStatus();
     if (currentUser && currentUser.is_admin) {
@@ -2121,9 +2030,135 @@ function openSettingsModal() {
     }
 }
 
-function closeSettingsModal() {
+function loadSettingsIntoModal() {
+    const modeSelect = document.getElementById('mode-select');
+    if (modeSelect) {
+        modeSelect.value = localStorage.getItem('blaeu_animation_mode') || 'realtime';
+    }
+    const resSelect = document.getElementById('res-select');
+    if (resSelect) {
+        resSelect.value = localStorage.getItem('blaeu_video_res') || '1080';
+    }
+    const fpsSelect = document.getElementById('fps-select');
+    if (fpsSelect) {
+        fpsSelect.value = localStorage.getItem('blaeu_video_fps') || '30';
+    }
+    const formatSelect = document.getElementById('format-select');
+    if (formatSelect) {
+        formatSelect.value = localStorage.getItem('blaeu_video_format') || 'video/webm';
+    }
+    const privacySelect = document.getElementById('privacy-select');
+    if (privacySelect) {
+        privacySelect.value = localStorage.getItem('blaeu_privacy_distance') || '0';
+    }
+    const defaultStyleSelect = document.getElementById('default-map-style-select');
+    if (defaultStyleSelect && currentUser) {
+        defaultStyleSelect.value = currentUser.default_map_style || 'dark';
+    }
+    const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
+    if (autoSyncSelect) {
+        autoSyncSelect.value = currentGarminAutoSync;
+    }
+}
+
+async function saveSettingsModal() {
+    const modeSelect = document.getElementById('mode-select');
+    const oldMode = localStorage.getItem('blaeu_animation_mode') || 'realtime';
+    const newMode = modeSelect ? modeSelect.value : oldMode;
+    localStorage.setItem('blaeu_animation_mode', newMode);
+
+    const resSelect = document.getElementById('res-select');
+    if (resSelect) {
+        localStorage.setItem('blaeu_video_res', resSelect.value);
+    }
+
+    const fpsSelect = document.getElementById('fps-select');
+    if (fpsSelect) {
+        localStorage.setItem('blaeu_video_fps', fpsSelect.value);
+    }
+
+    const formatSelect = document.getElementById('format-select');
+    if (formatSelect) {
+        localStorage.setItem('blaeu_video_format', formatSelect.value);
+    }
+
+    const privacySelect = document.getElementById('privacy-select');
+    const oldPrivacy = localStorage.getItem('blaeu_privacy_distance') || '0';
+    const newPrivacy = privacySelect ? privacySelect.value : oldPrivacy;
+    localStorage.setItem('blaeu_privacy_distance', newPrivacy);
+
+    const defaultStyleSelect = document.getElementById('default-map-style-select');
+    if (defaultStyleSelect && currentUser) {
+        const newVal = defaultStyleSelect.value;
+        const oldVal = currentUser.default_map_style || 'dark';
+        if (newVal !== oldVal) {
+            try {
+                const res = await fetch('/api/auth/default-map-style', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ default_map_style: newVal })
+                });
+                if (res.ok) {
+                    currentUser.default_map_style = newVal;
+                    if (currentRoute) {
+                        currentMapStyle = newVal;
+                        const hudSelect = document.getElementById('hud-map-style-select');
+                        if (hudSelect) {
+                            hudSelect.value = newVal;
+                        }
+                        applyMapStyle();
+                    }
+                } else {
+                    console.error('Failed to update default map style');
+                }
+            } catch (err) {
+                console.error('Error updating default map style:', err);
+            }
+        }
+    }
+
+    const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
+    if (autoSyncSelect && !document.getElementById('garmin-connected-section').classList.contains('hidden')) {
+        const interval = autoSyncSelect.value;
+        if (interval !== currentGarminAutoSync) {
+            try {
+                const res = await fetch('/api/garmin/auto-sync', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ auto_sync_interval: interval })
+                });
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to update auto-sync setting');
+                }
+                currentGarminAutoSync = interval;
+            } catch (err) {
+                console.error('Error updating Garmin auto-sync:', err);
+                alert(err.message);
+            }
+        }
+    }
+
+    if (newMode !== oldMode || newPrivacy !== oldPrivacy) {
+        if (currentRoute) {
+            if (newPrivacy !== oldPrivacy) {
+                drawRouteOnMap();
+                if (currentMapStyle !== 'dark') {
+                    applyMapStyle();
+                }
+            }
+            prepareAnimationPoints();
+        }
+    }
+
     document.getElementById('settings-modal').classList.add('hidden');
 }
+
+function cancelSettingsModal() {
+    loadSettingsIntoModal();
+    document.getElementById('settings-modal').classList.add('hidden');
+}
+
 
 function initSettingsFormats() {
     const formatSelect = document.getElementById('format-select');
@@ -2334,26 +2369,7 @@ function initGarminIntegration() {
         syncBtn.addEventListener('click', syncGarminActivities);
     }
 
-    const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
-    if (autoSyncSelect) {
-        autoSyncSelect.addEventListener('change', async (e) => {
-            const interval = e.target.value;
-            try {
-                const res = await fetch('/api/garmin/auto-sync', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ auto_sync_interval: interval })
-                });
-                if (!res.ok) {
-                    const data = await res.json();
-                    throw new Error(data.error || 'Failed to update auto-sync setting');
-                }
-            } catch (err) {
-                alert(err.message);
-                checkGarminStatus();
-            }
-        });
-    }
+
 
     const closeActivitiesBtn = document.getElementById('close-garmin-activities-btn');
     if (closeActivitiesBtn) {
@@ -2399,7 +2415,8 @@ async function checkGarminStatus() {
             
             const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
             if (autoSyncSelect) {
-                autoSyncSelect.value = data.auto_sync_interval || 'off';
+                currentGarminAutoSync = data.auto_sync_interval || 'off';
+                autoSyncSelect.value = currentGarminAutoSync;
             }
         } else {
             disconnectedSection.classList.remove('hidden');

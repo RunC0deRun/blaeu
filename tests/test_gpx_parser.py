@@ -146,3 +146,23 @@ def test_parse_no_data():
     assert stats['max_speed'] == 0.0
     assert result['timezone'] == 'Europe/Berlin'
     assert result['start_time'] is None
+
+def test_parse_gpx_billion_laughs():
+    malicious_gpx = """<?xml version="1.0"?>
+    <!DOCTYPE lolz [
+      <!ENTITY lol "lol">
+      <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+      <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
+    ]>
+    <gpx version="1.1" creator="MockCreator" xmlns="http://www.topografix.com/GPX/1/1">
+      <trk>
+        <name>&lol3;</name>
+      </trk>
+    </gpx>
+    """
+    
+    with pytest.raises(ValueError) as excinfo:
+        parse_gpx(malicious_gpx)
+        
+    assert "EntitiesForbidden" in str(excinfo.value) or "entities are forbidden" in str(excinfo.value)
+

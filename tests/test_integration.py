@@ -187,18 +187,37 @@ def test_privacy_zone_cropping(server, test_gpx_path):
         # 4. Select privacy zone range of 1000m
         page.select_option('#privacy-select', '1000')
         
-        # Verify the privacy setting is persisted in localStorage
+        # Close/Save settings
+        page.click('#close-settings-btn')
+        page.wait_for_selector('#settings-modal', state="hidden")
+        
+        # Verify the privacy setting is persisted in localStorage after saving
         privacy_val = page.evaluate("localStorage.getItem('blaeu_privacy_distance')")
         assert privacy_val == '1000'
         
-        # Turn off privacy zone to test animation play
+        # 5. Open settings modal again to test Cancel button
+        page.click('#settings-btn')
+        page.wait_for_selector('#settings-modal:not(.hidden)')
+        
+        # Change option but click Cancel
         page.select_option('#privacy-select', '0')
+        page.click('#cancel-settings-btn')
+        page.wait_for_selector('#settings-modal', state="hidden")
+        
+        # Verify that setting was NOT changed in localStorage
         privacy_val = page.evaluate("localStorage.getItem('blaeu_privacy_distance')")
-        assert privacy_val == '0'
-
-        # Close settings
+        assert privacy_val == '1000'
+        
+        # 6. Open settings modal again to restore privacy to 0
+        page.click('#settings-btn')
+        page.wait_for_selector('#settings-modal:not(.hidden)')
+        page.select_option('#privacy-select', '0')
         page.click('#close-settings-btn')
         page.wait_for_selector('#settings-modal', state="hidden")
+        
+        # Verify that setting was saved to 0
+        privacy_val = page.evaluate("localStorage.getItem('blaeu_privacy_distance')")
+        assert privacy_val == '0'
         
         # Verify that we can still play/scrub the animation without errors
         page.click('#play-pause-btn')

@@ -618,4 +618,39 @@ def test_convert_video_invalid_params(client, monkeypatch):
     idx = call_args_webm.index('-b:v')
     assert call_args_webm[idx + 1] == '12000000'
 
+def test_tile_proxy_boundaries(client, monkeypatch):
+    import requests
+    from unittest.mock import MagicMock
+    
+    mock_get = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"mock_tile_image_content"
+    mock_get.return_value = mock_response
+    monkeypatch.setattr(requests, "get", mock_get)
+    
+    # 1. Valid tile request
+    res_valid = client.get('/api/tiles/10/500/500.png')
+    assert res_valid.status_code == 200
+    assert res_valid.data == b"mock_tile_image_content"
+    assert mock_get.called
+    args, kwargs = mock_get.call_args
+    assert kwargs.get('timeout') == 10
+    
+    # 2. Invalid zoom level (too high)
+    res_invalid_z = client.get('/api/tiles/20/500/500.png')
+    assert res_invalid_z.status_code == 400
+    assert b"Invalid zoom level" in res_invalid_z.data
+    
+    # 3. Out of bounds x coordinate
+    res_invalid_x = client.get('/api/tiles/3/8/5.png')
+    assert res_invalid_x.status_code == 400
+    assert b"Tile coordinates out of bounds" in res_invalid_x.data
+
+    # 4. Out of bounds y coordinate
+    res_invalid_y = client.get('/api/tiles/3/5/8.png')
+    assert res_invalid_y.status_code == 400
+    assert b"Tile coordinates out of bounds" in res_invalid_y.data
+
+
 

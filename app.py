@@ -423,6 +423,13 @@ def get_map_tile(z, x, y):
     if not user_id:
         return jsonify({'error': 'Unauthorized. Please log in.'}), 401
         
+    if not (0 <= z <= 19):
+        return jsonify({'error': 'Invalid zoom level. Zoom must be between 0 and 19.'}), 400
+        
+    max_val = 1 << z
+    if not (0 <= x < max_val) or not (0 <= y < max_val):
+        return jsonify({'error': 'Tile coordinates out of bounds.'}), 400
+        
     tile_dir = os.path.join(TILES_CACHE_DIR, str(z), str(x))
     tile_path = os.path.join(tile_dir, f"{y}.png")
     

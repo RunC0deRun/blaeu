@@ -1278,4 +1278,5 @@ def remove_user(delete_user_id):
 
 if __name__ == '__main__':
     # Run the server
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(host='0.0.0.0', port=5000, debug=debug_mode)

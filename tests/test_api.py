@@ -14,8 +14,10 @@ def client(monkeypatch):
     
     # Configure app env vars for testing
     monkeypatch.setenv("DATA_DIR", temp_gpx_dir)
+    monkeypatch.setenv("BLAEU_ALLOW_REGISTRATION", "true")
     monkeypatch.setattr("db.DB_PATH", temp_db_path)
     monkeypatch.setattr("db.DATA_DIR", temp_gpx_dir)
+    monkeypatch.setattr("app.DATA_DIR", temp_gpx_dir)
     monkeypatch.setattr("app.GPX_STORE_DIR", os.path.join(temp_gpx_dir, 'gpx'))
     monkeypatch.setattr("app.TILES_CACHE_DIR", os.path.join(temp_gpx_dir, 'tiles_cache'))
     
@@ -332,6 +334,19 @@ def test_garmin_connect_success(client, monkeypatch):
     assert status_data['email'] == 'test@example.com'
     assert status_data['display_name'] == 'Garmin Champ'
 
+    # Verify token directory permissions
+    import stat
+    parent_path = os.path.join(os.environ["DATA_DIR"], 'garmin_tokens')
+    assert os.path.exists(parent_path)
+    parent_mode = os.stat(parent_path).st_mode
+    assert stat.S_IMODE(parent_mode) == 0o700
+    
+    user_dir_path = os.path.join(parent_path, '1')
+    assert os.path.exists(user_dir_path)
+    user_dir_mode = os.stat(user_dir_path).st_mode
+    assert stat.S_IMODE(user_dir_mode) == 0o700
+
+
 
 def test_garmin_disconnect(client, monkeypatch):
     import db
@@ -498,6 +513,192 @@ def test_garmin_connect_fallback_rate_limit(client, monkeypatch):
     assert res.status_code == 401
     data = json.loads(res.data)
     assert "failed to acquire persistent DI OAuth tokens" in data['error']
+
+
+def test_route_sorting_and_sql_injection_fallback(client):
+    # Upload Route A (created at 13:00)
+    client.post('/api/upload', data={
+        'file': (io.BytesIO(GPX_DATA_1.encode('utf-8')), 'route1.gpx'),
+        'name': 'Route A'
+    }, content_type='multipart/form-data')
+    
+    # Upload Route B (created at 14:00)
+    client.post('/api/upload', data={
+        'file': (io.BytesIO(GPX_DATA_2.encode('utf-8')), 'route2.gpx'),
+        'name': 'Route B'
+    }, content_type='multipart/form-data')
+    
+    # 1. Sort by name ASC
+    res_name_asc = client.get('/api/routes?sort_by=name&sort_order=asc')
+    assert res_name_asc.status_code == 200
+    routes_name_asc = json.loads(res_name_asc.data)
+    assert len(routes_name_asc) == 2
+    assert routes_name_asc[0]['name'] == 'Route A'
+    assert routes_name_asc[1]['name'] == 'Route B'
+
+    # 2. Sort by name DESC
+    res_name_desc = client.get('/api/routes?sort_by=name&sort_order=desc')
+    assert res_name_desc.status_code == 200
+    routes_name_desc = json.loads(res_name_desc.data)
+    assert routes_name_desc[0]['name'] == 'Route B'
+    assert routes_name_desc[1]['name'] == 'Route A'
+
+    # 3. Sort by date ASC
+    res_date_asc = client.get('/api/routes?sort_by=date&sort_order=asc')
+    assert res_date_asc.status_code == 200
+    routes_date_asc = json.loads(res_date_asc.data)
+    assert routes_date_asc[0]['name'] == 'Route A'
+    assert routes_date_asc[1]['name'] == 'Route B'
+
+    # 4. Fallback on invalid sort_by
+    res_invalid_by = client.get('/api/routes?sort_by=invalid_column')
+    assert res_invalid_by.status_code == 200
+    # Should fallback to default (date DESC)
+    routes_invalid_by = json.loads(res_invalid_by.data)
+    assert routes_invalid_by[0]['name'] == 'Route B'
+    assert routes_invalid_by[1]['name'] == 'Route A'
+
+    # 5. Fallback on SQL injection in sort_by
+    res_sqli_by = client.get('/api/routes?sort_by=name;+DROP+TABLE+routes;--')
+    assert res_sqli_by.status_code == 200
+    routes_sqli_by = json.loads(res_sqli_by.data)
+    # Should fallback to default (date DESC) and not raise/execute the SQL injection
+    assert len(routes_sqli_by) == 2
+    assert routes_sqli_by[0]['name'] == 'Route B'
+    assert routes_sqli_by[1]['name'] == 'Route A'
+
+    # 6. Fallback on SQL injection in sort_order
+    res_sqli_order = client.get('/api/routes?sort_by=name&sort_order=asc;+DROP+TABLE+routes;--')
+    assert res_sqli_order.status_code == 200
+    routes_sqli_order = json.loads(res_sqli_order.data)
+    # Should fallback to default direction (DESC) for the whitelisted column (name)
+    assert len(routes_sqli_order) == 2
+    assert routes_sqli_order[0]['name'] == 'Route B'
+    assert routes_sqli_order[1]['name'] == 'Route A'
+
+def test_upload_file_too_large(client):
+    # Try uploading a 51MB file
+    large_data = b"X" * (51 * 1024 * 1024)
+    data = {
+        'file': (io.BytesIO(large_data), 'large_route.gpx')
+    }
+    response = client.post('/api/upload', data=data, content_type='multipart/form-data')
+    assert response.status_code == 413
+    json_data = json.loads(response.data)
+    assert "File too large" in json_data['error']
+
+def test_convert_video_invalid_params(client, monkeypatch):
+    import subprocess
+    from unittest.mock import MagicMock
+    
+    mock_run = MagicMock()
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    
+    def side_effect(cmd, *args, **kwargs):
+        out_path = cmd[-1]
+        with open(out_path, 'wb') as f:
+            f.write(b"mock_content")
+        return MagicMock()
+    mock_run.side_effect = side_effect
+
+    # 1. Post with invalid FPS and format
+    data = {
+        'file': (io.BytesIO(b"mock_webm_content"), 'test.webm'),
+        'fps': 'invalid_fps',
+        'format': 'invalid_format'
+    }
+    response = client.post('/api/convert-video', data=data, content_type='multipart/form-data')
+    assert response.status_code == 200
+    assert response.mimetype == 'video/mp4' # fallback to default mp4
+    
+    call_args = mock_run.call_args[0][0]
+    assert 'setpts=N/(30*TB)' in call_args
+    assert '30' in call_args
+
+    # 2. Post with format webm and excessive bitrate
+    data_webm = {
+        'file': (io.BytesIO(b"mock_webm_content"), 'test.webm'),
+        'format': 'webm',
+        'bitrate': '999999999999'  # Above 100Mbps
+    }
+    mock_run.reset_mock()
+    response_webm = client.post('/api/convert-video', data=data_webm, content_type='multipart/form-data')
+    assert response_webm.status_code == 200
+    assert response_webm.mimetype == 'video/webm'
+    
+    call_args_webm = mock_run.call_args[0][0]
+    # Bitrate should fall back to 12000000
+    assert '-b:v' in call_args_webm
+    idx = call_args_webm.index('-b:v')
+    assert call_args_webm[idx + 1] == '12000000'
+
+def test_tile_proxy_boundaries(client, monkeypatch):
+    import requests
+    from unittest.mock import MagicMock
+    
+    mock_get = MagicMock()
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"mock_tile_image_content"
+    mock_get.return_value = mock_response
+    monkeypatch.setattr(requests, "get", mock_get)
+    
+    # 1. Valid tile request
+    res_valid = client.get('/api/tiles/10/500/500.png')
+    assert res_valid.status_code == 200
+    assert res_valid.data == b"mock_tile_image_content"
+    assert mock_get.called
+    args, kwargs = mock_get.call_args
+    assert kwargs.get('timeout') == 10
+    
+    # 2. Invalid zoom level (too high)
+    res_invalid_z = client.get('/api/tiles/20/500/500.png')
+    assert res_invalid_z.status_code == 400
+    assert b"Invalid zoom level" in res_invalid_z.data
+    
+    # 3. Out of bounds x coordinate
+    res_invalid_x = client.get('/api/tiles/3/8/5.png')
+    assert res_invalid_x.status_code == 400
+    assert b"Tile coordinates out of bounds" in res_invalid_x.data
+
+    # 4. Out of bounds y coordinate
+    res_invalid_y = client.get('/api/tiles/3/5/8.png')
+    assert res_invalid_y.status_code == 400
+    assert b"Tile coordinates out of bounds" in res_invalid_y.data
+
+def test_session_cookie_flags():
+    assert app.config['SESSION_COOKIE_HTTPONLY'] is True
+    assert app.config['SESSION_COOKIE_SAMESITE'] == 'Lax'
+    assert app.config['SESSION_COOKIE_SECURE'] is True
+
+def test_debug_mode_default_false(monkeypatch):
+    monkeypatch.setenv('FLASK_DEBUG', 'false')
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    assert debug_mode is False
+    
+    monkeypatch.setenv('FLASK_DEBUG', 'true')
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    assert debug_mode is True
+
+def test_rate_limiting(client, monkeypatch):
+    monkeypatch.setitem(app.config, 'TESTING', False)
+    
+    from app import rate_limit_records
+    rate_limit_records.clear()
+    
+    # 5 requests should get 401 Unauthorized (wrong password)
+    for _ in range(5):
+        res = client.post('/api/auth/login', json={'username': 'test_user', 'password': 'wrong_password'})
+        assert res.status_code == 401
+        
+    # 6th request should get 429 Rate Limit Exceeded
+    res_limit = client.post('/api/auth/login', json={'username': 'test_user', 'password': 'wrong_password'})
+    assert res_limit.status_code == 429
+    data = json.loads(res_limit.data)
+    assert 'Rate limit exceeded' in data['error']
+
+
+
 
 
 

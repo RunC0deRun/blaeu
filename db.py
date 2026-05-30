@@ -121,6 +121,15 @@ def init_db():
         except sqlite3.OperationalError:
             pass
 
+    # Migrate garmin_connections table if auto_sync_interval is missing
+    cursor.execute("PRAGMA table_info(garmin_connections);")
+    garmin_columns = [row['name'] for row in cursor.fetchall()]
+    if garmin_columns and 'auto_sync_interval' not in garmin_columns:
+        try:
+            cursor.execute("ALTER TABLE garmin_connections ADD COLUMN auto_sync_interval TEXT DEFAULT 'off';")
+        except sqlite3.OperationalError:
+            pass
+
     # Migrate folders table if user_id is missing to make unique(name, user_id)
     cursor.execute("PRAGMA table_info(folders);")
     folder_columns = [row['name'] for row in cursor.fetchall()]
@@ -235,6 +244,7 @@ def init_db():
         email TEXT NOT NULL,
         display_name TEXT,
         last_sync TEXT,
+        auto_sync_interval TEXT DEFAULT 'off',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     """)
@@ -546,11 +556,16 @@ def save_garmin_connection(user_id, email, display_name):
     conn = get_db()
     cursor = conn.cursor()
     try:
+        # Check if there is an existing auto_sync_interval to preserve
+        cursor.execute("SELECT auto_sync_interval FROM garmin_connections WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        existing_interval = row['auto_sync_interval'] if row else 'off'
+        
         cursor.execute("DELETE FROM garmin_connections WHERE user_id = ?", (user_id,))
         cursor.execute("""
-            INSERT INTO garmin_connections (user_id, email, display_name)
-            VALUES (?, ?, ?)
-        """, (user_id, email, display_name))
+            INSERT INTO garmin_connections (user_id, email, display_name, auto_sync_interval)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, email, display_name, existing_interval))
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
@@ -707,5 +722,50 @@ def update_route_poster_status(route_id, poster_status_dict):
     except sqlite3.Error as e:
         conn.rollback()
         raise e
+    finally:
+        conn.close()
+
+def get_all_active_garmin_connections():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM garmin_connections WHERE auto_sync_interval IS NOT NULL AND auto_sync_interval != 'off'")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def update_garmin_auto_sync_interval(user_id, auto_sync_interval):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE garmin_connections SET auto_sync_interval = ? WHERE user_id = ?", (auto_sync_interval, user_id))
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def attempt_garmin_sync_lock(user_id, now_str, last_sync_str, seconds):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        if last_sync_str is None:
+            cursor.execute("""
+                UPDATE garmin_connections 
+                SET last_sync = ? 
+                WHERE user_id = ? AND last_sync IS NULL
+            """, (now_str, user_id))
+        else:
+            cursor.execute("""
+                UPDATE garmin_connections 
+                SET last_sync = ? 
+                WHERE user_id = ? AND last_sync = ?
+            """, (now_str, user_id, last_sync_str))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error:
+        conn.rollback()
+        return False
     finally:
         conn.close()

@@ -86,6 +86,12 @@
                     </div>
                 </div>
 
+                <!-- Garmin Sync Button (Visible only when connected) -->
+                <button type="button" class="btn btn-primary hidden" id="sidebar-garmin-sync-btn" style="width: 100%; margin-bottom: 15px; font-family: 'Outfit', sans-serif;">
+                    <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: middle; margin-right: 4px; position: relative; top: -1px;"><path d="M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z" fill="currentColor"/></svg>
+                    Sync Garmin Activities
+                </button>
+
                 <!-- Routes Ledger Timeline -->
                 <div class="ledger-section" id="sidebar-ledger-container">
                     <div class="section-header">
@@ -444,10 +450,17 @@
                             </div>
                             <span style="background: var(--secondary); color: #fff; font-size: 0.75em; padding: 2px 8px; border-radius: 20px; font-weight: bold;">Active</span>
                         </div>
-                        <button type="button" class="btn btn-primary" id="garmin-sync-btn" style="width: 100%; margin-bottom: 10px;">
-                            <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align: middle; margin-right: 4px;"><path d="M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z" fill="currentColor"/></svg>
-                            Sync Garmin Activities
-                        </button>
+                        <div class="form-group" style="margin-top: 10px; margin-bottom: 15px;">
+                            <label for="settings-garmin-auto-sync">Auto-Sync Garmin Activities</label>
+                            <select id="settings-garmin-auto-sync">
+                                <option value="off">Off</option>
+                                <option value="1h">Every hour</option>
+                                <option value="3h">Every 3 hours</option>
+                                <option value="6h">Every 6 hours</option>
+                                <option value="12h">Every 12 hours</option>
+                                <option value="24h">Every 24 hours</option>
+                            </select>
+                        </div>
                         <button type="button" class="btn btn-outline" id="garmin-disconnect-btn" style="width: 100%; border-color: #ef4444; color: #ef4444;">Disconnect</button>
                     </div>
                     

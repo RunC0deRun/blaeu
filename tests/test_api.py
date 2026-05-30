@@ -573,3 +573,49 @@ def test_upload_file_too_large(client):
     json_data = json.loads(response.data)
     assert "File too large" in json_data['error']
 
+def test_convert_video_invalid_params(client, monkeypatch):
+    import subprocess
+    from unittest.mock import MagicMock
+    
+    mock_run = MagicMock()
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    
+    def side_effect(cmd, *args, **kwargs):
+        out_path = cmd[-1]
+        with open(out_path, 'wb') as f:
+            f.write(b"mock_content")
+        return MagicMock()
+    mock_run.side_effect = side_effect
+
+    # 1. Post with invalid FPS and format
+    data = {
+        'file': (io.BytesIO(b"mock_webm_content"), 'test.webm'),
+        'fps': 'invalid_fps',
+        'format': 'invalid_format'
+    }
+    response = client.post('/api/convert-video', data=data, content_type='multipart/form-data')
+    assert response.status_code == 200
+    assert response.mimetype == 'video/mp4' # fallback to default mp4
+    
+    call_args = mock_run.call_args[0][0]
+    assert 'setpts=N/(30*TB)' in call_args
+    assert '30' in call_args
+
+    # 2. Post with format webm and excessive bitrate
+    data_webm = {
+        'file': (io.BytesIO(b"mock_webm_content"), 'test.webm'),
+        'format': 'webm',
+        'bitrate': '999999999999'  # Above 100Mbps
+    }
+    mock_run.reset_mock()
+    response_webm = client.post('/api/convert-video', data=data_webm, content_type='multipart/form-data')
+    assert response_webm.status_code == 200
+    assert response_webm.mimetype == 'video/webm'
+    
+    call_args_webm = mock_run.call_args[0][0]
+    # Bitrate should fall back to 12000000
+    assert '-b:v' in call_args_webm
+    idx = call_args_webm.index('-b:v')
+    assert call_args_webm[idx + 1] == '12000000'
+
+

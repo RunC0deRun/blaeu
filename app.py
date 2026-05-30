@@ -496,7 +496,7 @@ def convert_video():
         bitrate = request.form.get('bitrate', '12000000')
         try:
             bitrate_val = int(bitrate)
-            if bitrate_val <= 0:
+            if bitrate_val <= 0 or bitrate_val > 100000000:
                 bitrate_val = 12000000
         except ValueError:
             bitrate_val = 12000000

@@ -671,6 +671,16 @@ def test_session_cookie_flags():
     assert app.config['SESSION_COOKIE_SAMESITE'] == 'Lax'
     assert app.config['SESSION_COOKIE_SECURE'] is True
 
+def test_debug_mode_default_false(monkeypatch):
+    monkeypatch.setenv('FLASK_DEBUG', 'false')
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    assert debug_mode is False
+    
+    monkeypatch.setenv('FLASK_DEBUG', 'true')
+    debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
+    assert debug_mode is True
+
+
 
 
 

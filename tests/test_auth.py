@@ -330,3 +330,34 @@ def test_registration_disabled_after_first_user(client, monkeypatch):
     })
     assert res2.status_code == 403
     assert b"Registration is closed" in res2.data
+
+def test_csrf_protection_enforced(client, monkeypatch):
+    # Register first user
+    res_reg = client.post('/api/auth/register', json={
+        'username': 'csrf_user',
+        'password': 'password123'
+    })
+    assert res_reg.status_code == 201
+    csrf_token = json.loads(res_reg.data)['csrf_token']
+    assert csrf_token is not None
+
+    # Enable CSRF checks by temporarily disabling testing mode in app config
+    monkeypatch.setitem(app.config, 'TESTING', False)
+
+    try:
+        # 1. State-changing request WITHOUT CSRF header should fail with 400 Bad Request
+        res_fail = client.post('/api/folders', json={'name': 'No CSRF Folder'})
+        assert res_fail.status_code == 400
+        assert b"CSRF token validation failed" in res_fail.data
+
+        # 2. State-changing request with WRONG CSRF header should fail with 400 Bad Request
+        res_fail_wrong = client.post('/api/folders', json={'name': 'Wrong CSRF Folder'}, headers={'X-CSRF-Token': 'wrong_token'})
+        assert res_fail_wrong.status_code == 400
+
+        # 3. State-changing request with CORRECT CSRF header should succeed
+        res_success = client.post('/api/folders', json={'name': 'CSRF Folder'}, headers={'X-CSRF-Token': csrf_token})
+        assert res_success.status_code == 201
+        assert json.loads(res_success.data)['name'] == 'CSRF Folder'
+    finally:
+        # Always restore TESTING mode
+        app.config['TESTING'] = True

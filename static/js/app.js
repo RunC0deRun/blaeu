@@ -12,6 +12,26 @@ let activeTagFilter = '';
 let currentUser = null;
 let authMode = 'login';
 let registrationOpen = true;
+let csrfToken = null;
+
+// Intercept all fetch requests to automatically attach CSRF token for state-changing operations
+const originalFetch = window.fetch;
+window.fetch = async function(resource, options = {}) {
+    const method = (options.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'DELETE'].includes(method) && csrfToken) {
+        options.headers = options.headers || {};
+        if (options.headers instanceof Headers) {
+            options.headers.set('X-CSRF-Token', csrfToken);
+        } else if (Array.isArray(options.headers)) {
+            if (!options.headers.some(h => h[0].toLowerCase() === 'x-csrf-token')) {
+                options.headers.push(['X-CSRF-Token', csrfToken]);
+            }
+        } else {
+            options.headers['X-CSRF-Token'] = csrfToken;
+        }
+    }
+    return originalFetch(resource, options);
+};
 
 // Animation Playback State
 let animationPoints = []; // Flattened [{lat, lon, ele, time, elapsed}]
@@ -3267,6 +3287,7 @@ async function checkAuthStatus() {
         
         if (data.logged_in) {
             currentUser = data.user;
+            csrfToken = data.csrf_token;
             if (loginModal) loginModal.style.display = 'none';
             
             // Set up UI header for logout visibility, etc.
@@ -3283,6 +3304,7 @@ async function checkAuthStatus() {
             checkGarminStatus();
         } else {
             currentUser = null;
+            csrfToken = data.csrf_token;
             registrationOpen = data.registration_open;
             if (loginModal) loginModal.style.display = 'flex';
             showAuthModal(data.no_users_exist, data.registration_open);
@@ -3383,6 +3405,7 @@ async function handleAuthSubmit(e) {
         
         // Auth success
         currentUser = data.user;
+        csrfToken = data.csrf_token;
         const loginModal = document.getElementById('login-modal');
         if (loginModal) loginModal.style.display = 'none';
         
@@ -3407,6 +3430,7 @@ async function handleLogout() {
         const res = await fetch('/api/auth/logout', { method: 'POST' });
         if (!res.ok) throw new Error('Logout failed');
         currentUser = null;
+        csrfToken = null;
         routesList = [];
         foldersList = [];
         deselectRoute();

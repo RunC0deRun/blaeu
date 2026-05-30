@@ -41,6 +41,30 @@ app.secret_key = secret_key
 # Initialize DB on load
 init_db()
 
+import secrets
+
+def get_csrf_token():
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_hex(32)
+    return session['csrf_token']
+
+@app.before_request
+def csrf_protect():
+    # Allow bypassing CSRF check in tests
+    if app.config.get('TESTING'):
+        return
+        
+    if request.method in ['POST', 'PUT', 'DELETE']:
+        exempt_paths = ['/api/auth/login', '/api/auth/register']
+        if request.path in exempt_paths:
+            return
+            
+        session_token = session.get('csrf_token')
+        header_token = request.headers.get('X-CSRF-Token')
+        
+        if not session_token or not header_token or session_token != header_token:
+            return jsonify({'error': 'CSRF token validation failed. Please refresh the page.'}), 400
+
 # Create directory to store actual GPX files
 GPX_STORE_DIR = os.path.join(DATA_DIR, 'gpx')
 os.makedirs(GPX_STORE_DIR, exist_ok=True)
@@ -1081,6 +1105,7 @@ def register():
             backfill_ownerless_data(user_id)
             
         session['user_id'] = user_id
+        csrf_token = get_csrf_token()
         return jsonify({
             'success': True,
             'user': {
@@ -1088,7 +1113,8 @@ def register():
                 'username': username,
                 'is_admin': is_admin,
                 'default_map_style': 'dark'
-            }
+            },
+            'csrf_token': csrf_token
         }), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
@@ -1110,6 +1136,7 @@ def login():
         return jsonify({'error': 'Invalid username or password'}), 401
         
     session['user_id'] = user['id']
+    csrf_token = get_csrf_token()
     return jsonify({
         'success': True,
         'user': {
@@ -1117,13 +1144,15 @@ def login():
             'username': user['username'],
             'is_admin': user['is_admin'],
             'default_map_style': user.get('default_map_style', 'dark')
-        }
+        },
+        'csrf_token': csrf_token
     })
 
 
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
     session.pop('user_id', None)
+    session.pop('csrf_token', None)
     return jsonify({'success': True})
 
 
@@ -1133,12 +1162,14 @@ def auth_status():
     user_count = count_users()
     allow_registration = os.getenv('BLAEU_ALLOW_REGISTRATION', 'false').lower() == 'true'
     registration_open = (user_count == 0) or allow_registration
+    csrf_token = get_csrf_token()
     
     if not user_id:
         return jsonify({
             'logged_in': False,
             'no_users_exist': user_count == 0,
-            'registration_open': registration_open
+            'registration_open': registration_open,
+            'csrf_token': csrf_token
         })
         
     user = get_user_by_id(user_id)
@@ -1147,7 +1178,8 @@ def auth_status():
         return jsonify({
             'logged_in': False,
             'no_users_exist': user_count == 0,
-            'registration_open': registration_open
+            'registration_open': registration_open,
+            'csrf_token': csrf_token
         })
         
     return jsonify({
@@ -1157,7 +1189,8 @@ def auth_status():
             'username': user['username'],
             'is_admin': user['is_admin'],
             'default_map_style': user.get('default_map_style', 'dark')
-        }
+        },
+        'csrf_token': csrf_token
     })
 
 

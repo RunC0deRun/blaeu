@@ -11,6 +11,7 @@ let activeFolderFilter = '';
 let activeTagFilter = '';
 let currentUser = null;
 let authMode = 'login';
+let registrationOpen = true;
 
 // Animation Playback State
 let animationPoints = []; // Flattened [{lat, lon, ele, time, elapsed}]
@@ -3282,8 +3283,9 @@ async function checkAuthStatus() {
             checkGarminStatus();
         } else {
             currentUser = null;
+            registrationOpen = data.registration_open;
             if (loginModal) loginModal.style.display = 'flex';
-            showAuthModal(data.no_users_exist);
+            showAuthModal(data.no_users_exist, data.registration_open);
         }
     } catch (err) {
         console.error("Error checking auth status:", err);
@@ -3292,15 +3294,20 @@ async function checkAuthStatus() {
 
 function toggleAuthMode(e) {
     if (e) e.preventDefault();
+    if (!registrationOpen) {
+        authMode = 'login';
+        showAuthModal(false, false);
+        return;
+    }
     if (authMode === 'login') {
         authMode = 'register';
     } else {
         authMode = 'login';
     }
-    showAuthModal(false);
+    showAuthModal(false, true);
 }
 
-function showAuthModal(noUsersExist) {
+function showAuthModal(noUsersExist, registrationOpen) {
     const loginTitle = document.getElementById('login-title');
     const submitBtn = document.getElementById('login-submit-btn');
     const toggleText = document.getElementById('login-toggle-text');
@@ -3315,7 +3322,7 @@ function showAuthModal(noUsersExist) {
         if (submitBtn) submitBtn.textContent = 'Create Admin';
         if (toggleText) toggleText.parentElement.style.display = 'none';
     } else {
-        if (authMode === 'register') {
+        if (authMode === 'register' && registrationOpen) {
             if (loginTitle) loginTitle.textContent = 'Register';
             if (submitBtn) submitBtn.textContent = 'Register';
             if (toggleText) toggleText.textContent = "Already have an account?";
@@ -3325,9 +3332,15 @@ function showAuthModal(noUsersExist) {
             authMode = 'login';
             if (loginTitle) loginTitle.textContent = 'Log In';
             if (submitBtn) submitBtn.textContent = 'Log In';
-            if (toggleText) toggleText.textContent = "Don't have an account?";
-            if (toggleLink) toggleLink.textContent = "Register";
-            if (toggleText) toggleText.parentElement.style.display = 'block';
+            if (toggleText) {
+                if (registrationOpen) {
+                    toggleText.textContent = "Don't have an account?";
+                    if (toggleLink) toggleLink.textContent = "Register";
+                    toggleText.parentElement.style.display = 'block';
+                } else {
+                    toggleText.parentElement.style.display = 'none';
+                }
+            }
         }
     }
 }

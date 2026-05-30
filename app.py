@@ -277,7 +277,9 @@ def list_routes():
             folder_id = int(folder_id)
         except ValueError:
             folder_id = None
-    routes = get_routes(user_id, folder_id)
+    sort_by = request.args.get('sort_by')
+    sort_order = request.args.get('sort_order')
+    routes = get_routes(user_id, folder_id, sort_by=sort_by, sort_order=sort_order)
     # Add ownership property for client UI
     for r in routes:
         r['is_owner'] = (r['user_id'] == user_id)

@@ -3,6 +3,8 @@ import hashlib
 import requests
 import json
 import threading
+import time
+from functools import wraps
 from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from db import (
@@ -85,6 +87,35 @@ os.makedirs(TILES_CACHE_DIR, exist_ok=True)
 # Background poster generation tracking state
 poster_generations = {}
 poster_generations_lock = threading.Lock()
+
+# Simple in-memory rate-limiter for key API endpoints
+from collections import defaultdict
+rate_limit_records = defaultdict(list)
+rate_limit_lock = threading.Lock()
+
+def rate_limit(limit, period):
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            if app.config.get('TESTING'):
+                return f(*args, **kwargs)
+                
+            ip = request.remote_addr
+            if request.headers.getlist("X-Forwarded-For"):
+                ip = request.headers.getlist("X-Forwarded-For")[0]
+            
+            key = f"{f.__name__}:{ip}"
+            now = time.time()
+            
+            with rate_limit_lock:
+                rate_limit_records[key] = [t for t in rate_limit_records[key] if now - t < period]
+                if len(rate_limit_records[key]) >= limit:
+                    return jsonify({'error': 'Rate limit exceeded. Please try again later.'}), 429
+                rate_limit_records[key].append(now)
+                
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
 
 def get_current_user_id():
     return session.get('user_id')
@@ -180,6 +211,7 @@ def favicon():
 
 
 @app.route('/api/upload', methods=['POST'])
+@rate_limit(limit=10, period=60)
 def upload_gpx():
     user_id = get_current_user_id()
     if not user_id:
@@ -461,6 +493,7 @@ def get_map_tile(z, x, y):
     except Exception as e:
         return jsonify({'error': f"Tile proxy error: {str(e)}"}), 500
 @app.route('/api/convert-video', methods=['POST'])
+@rate_limit(limit=3, period=60)
 def convert_video():
     user_id = get_current_user_id()
     if not user_id:
@@ -788,6 +821,7 @@ def update_garmin_auto_sync():
         return jsonify({'error': f'Failed to update auto-sync interval: {str(e)}'}), 500
 
 @app.route('/api/garmin/connect', methods=['POST'])
+@rate_limit(limit=5, period=60)
 def connect_garmin():
     user_id = get_current_user_id()
     if not user_id:
@@ -1104,6 +1138,7 @@ def get_route_poster_map(route_id):
 # ==========================================
 
 @app.route('/api/auth/register', methods=['POST'])
+@rate_limit(limit=3, period=60)
 def register():
     data = request.json or {}
     username = data.get('username')
@@ -1151,6 +1186,7 @@ def register():
 
 
 @app.route('/api/auth/login', methods=['POST'])
+@rate_limit(limit=5, period=60)
 def login():
     data = request.json or {}
     username = data.get('username')

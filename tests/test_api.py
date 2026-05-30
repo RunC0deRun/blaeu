@@ -24,10 +24,15 @@ def client(monkeypatch):
     
     app.config.update({
         'TESTING': True,
-        'PROPAGATE_EXCEPTIONS': True
+        'PROPAGATE_EXCEPTIONS': True,
+        'SECRET_KEY': 'test-secret-key'
     })
     
     with app.test_client() as client:
+        client.post('/api/auth/register', json={
+            'username': 'test_user',
+            'password': 'password123'
+        })
         yield client
         
     os.close(db_fd)
@@ -418,6 +423,7 @@ def test_garmin_import_success(client, monkeypatch):
     routes = json.loads(routes_res.data)
     assert len(routes) == 1
     assert routes[0]['name'] == 'Route A'
+    assert routes[0]['created_at'] == '2026-05-25 13:00:00'
 
 
 def test_garmin_connect_rate_limit(client, monkeypatch):

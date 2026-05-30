@@ -91,12 +91,22 @@ def test_end_to_end_flow(server, test_gpx_path):
         page.wait_for_selector('.app-title')
         assert page.text_content('.app-title').strip().upper() == 'BLAEU'
         
+        # Log in
+        page.fill('#login-username', 'admin')
+        page.fill('#login-password', 'password123')
+        page.click('#login-submit-btn')
+        page.wait_for_selector('#login-modal', state="hidden")
+        
         # 2. Upload file
         # Set file input directly
         page.set_input_files('#file-input', test_gpx_path)
         
         # Click upload button
         page.click('#upload-btn')
+        
+        # Click the newly uploaded route card to open it
+        page.wait_for_selector('.activity-card', timeout=5000)
+        page.click('.activity-card')
         
         # Wait for route details panel to reveal
         page.wait_for_selector('#route-details-panel:not(.hidden)', timeout=5000)
@@ -151,9 +161,20 @@ def test_privacy_zone_cropping(server, test_gpx_path):
         page.goto(server)
         page.wait_for_selector('.app-title')
         
+        # Log in
+        page.fill('#login-username', 'admin')
+        page.fill('#login-password', 'password123')
+        page.click('#login-submit-btn')
+        page.wait_for_selector('#login-modal', state="hidden")
+        
         # 2. Upload file
         page.set_input_files('#file-input', test_gpx_path)
         page.click('#upload-btn')
+        
+        # Click the newly uploaded route card to open it
+        page.wait_for_selector('.activity-card', timeout=5000)
+        page.click('.activity-card')
+        
         page.wait_for_selector('#route-details-panel:not(.hidden)', timeout=5000)
         
         # Check initial state: privacy distance should be default '0'

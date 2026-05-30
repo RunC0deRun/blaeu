@@ -9,6 +9,8 @@ let routesList = [];
 let foldersList = [];
 let activeFolderFilter = '';
 let activeTagFilter = '';
+let currentUser = null;
+let authMode = 'login';
 
 // Animation Playback State
 let animationPoints = []; // Flattened [{lat, lon, ele, time, elapsed}]
@@ -29,16 +31,14 @@ let posterMapOverlay = null;
 let mapThemes = [];
 let currentMapStyle = 'dark';
 let labelsLoadedForRouteId = null;
+let posterPollingInterval = null;
 
 
 // Initialize Page
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     initAppEvents();
-    loadFolders();
-    loadTags();
-    loadRoutes();
-    loadMapThemes();
+    checkAuthStatus();
 });
 
 // Initialize Leaflet Map
@@ -144,6 +144,24 @@ function initAppEvents() {
     document.getElementById('settings-btn').addEventListener('click', openSettingsModal);
     document.getElementById('close-settings-btn').addEventListener('click', closeSettingsModal);
     
+    // Auth Form Submit
+    const loginForm = document.getElementById('login-form');
+    if (loginForm) {
+        loginForm.addEventListener('submit', handleAuthSubmit);
+    }
+    const loginToggleLink = document.getElementById('login-toggle-link');
+    if (loginToggleLink) {
+        loginToggleLink.addEventListener('click', toggleAuthMode);
+    }
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', handleLogout);
+    }
+    const privacyToggleBtn = document.getElementById('route-privacy-toggle-btn');
+    if (privacyToggleBtn) {
+        privacyToggleBtn.addEventListener('click', handlePrivacyToggle);
+    }
+    
     // Load and bind Animation Mode Settings
     const modeSelect = document.getElementById('mode-select');
     const savedMode = localStorage.getItem('blaeu_animation_mode');
@@ -216,6 +234,38 @@ function initAppEvents() {
         hudMapStyleSelect.addEventListener('change', (e) => {
             currentMapStyle = e.target.value;
             applyMapStyle();
+        });
+    }
+
+    // Bind Default Map Style Selector
+    const defaultMapStyleSelect = document.getElementById('default-map-style-select');
+    if (defaultMapStyleSelect) {
+        defaultMapStyleSelect.addEventListener('change', async (e) => {
+            const val = e.target.value;
+            try {
+                const res = await fetch('/api/auth/default-map-style', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ default_map_style: val })
+                });
+                if (res.ok) {
+                    if (currentUser) {
+                        currentUser.default_map_style = val;
+                    }
+                    if (currentRoute) {
+                        currentMapStyle = val;
+                        const hudSelect = document.getElementById('hud-map-style-select');
+                        if (hudSelect) {
+                            hudSelect.value = val;
+                        }
+                        applyMapStyle();
+                    }
+                } else {
+                    console.error('Failed to update default map style');
+                }
+            } catch (err) {
+                console.error('Error updating default map style:', err);
+            }
         });
     }
 
@@ -310,8 +360,39 @@ async function loadRoutes() {
         } else {
             showDashboardView(true);
         }
+        
+        checkAndStartPolling();
     } catch (err) {
         console.error("Error loading routes", err);
+    }
+}
+
+function checkAndStartPolling() {
+    const isGenerating = routesList.some(r => r.poster_status && r.poster_status.status === 'generating');
+    if (isGenerating) {
+        if (!posterPollingInterval) {
+            posterPollingInterval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/routes');
+                    routesList = await res.json();
+                    renderRoutesLedger();
+                    renderDashboardGrid();
+                    
+                    const stillGenerating = routesList.some(r => r.poster_status && r.poster_status.status === 'generating');
+                    if (!stillGenerating) {
+                        clearInterval(posterPollingInterval);
+                        posterPollingInterval = null;
+                    }
+                } catch (err) {
+                    console.error("Error polling routes", err);
+                }
+            }, 1000);
+        }
+    } else {
+        if (posterPollingInterval) {
+            clearInterval(posterPollingInterval);
+            posterPollingInterval = null;
+        }
     }
 }
 
@@ -351,12 +432,17 @@ function renderRoutesLedger() {
             formattedDate += ` ${route.timezone_abbr}`;
         }
 
+        const privacyIcon = route.is_public ? 
+            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Public"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>` :
+            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Private"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+
         return `
             <div class="timeline-item ${activeClass}" onclick="selectRoute(${route.id})">
                 <div class="timeline-date">${formattedDate}</div>
                 <h4 class="timeline-title">${escapeHTML(route.name)}</h4>
                 <p class="timeline-desc">${escapeHTML(route.description || 'No description provided.')}</p>
                 <div class="timeline-meta">
+                    <span style="opacity: 0.7; display: inline-flex; align-items: center; margin-right: 8px;">${privacyIcon}</span>
                     ${folderBadge}
                     <span class="tag-badge btn-sm">${distanceStr}</span>
                     <span class="tag-badge btn-sm">${durationStr}</span>
@@ -496,13 +582,47 @@ function renderDashboardGrid() {
         
         const tagsHtml = route.tags ? route.tags.map(t => `<span class="tag-badge" onclick="event.stopPropagation(); toggleTagFilter('${t}')">#${escapeHTML(t)}</span>`).join('') : '';
 
+        const privacyIcon = route.is_public ? 
+            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Public"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>` :
+            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Private"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+
+        const actionsHtml = route.is_owner ? `
+            <div class="activity-card-actions">
+                <button class="btn-icon" onclick="editRouteFromDashboard(${route.id}, event)" title="Edit details">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                </button>
+                <button class="btn-icon" onclick="deleteRouteFromDashboard(${route.id}, '${escapeHTML(route.name)}', event)" title="Delete activity">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                    </svg>
+                </button>
+            </div>
+        ` : '';
+
         return `
             <div class="activity-card" onclick="selectRoute(${route.id})">
+                <div class="activity-card-user-banner" style="background: ${route.is_owner ? 'rgba(255,255,255,0.02)' : 'rgba(0, 240, 255, 0.04)'}; padding: 6px 16px; font-size: 0.78em; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;">
+                    <span>
+                        <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px; opacity: 0.8;" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                        <span style="opacity: 0.6; margin-right: 2px;">BY</span> <strong style="color: ${route.is_owner ? '#fff' : 'var(--primary)'}; font-weight: 700;">${escapeHTML(route.owner_username || 'Unknown')}</strong>
+                    </span>
+                    ${!route.is_owner ? 
+                        `<span style="color: var(--primary); font-size: 0.9em; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; background: rgba(0,240,255,0.1); padding: 2px 8px; border-radius: 4px; text-shadow: 0 0 4px rgba(0,240,255,0.25);">Public</span>` : 
+                        `<span style="color: #94a3b8; font-size: 0.9em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Owner</span>`
+                    }
+                </div>
                 <div class="activity-card-preview">
                     <canvas class="activity-mini-canvas" data-route-id="${route.id}"></canvas>
                 </div>
                 <div class="activity-card-body">
-                    <div class="activity-card-time">${formattedDate}</div>
+                    <div class="activity-card-time" style="display: flex; align-items: center; justify-content: space-between;">
+                        <span>${formattedDate}</span>
+                        <span style="opacity: 0.7; display: inline-flex; align-items: center;">${privacyIcon}</span>
+                    </div>
                     <h3 class="activity-card-title" title="${escapeHTML(route.name)}">${escapeHTML(route.name)}</h3>
                     <p class="activity-card-desc">${escapeHTML(route.description || 'No description provided.')}</p>
                     <div class="activity-card-stats-grid">
@@ -529,20 +649,7 @@ function renderDashboardGrid() {
                         ${folderBadge}
                         ${tagsHtml}
                     </div>
-                    <div class="activity-card-actions">
-                        <button class="btn-icon" onclick="editRouteFromDashboard(${route.id}, event)" title="Edit details">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
-                        </button>
-                        <button class="btn-icon" onclick="deleteRouteFromDashboard(${route.id}, '${escapeHTML(route.name)}', event)" title="Delete activity">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                            </svg>
-                        </button>
-                    </div>
+                    ${actionsHtml}
                 </div>
             </div>
         `;
@@ -554,18 +661,79 @@ function renderDashboardGrid() {
         const routeId = parseInt(canvas.getAttribute('data-route-id'), 10);
         const route = filtered.find(r => r.id === routeId);
         if (route && route.simplified_path) {
-            drawRouteMiniature(canvas, route.simplified_path);
+            drawRouteMiniature(canvas, route.simplified_path, route.poster_status);
         }
     });
 }
 
 // Draw a glowing neon route path miniature on a card canvas
-function drawRouteMiniature(canvas, coords) {
+function drawRouteMiniature(canvas, coords, posterStatus) {
     const ctx = canvas.getContext('2d');
     
     // Set actual canvas size to match layout size
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
+    
+    if (posterStatus && posterStatus.status === 'generating') {
+        const progress = posterStatus.progress || 0;
+        
+        // Draw dark glassmorphic background
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.4)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        const centerY = canvas.height / 2 - 5;
+        
+        // Determine active stage text description
+        let activeLabel = "Initializing...";
+        if (progress === 1) {
+            activeLabel = "Loading street networks...";
+        } else if (progress === 2) {
+            activeLabel = "Analyzing water bodies...";
+        } else if (progress === 3) {
+            activeLabel = "Querying parks & greenery...";
+        } else if (progress === 4) {
+            activeLabel = "Rendering poster layout...";
+        }
+        
+        // Draw header
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.font = 'bold 9px Outfit, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText("GENERATING MAP BACKGROUND", canvas.width / 2, centerY - 18);
+        
+        // Draw 5 progress blocks
+        const blockW = 16;
+        const blockH = 12;
+        const gap = 6;
+        const totalW = 5 * blockW + 4 * gap;
+        const startX = (canvas.width - totalW) / 2;
+        
+        for (let i = 0; i < 5; i++) {
+            const x = startX + i * (blockW + gap);
+            // Block i turns green when stage i has completed.
+            // Since progress represents the number of completed tasks (1 to 5),
+            // block i is green if progress > i.
+            const completed = (progress > i);
+            
+            if (completed) {
+                ctx.fillStyle = '#10b981';
+                ctx.shadowColor = 'rgba(16, 185, 129, 0.6)';
+                ctx.shadowBlur = 6;
+                ctx.fillRect(x, centerY, blockW, blockH);
+                ctx.shadowBlur = 0;
+            } else {
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                ctx.fillRect(x, centerY, blockW, blockH);
+            }
+        }
+        
+        // Draw footer active label
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+        ctx.font = '10px Outfit, sans-serif';
+        ctx.fillText(activeLabel, canvas.width / 2, centerY + 30);
+        return;
+    }
     
     if (!coords || coords.length < 2) {
         // Draw centered placeholder text
@@ -736,9 +904,6 @@ async function handleUpload() {
         if (res.status === 409) {
             const data = await res.json();
             alert(data.error);
-            if (data.route_id) {
-                selectRoute(data.route_id);
-            }
             return;
         }
 
@@ -757,9 +922,6 @@ async function handleUpload() {
         await loadFolders();
         await loadTags();
         await loadRoutes();
-        
-        // Select new route
-        selectRoute(newRoute.id);
         
     } catch (err) {
         alert(err.message);
@@ -789,6 +951,37 @@ async function selectRoute(routeId) {
         document.getElementById('route-title').textContent = currentRoute.name;
         document.getElementById('route-desc').textContent = currentRoute.description || 'No description provided.';
         
+        const privacyStatus = document.getElementById('route-privacy-status');
+        const privacyToggleBtn = document.getElementById('route-privacy-toggle-btn');
+        const editRouteBtn = document.getElementById('edit-route-btn');
+        const deleteRouteBtn = document.getElementById('delete-route-btn');
+        
+        if (currentRoute.is_owner) {
+            document.getElementById('route-privacy-container').style.display = 'inline-flex';
+            if (editRouteBtn) editRouteBtn.classList.remove('hidden');
+            if (deleteRouteBtn) deleteRouteBtn.classList.remove('hidden');
+            
+            const lockIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+            const globeIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>`;
+            
+            if (currentRoute.is_public) {
+                if (privacyStatus) privacyStatus.innerHTML = `${globeIcon} Public`;
+                if (privacyToggleBtn) privacyToggleBtn.textContent = 'Make Private';
+            } else {
+                if (privacyStatus) privacyStatus.innerHTML = `${lockIcon} Private`;
+                if (privacyToggleBtn) privacyToggleBtn.textContent = 'Make Public';
+            }
+            if (privacyToggleBtn) privacyToggleBtn.style.display = 'inline-block';
+        } else {
+            if (editRouteBtn) editRouteBtn.classList.add('hidden');
+            if (deleteRouteBtn) deleteRouteBtn.classList.add('hidden');
+            
+            const globeIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>`;
+            
+            if (privacyStatus) privacyStatus.innerHTML = `${globeIcon} Public (by ${escapeHTML(currentRoute.owner_username || 'Unknown')})`;
+            if (privacyToggleBtn) privacyToggleBtn.style.display = 'none';
+        }
+        
         // Badges tags
         const metaTags = document.getElementById('route-meta-tags');
         let metaHtml = '';
@@ -817,7 +1010,7 @@ async function selectRoute(routeId) {
         drawRouteOnMap();
         
         // Load map style preference and show style selector HUD
-        const savedStyle = localStorage.getItem('blaeu_map_style') || 'dark';
+        const savedStyle = (currentUser && currentUser.default_map_style) || localStorage.getItem('blaeu_map_style') || 'dark';
         currentMapStyle = savedStyle;
         const hudSelect = document.getElementById('hud-map-style-select');
         if (hudSelect) {
@@ -1860,6 +2053,14 @@ function closeFoldersModal() {
 function openSettingsModal() {
     document.getElementById('settings-modal').classList.remove('hidden');
     checkGarminStatus();
+    if (currentUser && currentUser.is_admin) {
+        const adminSec = document.getElementById('admin-user-section');
+        if (adminSec) adminSec.classList.remove('hidden');
+        loadAdminUserList();
+    } else {
+        const adminSec = document.getElementById('admin-user-section');
+        if (adminSec) adminSec.classList.add('hidden');
+    }
 }
 
 function closeSettingsModal() {
@@ -2070,9 +2271,30 @@ function initGarminIntegration() {
         disconnectBtn.addEventListener('click', disconnectGarmin);
     }
 
-    const syncBtn = document.getElementById('garmin-sync-btn');
+    const syncBtn = document.getElementById('sidebar-garmin-sync-btn');
     if (syncBtn) {
         syncBtn.addEventListener('click', syncGarminActivities);
+    }
+
+    const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
+    if (autoSyncSelect) {
+        autoSyncSelect.addEventListener('change', async (e) => {
+            const interval = e.target.value;
+            try {
+                const res = await fetch('/api/garmin/auto-sync', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ auto_sync_interval: interval })
+                });
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to update auto-sync setting');
+                }
+            } catch (err) {
+                alert(err.message);
+                checkGarminStatus();
+            }
+        });
     }
 
     const closeActivitiesBtn = document.getElementById('close-garmin-activities-btn');
@@ -2108,15 +2330,23 @@ async function checkGarminStatus() {
         const disconnectedSection = document.getElementById('garmin-disconnected-section');
         const connectedSection = document.getElementById('garmin-connected-section');
         
+        const sidebarBtn = document.getElementById('sidebar-garmin-sync-btn');
         if (data.status === 'connected') {
             disconnectedSection.classList.add('hidden');
             connectedSection.classList.remove('hidden');
+            if (sidebarBtn) sidebarBtn.classList.remove('hidden');
             
             document.getElementById('garmin-connected-name').textContent = data.display_name || 'Garmin Connected';
             document.getElementById('garmin-connected-email').textContent = data.email;
+            
+            const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
+            if (autoSyncSelect) {
+                autoSyncSelect.value = data.auto_sync_interval || 'off';
+            }
         } else {
             disconnectedSection.classList.remove('hidden');
             connectedSection.classList.add('hidden');
+            if (sidebarBtn) sidebarBtn.classList.add('hidden');
             
             document.getElementById('garmin-email').value = '';
             document.getElementById('garmin-password').value = '';
@@ -2205,7 +2435,7 @@ async function disconnectGarmin() {
 }
 
 async function syncGarminActivities() {
-    const syncBtn = document.getElementById('garmin-sync-btn');
+    const syncBtn = document.getElementById('sidebar-garmin-sync-btn');
     const originalText = syncBtn.innerHTML;
     
     syncBtn.disabled = true;
@@ -2417,6 +2647,20 @@ async function loadMapThemes() {
                 select.appendChild(opt);
             });
         }
+        
+        const defaultStyleSelect = document.getElementById('default-map-style-select');
+        if (defaultStyleSelect) {
+            defaultStyleSelect.innerHTML = '<option value="dark">Dark Matter (Default)</option>';
+            mapThemes.forEach(theme => {
+                const opt = document.createElement('option');
+                opt.value = theme.id;
+                opt.textContent = theme.name;
+                defaultStyleSelect.appendChild(opt);
+            });
+            if (currentUser) {
+                defaultStyleSelect.value = currentUser.default_map_style || 'dark';
+            }
+        }
     } catch (err) {
         console.error('Error loading map themes:', err);
     }
@@ -2468,12 +2712,6 @@ async function applyMapStyle() {
         }
         
         const select = document.getElementById('hud-map-style-select');
-        let originalText = '';
-        if (select && select.selectedIndex >= 0) {
-            originalText = select.options[select.selectedIndex].text;
-            select.options[select.selectedIndex].text = 'Loading Map...';
-        }
-
         const cityInput = document.getElementById('hud-map-style-city');
         const countryInput = document.getElementById('hud-map-style-country');
         const labelsContainer = document.getElementById('hud-map-poster-labels');
@@ -2482,129 +2720,90 @@ async function applyMapStyle() {
             labelsContainer.classList.remove('hidden');
         }
 
-        if (labelsLoadedForRouteId !== currentRoute.id) {
-            if (cityInput) cityInput.value = '';
-            if (countryInput) countryInput.value = '';
+        // Check if there is completed poster map data matching our active style in database-cached status
+        let cachedData = null;
+        if (currentRoute.poster_status && 
+            currentRoute.poster_status.status === 'completed' && 
+            currentRoute.poster_status.theme === currentMapStyle && 
+            labelsLoadedForRouteId !== currentRoute.id) {
+            cachedData = currentRoute.poster_status;
         }
-        
-        try {
-            // Get visible track coordinates (after privacy zone filter)
-            const coords = [];
-            getFilteredTracks().forEach(track => {
-                track.segments.forEach(segment => {
-                    coords.push(...segment.map(pt => [pt.lat, pt.lon]));
-                });
-            });
-            
-            let url = `/api/routes/${currentRoute.id}/poster-map?theme=${currentMapStyle}`;
 
-            // If labels are loaded, read from inputs (which is user's edited state, even if empty).
-            // Otherwise, omit displayCity/displayCountry so the backend resolves defaults.
-            if (labelsLoadedForRouteId === currentRoute.id) {
-                const cityVal = cityInput ? cityInput.value : '';
-                const countryVal = countryInput ? countryInput.value : '';
-                url += `&displayCity=${encodeURIComponent(cityVal)}&displayCountry=${encodeURIComponent(countryVal)}`;
-            }
-
-            if (coords.length > 0) {
-                const lats = coords.map(c => c[0]);
-                const lons = coords.map(c => c[1]);
-                const latMin = Math.min(...lats);
-                const latMax = Math.max(...lats);
-                const lonMin = Math.min(...lons);
-                const lonMax = Math.max(...lons);
-                
-                // Calculate projected meters per pixel at current zoom
-                const z = map.getZoom();
-                const projectedMetersPerPixel = 40075016.686 / (256 * Math.pow(2, z));
-                
-                // Get maximum viewport dimensions (including video export resolutions)
-                let exportWidth = 1920;
-                let exportHeight = 1080;
-                const resSelect = document.getElementById('res-select');
-                const resVal = resSelect ? resSelect.value : '1080';
-                if (resVal === '720') {
-                    exportWidth = 1280;
-                    exportHeight = 720;
-                } else if (resVal === '2160') {
-                    exportWidth = 3840;
-                    exportHeight = 2160;
-                }
-                
-                const mapSize = map.getSize();
-                const viewportWidth = mapSize ? mapSize.x : 800;
-                const viewportHeight = mapSize ? mapSize.y : 600;
-                
-                const w = Math.max(viewportWidth, exportWidth);
-                const h = Math.max(viewportHeight, exportHeight);
-                
-                // Margins in projected meters (half of viewport size to account for camera centering on endpoints)
-                let marginX = (w / 2) * projectedMetersPerPixel;
-                let marginY = (h / 2) * projectedMetersPerPixel;
-                
-                // Cap margins to a maximum of 3000 meters to keep download size and processing times reasonable
-                marginX = Math.min(marginX, 3000);
-                marginY = Math.min(marginY, 3000);
-                
-                // Project route bounds to EPSG:3857 meters
-                const pMin = map.options.crs.project(L.latLng(latMin, lonMin));
-                const pMax = map.options.crs.project(L.latLng(latMax, lonMax));
-                
-                // Expand bounds by margins
-                const xMin = pMin.x - marginX;
-                const xMax = pMax.x + marginX;
-                const yMin = pMin.y - marginY;
-                const yMax = pMax.y + marginY;
-                
-                // Unproject back to EPSG:4326 (lat/lon)
-                const unprojectedMin = map.options.crs.unproject(L.point(xMin, yMin));
-                const unprojectedMax = map.options.crs.unproject(L.point(xMax, yMax));
-                
-                url += `&latMin=${unprojectedMin.lat}&latMax=${unprojectedMax.lat}&lonMin=${unprojectedMin.lng}&lonMax=${unprojectedMax.lng}`;
-            }
-            
-            const res = await fetch(url);
-            if (!res.ok) throw new Error('Could not generate poster map');
-            const data = await res.json();
-            
-            // Set map container background color
+        if (cachedData) {
+            // Apply cached poster map immediately (no fetch, no loader status text changes!)
             if (mapElement) {
-                mapElement.style.backgroundColor = data.bg_color;
+                mapElement.style.backgroundColor = cachedData.bg_color;
             }
-            
-            // Add static image overlay
-            posterMapOverlay = L.imageOverlay(data.image_url, data.bounds, {
+            posterMapOverlay = L.imageOverlay(cachedData.image_url, cachedData.bounds, {
                 opacity: 1.0,
                 zIndex: 1
             }).addTo(map);
-            
-            // Ensure overlay stays behind route lines and markers
             posterMapOverlay.bringToBack();
-            
-            // Store details on currentRoute for video export
-            currentRoute.posterMapUrl = data.image_url;
-            currentRoute.posterMapBounds = data.bounds;
-            currentRoute.posterMapBgColor = data.bg_color;
+
+            currentRoute.posterMapUrl = cachedData.image_url;
+            currentRoute.posterMapBounds = cachedData.bounds;
+            currentRoute.posterMapBgColor = cachedData.bg_color;
 
             if (labelsLoadedForRouteId !== currentRoute.id) {
-                if (cityInput) cityInput.value = data.display_city || '';
-                if (countryInput) countryInput.value = data.display_country || '';
+                if (cityInput) cityInput.value = cachedData.display_city || '';
+                if (countryInput) countryInput.value = cachedData.display_country || '';
                 labelsLoadedForRouteId = currentRoute.id;
             }
-
-            
-        } catch (err) {
-            console.error(err);
-            alert('Map style generation failed: ' + err.message);
-            // Fallback to dark
-            currentMapStyle = 'dark';
-            if (select) select.value = 'dark';
-            if (!map.hasLayer(tileLayer)) tileLayer.addTo(map);
-            if (mapElement) mapElement.style.backgroundColor = '';
-        } finally {
+        } else {
+            // Cache miss or manually editing labels/switching theme: fetch from backend
+            let originalText = '';
             if (select && select.selectedIndex >= 0) {
-                const activeTheme = mapThemes.find(t => t.id === currentMapStyle);
-                select.options[select.selectedIndex].text = activeTheme ? activeTheme.name : 'Dark Matter (Default)';
+                originalText = select.options[select.selectedIndex].text;
+                select.options[select.selectedIndex].text = 'Loading Map...';
+            }
+
+            if (labelsLoadedForRouteId !== currentRoute.id) {
+                if (cityInput) cityInput.value = '';
+                if (countryInput) countryInput.value = '';
+            }
+
+            try {
+                let url = `/api/routes/${currentRoute.id}/poster-map?theme=${currentMapStyle}`;
+                if (labelsLoadedForRouteId === currentRoute.id) {
+                    const cityVal = cityInput ? cityInput.value : '';
+                    const countryVal = countryInput ? countryInput.value : '';
+                    url += `&displayCity=${encodeURIComponent(cityVal)}&displayCountry=${encodeURIComponent(countryVal)}`;
+                }
+
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Could not generate poster map');
+                const data = await res.json();
+
+                if (mapElement) {
+                    mapElement.style.backgroundColor = data.bg_color;
+                }
+                posterMapOverlay = L.imageOverlay(data.image_url, data.bounds, {
+                    opacity: 1.0,
+                    zIndex: 1
+                }).addTo(map);
+                posterMapOverlay.bringToBack();
+
+                currentRoute.posterMapUrl = data.image_url;
+                currentRoute.posterMapBounds = data.bounds;
+                currentRoute.posterMapBgColor = data.bg_color;
+
+                if (labelsLoadedForRouteId !== currentRoute.id) {
+                    if (cityInput) cityInput.value = data.display_city || '';
+                    if (countryInput) countryInput.value = data.display_country || '';
+                    labelsLoadedForRouteId = currentRoute.id;
+                }
+            } catch (err) {
+                console.error(err);
+                alert('Map style generation failed: ' + err.message);
+                currentMapStyle = 'dark';
+                if (select) select.value = 'dark';
+                if (!map.hasLayer(tileLayer)) tileLayer.addTo(map);
+                if (mapElement) mapElement.style.backgroundColor = '';
+            } finally {
+                if (select && select.selectedIndex >= 0) {
+                    const activeTheme = mapThemes.find(t => t.id === currentMapStyle);
+                    select.options[select.selectedIndex].text = activeTheme ? activeTheme.name : 'Dark Matter (Default)';
+                }
             }
         }
     }
@@ -2979,6 +3178,243 @@ async function saveImage() {
         if (titleText) titleText.textContent = 'Generating Video';
     }, 500);
 }
+
+// ----------------------------------------------------
+// Authentication & User Management Logic
+// ----------------------------------------------------
+
+async function checkAuthStatus() {
+    try {
+        const res = await fetch('/api/auth/status');
+        const data = await res.json();
+        const loginModal = document.getElementById('login-modal');
+        
+        if (data.logged_in) {
+            currentUser = data.user;
+            if (loginModal) loginModal.style.display = 'none';
+            
+            // Set up UI header for logout visibility, etc.
+            const logoutBtn = document.getElementById('logout-btn');
+            if (logoutBtn) {
+                logoutBtn.style.display = 'flex';
+            }
+            
+            // Load app data
+            await loadFolders();
+            await loadTags();
+            await loadRoutes();
+            await loadMapThemes();
+            checkGarminStatus();
+        } else {
+            currentUser = null;
+            if (loginModal) loginModal.style.display = 'flex';
+            showAuthModal(data.no_users_exist);
+        }
+    } catch (err) {
+        console.error("Error checking auth status:", err);
+    }
+}
+
+function toggleAuthMode(e) {
+    if (e) e.preventDefault();
+    if (authMode === 'login') {
+        authMode = 'register';
+    } else {
+        authMode = 'login';
+    }
+    showAuthModal(false);
+}
+
+function showAuthModal(noUsersExist) {
+    const loginTitle = document.getElementById('login-title');
+    const submitBtn = document.getElementById('login-submit-btn');
+    const toggleText = document.getElementById('login-toggle-text');
+    const toggleLink = document.getElementById('login-toggle-link');
+    const errorMsg = document.getElementById('login-error-msg');
+    
+    if (errorMsg) errorMsg.style.display = 'none';
+    
+    if (noUsersExist) {
+        authMode = 'admin_setup';
+        if (loginTitle) loginTitle.textContent = 'Create Admin Account';
+        if (submitBtn) submitBtn.textContent = 'Create Admin';
+        if (toggleText) toggleText.parentElement.style.display = 'none';
+    } else {
+        if (authMode === 'register') {
+            if (loginTitle) loginTitle.textContent = 'Register';
+            if (submitBtn) submitBtn.textContent = 'Register';
+            if (toggleText) toggleText.textContent = "Already have an account?";
+            if (toggleLink) toggleLink.textContent = "Log In";
+            if (toggleText) toggleText.parentElement.style.display = 'block';
+        } else {
+            authMode = 'login';
+            if (loginTitle) loginTitle.textContent = 'Log In';
+            if (submitBtn) submitBtn.textContent = 'Log In';
+            if (toggleText) toggleText.textContent = "Don't have an account?";
+            if (toggleLink) toggleLink.textContent = "Register";
+            if (toggleText) toggleText.parentElement.style.display = 'block';
+        }
+    }
+}
+
+async function handleAuthSubmit(e) {
+    if (e) e.preventDefault();
+    
+    const usernameInput = document.getElementById('login-username');
+    const passwordInput = document.getElementById('login-password');
+    const errorMsg = document.getElementById('login-error-msg');
+    const submitBtn = document.getElementById('login-submit-btn');
+    
+    if (!usernameInput || !passwordInput) return;
+    
+    const username = usernameInput.value.trim();
+    const password = passwordInput.value;
+    
+    if (!username || !password) return;
+    
+    if (errorMsg) errorMsg.style.display = 'none';
+    if (submitBtn) submitBtn.disabled = true;
+    
+    const url = (authMode === 'register' || authMode === 'admin_setup') ? '/api/auth/register' : '/api/auth/login';
+    
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        
+        if (!res.ok) {
+            throw new Error(data.error || 'Authentication failed');
+        }
+        
+        // Clear forms
+        usernameInput.value = '';
+        passwordInput.value = '';
+        
+        // Auth success
+        currentUser = data.user;
+        const loginModal = document.getElementById('login-modal');
+        if (loginModal) loginModal.style.display = 'none';
+        
+        // Load user data
+        await loadFolders();
+        await loadTags();
+        await loadRoutes();
+        await loadMapThemes();
+        checkGarminStatus();
+    } catch (err) {
+        if (errorMsg) {
+            errorMsg.textContent = err.message;
+            errorMsg.style.display = 'block';
+        }
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
+    }
+}
+
+async function handleLogout() {
+    try {
+        const res = await fetch('/api/auth/logout', { method: 'POST' });
+        if (!res.ok) throw new Error('Logout failed');
+        currentUser = null;
+        routesList = [];
+        foldersList = [];
+        deselectRoute();
+        const adminSec = document.getElementById('admin-user-section');
+        if (adminSec) adminSec.classList.add('hidden');
+        await checkAuthStatus();
+    } catch (err) {
+        console.error("Logout failed:", err);
+    }
+}
+
+async function handlePrivacyToggle() {
+    if (!currentRoute) return;
+    const newStatus = !currentRoute.is_public;
+    const privacyToggleBtn = document.getElementById('route-privacy-toggle-btn');
+    if (privacyToggleBtn) privacyToggleBtn.disabled = true;
+    
+    try {
+        const res = await fetch(`/api/routes/${currentRoute.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_public: newStatus })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to update privacy status');
+        
+        currentRoute.is_public = newStatus;
+        
+        const privacyStatus = document.getElementById('route-privacy-status');
+        const lockIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+        const globeIcon = `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>`;
+        
+        if (newStatus) {
+            if (privacyStatus) privacyStatus.innerHTML = `${globeIcon} Public`;
+            if (privacyToggleBtn) privacyToggleBtn.textContent = 'Make Private';
+        } else {
+            if (privacyStatus) privacyStatus.innerHTML = `${lockIcon} Private`;
+            if (privacyToggleBtn) privacyToggleBtn.textContent = 'Make Public';
+        }
+        
+        await loadRoutes();
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        if (privacyToggleBtn) privacyToggleBtn.disabled = false;
+    }
+}
+
+async function loadAdminUserList() {
+    const listBody = document.getElementById('admin-user-list');
+    if (!listBody) return;
+    listBody.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 10px;">Loading users...</td></tr>';
+    
+    try {
+        const res = await fetch('/api/auth/users');
+        if (!res.ok) throw new Error('Failed to fetch user list');
+        const users = await res.json();
+        
+        listBody.innerHTML = users.map(user => {
+            const role = user.is_admin ? '<span style="color: var(--primary);">Admin</span>' : 'User';
+            const isSelf = currentUser && currentUser.id === user.id;
+            const deleteBtn = isSelf ? 
+                '<span style="opacity: 0.5; font-size: 0.9em; padding: 4px 8px;">(You)</span>' :
+                `<button type="button" class="btn btn-sm btn-outline" style="border-color: #ef4444; color: #ef4444; padding: 2px 8px;" onclick="handleDeleteUser(${user.id}, '${escapeHTML(user.username)}')">Delete</button>`;
+            
+            return `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 8px 0; font-weight: 500;">${escapeHTML(user.username)}</td>
+                    <td style="padding: 8px 0;">${role}</td>
+                    <td style="padding: 8px 0; text-align: right;">${deleteBtn}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (err) {
+        listBody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #ef4444; padding: 10px;">${escapeHTML(err.message)}</td></tr>`;
+    }
+}
+
+async function handleDeleteUser(userId, username) {
+    if (!confirm(`Are you sure you want to delete the user account "${username}"? All their activities and folders will be deleted permanently.`)) return;
+    
+    try {
+        const res = await fetch(`/api/auth/users/${userId}`, {
+            method: 'DELETE'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to delete user');
+        
+        alert(`User "${username}" has been successfully deleted.`);
+        loadAdminUserList();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+window.handleDeleteUser = handleDeleteUser;
 
 
 

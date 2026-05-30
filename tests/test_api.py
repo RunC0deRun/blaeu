@@ -680,6 +680,24 @@ def test_debug_mode_default_false(monkeypatch):
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
     assert debug_mode is True
 
+def test_rate_limiting(client, monkeypatch):
+    monkeypatch.setitem(app.config, 'TESTING', False)
+    
+    from app import rate_limit_records
+    rate_limit_records.clear()
+    
+    # 5 requests should get 401 Unauthorized (wrong password)
+    for _ in range(5):
+        res = client.post('/api/auth/login', json={'username': 'test_user', 'password': 'wrong_password'})
+        assert res.status_code == 401
+        
+    # 6th request should get 429 Rate Limit Exceeded
+    res_limit = client.post('/api/auth/login', json={'username': 'test_user', 'password': 'wrong_password'})
+    assert res_limit.status_code == 429
+    data = json.loads(res_limit.data)
+    assert 'Rate limit exceeded' in data['error']
+
+
 
 
 

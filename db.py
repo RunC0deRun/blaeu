@@ -1,6 +1,9 @@
 import os
 import sqlite3
 import json
+import logging
+
+logger = logging.getLogger('blaeu.db')
 from datetime import datetime, timezone as tz
 from zoneinfo import ZoneInfo
 
@@ -152,7 +155,7 @@ def init_db():
             cursor.execute("DROP TABLE folders_old;")
             cursor.execute("PRAGMA foreign_keys = ON;")
         except Exception as e:
-            print(f"Error migrating folders table: {e}")
+            logger.error(f"Error migrating folders table: {e}", exc_info=True)
             cursor.execute("PRAGMA foreign_keys = ON;")
             
     # Repair routes table if it contains references to folders_old (due to SQLite RENAME tracking)
@@ -212,9 +215,9 @@ def init_db():
                 cursor.execute("DROP TABLE routes;")
                 cursor.execute("ALTER TABLE routes_new RENAME TO routes;")
                 cursor.execute("PRAGMA foreign_keys = ON;")
-                print("Successfully repaired routes table foreign key reference to folders")
+                logger.info("Successfully repaired routes table foreign key reference to folders")
             except Exception as e:
-                print(f"Error repairing routes table: {e}")
+                logger.error(f"Error repairing routes table: {e}", exc_info=True)
                 cursor.execute("PRAGMA foreign_keys = ON;")
     
     # Create Tags Table
@@ -273,7 +276,7 @@ def init_db():
                         WHERE id = ?
                     """, (timezone, start_time, simplified_path, route_id))
                 except Exception as e:
-                    print(f"Error backfilling route {route_id}: {e}")
+                    logger.error(f"Error backfilling route {route_id}: {e}", exc_info=True)
                     
     conn.commit()
     conn.close()
@@ -515,7 +518,7 @@ def delete_route(route_id):
             try:
                 os.remove(file_path)
             except Exception as e:
-                print(f"Error removing route file {file_path}: {e}")
+                logger.warning(f"Error removing route file {file_path}: {e}")
         return True
     except sqlite3.Error as e:
         conn.rollback()

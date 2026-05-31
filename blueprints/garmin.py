@@ -4,6 +4,9 @@ import json
 from datetime import datetime
 from flask import Blueprint, request, jsonify
 from garminconnect.exceptions import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
+import logging
+
+logger = logging.getLogger('blaeu.garmin')
 
 from db import (
     get_db, save_garmin_connection, get_garmin_connection, delete_garmin_connection,
@@ -169,11 +172,11 @@ def run_auto_sync_for_all_users():
         if should_sync:
             # Try to acquire Gunicorn-safe atomic SQLite write lock
             if attempt_garmin_sync_lock(user_id, now_str, last_sync_str, seconds):
-                print(f"[Auto-Sync] Locked and running Garmin Connect sync for user {user_id}...")
+                logger.info(f"[Auto-Sync] Locked and running Garmin Connect sync for user {user_id}...")
                 try:
                     sync_user_garmin_activities_in_background(user_id)
                 except Exception as e:
-                    print(f"[Auto-Sync] Error syncing activities for user {user_id}: {e}")
+                    logger.error(f"[Auto-Sync] Error syncing activities for user {user_id}: {e}", exc_info=True)
 
 
 @garmin_bp.route('/api/garmin/status', methods=['GET'])

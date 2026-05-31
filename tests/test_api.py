@@ -732,6 +732,51 @@ def test_tag_isolation(client):
     tags2 = [t['name'] for t in json.loads(res_tags2.data)]
     assert 'user1_tag' not in tags2
 
+def test_sqlite_foreign_key_enforcement(client):
+    import sqlite3
+    conn = db.get_db()
+    cursor = conn.cursor()
+    
+    # 1. Verify foreign keys are enabled on the connection
+    cursor.execute("PRAGMA foreign_keys;")
+    fk_status = cursor.fetchone()[0]
+    assert fk_status == 1
+    
+    # 2. Test foreign key violation: insert a folder with non-existent user_id
+    with pytest.raises(sqlite3.IntegrityError):
+        cursor.execute("INSERT INTO folders (name, user_id) VALUES (?, ?)", ("Test FK Folder", 999999))
+    
+    # 3. Test cascade delete: create a user, folder, and route, delete user, check they are gone
+    cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", ("fk_test_user", "hash"))
+    user_id = cursor.lastrowid
+    
+    cursor.execute("INSERT INTO folders (name, user_id) VALUES (?, ?)", ("fk_test_folder", user_id))
+    folder_id = cursor.lastrowid
+    
+    cursor.execute("""
+        INSERT INTO routes (name, filename, file_hash, file_path, user_id, folder_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, ("fk_route", "file.gpx", "somehash", "path", user_id, folder_id))
+    route_id = cursor.lastrowid
+    
+    # Verify they exist
+    cursor.execute("SELECT id FROM folders WHERE id = ?", (folder_id,))
+    assert cursor.fetchone() is not None
+    cursor.execute("SELECT id FROM routes WHERE id = ?", (route_id,))
+    assert cursor.fetchone() is not None
+    
+    # Delete the user
+    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    
+    # Verify folders and routes are deleted automatically via cascade
+    cursor.execute("SELECT id FROM folders WHERE id = ?", (folder_id,))
+    assert cursor.fetchone() is None
+    cursor.execute("SELECT id FROM routes WHERE id = ?", (route_id,))
+    assert cursor.fetchone() is None
+    conn.close()
+
+
 
 
 

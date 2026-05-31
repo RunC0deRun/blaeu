@@ -561,10 +561,20 @@ def delete_folder(folder_id, user_id):
         conn.close()
 
 # Helper Functions for Tags
-def get_all_tags():
+def get_all_tags(user_id=None):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM tags ORDER BY name ASC")
+    if user_id is not None:
+        cursor.execute("""
+            SELECT DISTINCT t.id, t.name 
+            FROM tags t
+            JOIN route_tags rt ON t.id = rt.tag_id
+            JOIN routes r ON rt.route_id = r.id
+            WHERE r.user_id = ?
+            ORDER BY t.name ASC
+        """, (user_id,))
+    else:
+        cursor.execute("SELECT * FROM tags ORDER BY name ASC")
     rows = cursor.fetchall()
     tags = [dict(row) for row in rows]
     conn.close()

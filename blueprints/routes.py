@@ -218,7 +218,7 @@ def list_tags():
     if not user_id:
         return jsonify({'error': 'Unauthorized. Please log in.'}), 401
         
-    return jsonify(get_all_tags())
+    return jsonify(get_all_tags(user_id))
 
 
 # Map Poster Generation Endpoints

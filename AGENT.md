@@ -37,25 +37,20 @@ To enable HTML5 Canvas-based video exports, drawing map tiles onto the canvas ca
 - The Flask endpoint `/api/tiles/<z>/<x>/<y>.png` acts as a local proxy fetching tiles from OpenStreetMap.
 - Once fetched, tiles are cached to the mounted volume `/data/tiles_cache/`. Subsequent loads serve directly from the disk cache, improving performance, saving bandwidth, and offering offline support.
 
-### C. Garmin Connect Integration (`app.py`)
+### C. Garmin Connect Integration (`app.py` / `blueprints/garmin.py`)
 Integrates the `garminconnect` API to pull activities directly.
 - **Stateless Authentication**: Login credentials (email, password) are processed in memory and never stored in the database.
 - **MFA Interactive Flow**: Intercepts MFA email challenges by subclassing `GarminConnectAuthenticationError` into `MfaRequiredException` to signal the frontend to display a live verification code prompt.
 - **Token Store**: Persists session tokens to the filesystem to perform background token renewals without requiring repeated logins.
 - **Rate-Limiting**: Catches and translates Garmin's rate limits (429 HTTP) to keep server operations clean.
+- **Directory Access Control**: Validates user IDs strictly to prevent path traversal on local token directories.
 
-### D. Server-Side Video Transcoder (`app.py`)
+### D. Server-Side Video Transcoder (`app.py` / `blueprints/media.py`)
 Transcodes client-side WebM frame recordings into standardized video formats.
 - **Constant Framerate Alignment**: Invokes a local `ffmpeg` subprocess using the video filter `setpts=N/(FPS*TB)` to recalculate timestamps based on the frame index, forcing a constant framerate and preventing slow-motion playback.
 - **MP4 & WebM Support**: Converts input WebM streams into H.264 MP4 videos (`-c:v libx264 -crf 20 -pix_fmt yuv420p`) or high-quality WebM videos (`-c:v libvpx -crf 4`).
 
-### C. Garmin Connect Integration (`app.py`)
-Provides seamless passwordless sync with Garmin:
-- Implements stateless login capturing MFA requirements, allowing users to enter codes in an overlay modal.
-- Extracts token sets, persists them locally, and triggers activity search (latest 15 items).
-- Automatically cleans up directory folders when authentication fails and correctly routes rate-limit responses (HTTP 429).
-
-### D. Minimalist Poster Map Generator (`poster_map.py`)
+### E. Minimalist Poster Map Generator (`poster_map.py`)
 Provides stunning map backdrops using OpenStreetMap:
 - Translates coordinates from EPSG:4326 to EPSG:3857 (Web Mercator) to achieve mathematically perfect alignment with Leaflet vectors.
 - Clamps aspect ratios (0.5 to 2.0) and adds padding to bounding boxes.

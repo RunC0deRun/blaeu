@@ -698,6 +698,42 @@ def test_rate_limiting(client, monkeypatch):
     assert 'Rate limit exceeded' in data['error']
 
 
+def test_tag_isolation(client):
+    # GPX dummy data is imported in tests
+    from tests.test_api import GPX_DATA_1
+    
+    # 1. Logged in as 'test_user' (from client fixture).
+    # Upload a route as test_user with a tag.
+    data1 = {
+        'file': (io.BytesIO(GPX_DATA_1.encode('utf-8')), 'route1.gpx'),
+        'name': 'Route 1',
+        'tags': 'user1_tag'
+    }
+    res1 = client.post('/api/upload', data=data1, content_type='multipart/form-data')
+    assert res1.status_code == 201
+    
+    # Check that 'user1_tag' is visible to user 1
+    res_tags = client.get('/api/tags')
+    assert res_tags.status_code == 200
+    tags = [t['name'] for t in json.loads(res_tags.data)]
+    assert 'user1_tag' in tags
+    
+    # 2. Register and log in as user 2
+    client.post('/api/auth/logout')
+    reg_res = client.post('/api/auth/register', json={
+        'username': 'user2',
+        'password': 'password123'
+    })
+    assert reg_res.status_code == 201
+    
+    # Check that user 2 has no tags initially (specifically, 'user1_tag' is isolated)
+    res_tags2 = client.get('/api/tags')
+    assert res_tags2.status_code == 200
+    tags2 = [t['name'] for t in json.loads(res_tags2.data)]
+    assert 'user1_tag' not in tags2
+
+
+
 
 
 

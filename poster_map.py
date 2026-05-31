@@ -33,12 +33,25 @@ def save_geocoding_cache(cache):
         pass
 
 def reverse_geocode(lat, lon):
+    try:
+        lat_f = float(lat)
+        lon_f = float(lon)
+    except (ValueError, TypeError):
+        return "", ""
+
+    import math
+    if math.isnan(lat_f) or math.isinf(lat_f) or math.isnan(lon_f) or math.isinf(lon_f):
+        return "", ""
+
+    if not (-90.0 <= lat_f <= 90.0) or not (-180.0 <= lon_f <= 180.0):
+        return "", ""
+
     cache = load_geocoding_cache()
-    key = f"{lat:.4f}_{lon:.4f}"
+    key = f"{lat_f:.4f}_{lon_f:.4f}"
     if key in cache:
         return cache[key]['city'], cache[key]['country']
 
-    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=en"
+    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat_f}&lon={lon_f}&format=json&accept-language=en"
     headers = {"User-Agent": "Blaeu-GPX-Cartographer/1.0"}
     try:
         r = requests.get(url, headers=headers, timeout=5)

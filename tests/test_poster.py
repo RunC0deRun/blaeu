@@ -170,3 +170,18 @@ def test_garmin_auto_sync(client):
     res = client.put('/api/garmin/auto-sync', json={'auto_sync_interval': 'invalid'})
     assert res.status_code == 400
 
+
+def test_reverse_geocode_input_validation():
+    from poster_map import reverse_geocode
+    
+    # Verify invalid inputs return empty immediately without triggering external requests
+    assert reverse_geocode("invalid", 13.4) == ("", "")
+    assert reverse_geocode(52.5, "invalid") == ("", "")
+    assert reverse_geocode(91.0, 13.4) == ("", "")
+    assert reverse_geocode(-91.0, 13.4) == ("", "")
+    assert reverse_geocode(52.5, 181.0) == ("", "")
+    assert reverse_geocode(52.5, -181.0) == ("", "")
+    assert reverse_geocode(float('nan'), 13.4) == ("", "")
+    assert reverse_geocode(52.5, float('inf')) == ("", "")
+
+

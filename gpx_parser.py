@@ -21,6 +21,8 @@ def parse_iso_datetime(dt_str: Optional[str]) -> Optional[datetime]:
                 continue
     return None
 
+# Note: Keep in sync with client-side getDistanceMeters in static/js/app.js.
+# Both use the identical Earth radius constant (6,371,000 meters).
 def haversine_distance(p1: Dict[str, float], p2: Dict[str, float]) -> float:
     lat1, lon1 = math.radians(p1['lat']), math.radians(p1['lon'])
     lat2, lon2 = math.radians(p2['lat']), math.radians(p2['lon'])

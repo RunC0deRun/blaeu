@@ -1122,6 +1122,8 @@ function drawRouteOnMap() {
 }
 
 // Helper to calculate distance in meters between two lat/lon coordinates using Haversine formula
+// Note: Keep in sync with backend haversine_distance in gpx_parser.py.
+// Both use the identical Earth radius constant (6,371,000 meters).
 function getDistanceMeters(lat1, lon1, lat2, lon2) {
     const R = 6371000; // Radius of Earth in meters
     const dLat = (lat2 - lat1) * Math.PI / 180;

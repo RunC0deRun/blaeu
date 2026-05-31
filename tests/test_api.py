@@ -671,6 +671,17 @@ def test_session_cookie_flags():
     assert app.config['SESSION_COOKIE_SAMESITE'] == 'Lax'
     assert app.config['SESSION_COOKIE_SECURE'] is True
 
+def test_security_headers(client):
+    response = client.get('/')
+    assert response.status_code == 200
+    assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+    assert response.headers.get('X-Frame-Options') == 'DENY'
+    assert response.headers.get('Referrer-Policy') == 'strict-origin-when-cross-origin'
+    assert 'Content-Security-Policy' in response.headers
+    csp = response.headers.get('Content-Security-Policy')
+    assert "default-src 'self'" in csp
+
+
 def test_debug_mode_default_false(monkeypatch):
     monkeypatch.setenv('FLASK_DEBUG', 'false')
     debug_mode = os.getenv('FLASK_DEBUG', 'false').lower() == 'true'

@@ -32,8 +32,9 @@ def import_single_garmin_activity(user_id, client, activity_id, activity_name=No
     parsed = parse_gpx(gpx_bytes)
     
     # Generate filename and unique hash
+    import secrets
     file_hash = hashlib.sha256(gpx_bytes).hexdigest()
-    filename = f"garmin_{activity_id}.gpx"
+    filename = f"garmin_{activity_id}_{secrets.token_hex(8)}.gpx"
     file_path = os.path.join(app.GPX_STORE_DIR, filename)
     
     # Save to local GPX store

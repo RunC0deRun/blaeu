@@ -27,6 +27,16 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
+def add_column_if_missing(cursor, table_name, column_name, column_def):
+    cursor.execute(f"PRAGMA table_info({table_name});")
+    columns = [row['name'] for row in cursor.fetchall()]
+    if column_name not in columns:
+        try:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def};")
+            logger.info(f"Database migration: Added column {column_name} to table {table_name}")
+        except sqlite3.OperationalError as e:
+            logger.error(f"Failed to add column {column_name} to table {table_name}: {e}")
+
 def init_db():
     conn = get_db()
     cursor = conn.cursor()
@@ -87,51 +97,14 @@ def init_db():
     );
     """)
 
-    # Ensure user_id and is_public columns exist on routes (migration for existing DBs)
-    cursor.execute("PRAGMA table_info(users);")
-    user_columns = [row['name'] for row in cursor.fetchall()]
-    if 'default_map_style' not in user_columns:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN default_map_style TEXT DEFAULT 'dark';")
-        except sqlite3.OperationalError:
-            pass
-
-    cursor.execute("PRAGMA table_info(routes);")
-    columns = [row['name'] for row in cursor.fetchall()]
-    if 'timezone' not in columns:
-        try:
-            cursor.execute("ALTER TABLE routes ADD COLUMN timezone TEXT;")
-        except sqlite3.OperationalError:
-            pass
-    if 'simplified_path' not in columns:
-        try:
-            cursor.execute("ALTER TABLE routes ADD COLUMN simplified_path TEXT;")
-        except sqlite3.OperationalError:
-            pass
-    if 'poster_status' not in columns:
-        try:
-            cursor.execute("ALTER TABLE routes ADD COLUMN poster_status TEXT;")
-        except sqlite3.OperationalError:
-            pass
-    if 'user_id' not in columns:
-        try:
-            cursor.execute("ALTER TABLE routes ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE;")
-        except sqlite3.OperationalError:
-            pass
-    if 'is_public' not in columns:
-        try:
-            cursor.execute("ALTER TABLE routes ADD COLUMN is_public INTEGER DEFAULT 0;")
-        except sqlite3.OperationalError:
-            pass
-
-    # Migrate garmin_connections table if auto_sync_interval is missing
-    cursor.execute("PRAGMA table_info(garmin_connections);")
-    garmin_columns = [row['name'] for row in cursor.fetchall()]
-    if garmin_columns and 'auto_sync_interval' not in garmin_columns:
-        try:
-            cursor.execute("ALTER TABLE garmin_connections ADD COLUMN auto_sync_interval TEXT DEFAULT 'off';")
-        except sqlite3.OperationalError:
-            pass
+    # Ensure columns exist (migration for existing DBs)
+    add_column_if_missing(cursor, 'users', 'default_map_style', "TEXT DEFAULT 'dark'")
+    add_column_if_missing(cursor, 'routes', 'timezone', "TEXT")
+    add_column_if_missing(cursor, 'routes', 'simplified_path', "TEXT")
+    add_column_if_missing(cursor, 'routes', 'poster_status', "TEXT")
+    add_column_if_missing(cursor, 'routes', 'user_id', "INTEGER REFERENCES users(id) ON DELETE CASCADE")
+    add_column_if_missing(cursor, 'routes', 'is_public', "INTEGER DEFAULT 0")
+    add_column_if_missing(cursor, 'garmin_connections', 'auto_sync_interval', "TEXT DEFAULT 'off'")
 
     # Migrate folders table if user_id is missing to make unique(name, user_id)
     cursor.execute("PRAGMA table_info(folders);")

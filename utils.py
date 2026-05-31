@@ -2,6 +2,7 @@ import os
 import time
 import threading
 from functools import wraps
+from typing import Callable, Optional, Any, Dict, List
 from flask import request, jsonify, session, current_app
 from db import DATA_DIR, update_route_poster_status, get_route
 
@@ -11,10 +12,10 @@ from collections import defaultdict
 rate_limit_records = defaultdict(list)
 rate_limit_lock = threading.Lock()
 
-def rate_limit(limit, period):
-    def decorator(f):
+def rate_limit(limit: int, period: int) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(f)
-        def wrapped(*args, **kwargs):
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
             if current_app.config.get('TESTING'):
                 return f(*args, **kwargs)
                 
@@ -35,16 +36,16 @@ def rate_limit(limit, period):
         return wrapped
     return decorator
 
-def get_current_user_id():
+def get_current_user_id() -> Optional[int]:
     return session.get('user_id')
 
-def get_csrf_token():
+def get_csrf_token() -> str:
     if 'csrf_token' not in session:
         import secrets
         session['csrf_token'] = secrets.token_hex(32)
     return session['csrf_token']
 
-def run_async_poster_generation(route_id, user_id, theme_name):
+def run_async_poster_generation(route_id: int, user_id: int, theme_name: str) -> None:
     # Retrieve the actual application object to pass across threads safely
     app = current_app._get_current_object()
     

@@ -1,8 +1,9 @@
 import defusedxml.ElementTree as ET
 from datetime import datetime
 import math
+from typing import Optional, Dict, Any, List
 
-def parse_iso_datetime(dt_str):
+def parse_iso_datetime(dt_str: Optional[str]) -> Optional[datetime]:
     if not dt_str:
         return None
     # Clean Z suffix or standard ISO string format
@@ -20,7 +21,9 @@ def parse_iso_datetime(dt_str):
                 continue
     return None
 
-def haversine_distance(p1, p2):
+# Note: Keep in sync with client-side getDistanceMeters in static/js/app.js.
+# Both use the identical Earth radius constant (6,371,000 meters).
+def haversine_distance(p1: Dict[str, float], p2: Dict[str, float]) -> float:
     lat1, lon1 = math.radians(p1['lat']), math.radians(p1['lon'])
     lat2, lon2 = math.radians(p2['lat']), math.radians(p2['lon'])
     dlat = lat2 - lat1
@@ -28,7 +31,8 @@ def haversine_distance(p1, p2):
     a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return 6371000 * c
-def simplify_coords(tracks, max_points=100):
+
+def simplify_coords(tracks: List[Dict[str, Any]], max_points: int = 100) -> List[List[float]]:
     # Extract all coordinate pairs in sequence from all tracks/segments
     coords = []
     for track in tracks:
@@ -52,7 +56,7 @@ def simplify_coords(tracks, max_points=100):
             simplified.append(coords[idx])
     return simplified
 
-def parse_gpx(file_content):
+def parse_gpx(file_content: Any) -> Dict[str, Any]:
     """
     Parses GPX XML content (can be string or bytes) and returns statistics and coordinates.
     """

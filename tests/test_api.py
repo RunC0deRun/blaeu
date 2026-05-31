@@ -8,39 +8,8 @@ import db
 
 # Setup temporary database for testing
 @pytest.fixture
-def client(monkeypatch):
-    db_fd, temp_db_path = tempfile.mkstemp()
-    temp_gpx_dir = tempfile.mkdtemp()
-    
-    # Configure app env vars for testing
-    monkeypatch.setenv("DATA_DIR", temp_gpx_dir)
-    monkeypatch.setenv("BLAEU_ALLOW_REGISTRATION", "true")
-    monkeypatch.setattr("db.DB_PATH", temp_db_path)
-    monkeypatch.setattr("db.DATA_DIR", temp_gpx_dir)
-    monkeypatch.setattr("app.DATA_DIR", temp_gpx_dir)
-    monkeypatch.setattr("app.GPX_STORE_DIR", os.path.join(temp_gpx_dir, 'gpx'))
-    monkeypatch.setattr("app.TILES_CACHE_DIR", os.path.join(temp_gpx_dir, 'tiles_cache'))
-    
-    # Re-initialize the test database
-    db.init_db()
-    
-    app.config.update({
-        'TESTING': True,
-        'PROPAGATE_EXCEPTIONS': True,
-        'SECRET_KEY': 'test-secret-key'
-    })
-    
-    with app.test_client() as client:
-        client.post('/api/auth/register', json={
-            'username': 'test_user',
-            'password': 'password123'
-        })
-        yield client
-        
-    os.close(db_fd)
-    os.unlink(temp_db_path)
-    import shutil
-    shutil.rmtree(temp_gpx_dir, ignore_errors=True)
+def client(authed_client):
+    return authed_client
 
 # Mock GPX data
 GPX_DATA_1 = """<?xml version="1.0" encoding="UTF-8"?>
@@ -670,6 +639,17 @@ def test_session_cookie_flags():
     assert app.config['SESSION_COOKIE_HTTPONLY'] is True
     assert app.config['SESSION_COOKIE_SAMESITE'] == 'Lax'
     assert app.config['SESSION_COOKIE_SECURE'] is True
+
+def test_security_headers(client):
+    response = client.get('/')
+    assert response.status_code == 200
+    assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+    assert response.headers.get('X-Frame-Options') == 'DENY'
+    assert response.headers.get('Referrer-Policy') == 'strict-origin-when-cross-origin'
+    assert 'Content-Security-Policy' in response.headers
+    csp = response.headers.get('Content-Security-Policy')
+    assert "default-src 'self'" in csp
+
 
 def test_debug_mode_default_false(monkeypatch):
     monkeypatch.setenv('FLASK_DEBUG', 'false')

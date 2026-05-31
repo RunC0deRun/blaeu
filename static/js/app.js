@@ -1,6 +1,12 @@
 (() => {
 'use strict';
 
+// Configuration Constants
+const DEFAULT_STATIONARY_RADIUS_METERS = 15;
+const DEFAULT_FALLBACK_SPEED_MPS = 5.0;
+const DEFAULT_TIME_GAP_THRESHOLD_SECONDS = 120.0;
+const DEFAULT_TIME_GAP_RECOVERY_SECONDS = 2.0;
+
 // Blaeu GPX Cartographer Frontend Logic
 
 // Global Application State
@@ -1306,7 +1312,7 @@ function prepareAnimationPoints() {
         });
     } else if (animationMode === 'smooth') {
         // "Smooth" Mode: Filter out stationary periods and play back at constant speed
-        const maxStationaryRadius = 15; // meters
+        const maxStationaryRadius = DEFAULT_STATIONARY_RADIUS_METERS; // meters
         const activePoints = [];
         activePoints.push({ ...animationPoints[0] });
 
@@ -1339,9 +1345,9 @@ function prepareAnimationPoints() {
             distances.push(cumulativeDistance);
         }
 
-        let speed = (currentRoute && currentRoute.avg_moving_speed) ? currentRoute.avg_moving_speed : 5.0;
+        let speed = (currentRoute && currentRoute.avg_moving_speed) ? currentRoute.avg_moving_speed : DEFAULT_FALLBACK_SPEED_MPS;
         if (speed <= 0) {
-            speed = 5.0;
+            speed = DEFAULT_FALLBACK_SPEED_MPS;
         }
 
         for (let i = 0; i < activePoints.length; i++) {
@@ -1358,10 +1364,10 @@ function prepareAnimationPoints() {
             const pt = animationPoints[i];
             const prevPt = animationPoints[i - 1];
             let dt = pt.elapsed - prevPt.elapsed;
-            // Cap extreme gaps (e.g. GPS signal lost/restored) to 2.0s to avoid animation jumps.
-            // We set the threshold to 120s to ensure sparse tracks (e.g. with 60s intervals) are not compressed.
-            if (dt > 120.0) {
-                dt = 2.0;
+            // Cap extreme gaps (e.g. GPS signal lost/restored) to DEFAULT_TIME_GAP_RECOVERY_SECONDS to avoid animation jumps.
+            // We set the threshold to DEFAULT_TIME_GAP_THRESHOLD_SECONDS to ensure sparse tracks (e.g. with 60s intervals) are not compressed.
+            if (dt > DEFAULT_TIME_GAP_THRESHOLD_SECONDS) {
+                dt = DEFAULT_TIME_GAP_RECOVERY_SECONDS;
             }
             adjustedElapsed += dt;
             processedPoints.push({

@@ -691,7 +691,7 @@ def delete_user(user_id):
     cursor = conn.cursor()
     try:
         # Delete user connection token directories on disk
-        token_dir = os.path.join(DATA_DIR, 'garmin_tokens', str(user_id))
+        token_dir = os.path.join(DATA_DIR, 'garmin_tokens', str(int(user_id)))
         if os.path.exists(token_dir):
             import shutil
             shutil.rmtree(token_dir, ignore_errors=True)

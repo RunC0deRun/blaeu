@@ -47,7 +47,9 @@ def get_map_tile(z, x, y):
         else:
             return jsonify({'error': f"Failed to fetch tile from OSM: {response.status_code}"}), response.status_code
     except Exception as e:
-        return jsonify({'error': f"Tile proxy error: {str(e)}"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Tile proxy error: Failed to fetch or process tile.'}), 500
 
 
 @media_bp.route('/api/convert-video', methods=['POST'])
@@ -143,10 +145,13 @@ def convert_video():
         )
         
     except subprocess.CalledProcessError as e:
-        stderr_msg = e.stderr.decode('utf-8', errors='ignore') if e.stderr else 'No stderr output'
-        return jsonify({'error': f"ffmpeg conversion failed: {stderr_msg}"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'ffmpeg conversion failed: Video transcoding failed.'}), 500
     except Exception as e:
-        return jsonify({'error': f"Conversion failed: {str(e)}"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Conversion failed: An unexpected error occurred.'}), 500
     finally:
         # Clean up temp files
         if temp_in_path and os.path.exists(temp_in_path):

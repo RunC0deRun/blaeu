@@ -251,6 +251,12 @@ def init_db():
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    # Create Indexes for Query Optimization
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_routes_user_id ON routes(user_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_routes_folder_id ON routes(folder_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_routes_created_at ON routes(created_at);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_folders_user_id ON folders(user_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_tags_tag_id ON route_tags(tag_id);")
     
     # Backfill timezone, start_time, and simplified_path for existing routes where they are NULL
     cursor.execute("SELECT id, file_path, created_at, timezone, simplified_path FROM routes WHERE timezone IS NULL OR simplified_path IS NULL;")

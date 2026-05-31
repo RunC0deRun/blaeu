@@ -21,7 +21,9 @@ def handle_folders():
         except ValueError as e:
             return jsonify({'error': str(e)}), 409
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': 'Failed to create folder: An unexpected server error occurred.'}), 500
     else:
         return jsonify(get_folders(user_id))
 
@@ -36,4 +38,6 @@ def remove_folder(folder_id):
         delete_folder(folder_id, user_id)
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'error': f"Could not delete folder: {str(e)}"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Could not delete folder: An unexpected server error occurred.'}), 500

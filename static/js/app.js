@@ -1,3 +1,6 @@
+(() => {
+'use strict';
+
 // Blaeu GPX Cartographer Frontend Logic
 
 // Global Application State
@@ -3570,6 +3573,11 @@ async function handleDeleteUser(userId, username) {
 }
 
 window.handleDeleteUser = handleDeleteUser;
+window.selectRoute = selectRoute;
+window.editRouteFromDashboard = editRouteFromDashboard;
+window.deleteFolder = deleteFolder;
+
+})();
 
 
 

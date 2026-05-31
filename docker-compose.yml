@@ -9,6 +9,13 @@ services:
       - DATA_DIR=/data
       - BLAEU_ALLOW_REGISTRATION=${BLAEU_ALLOW_REGISTRATION:-false}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
 
 volumes:
   blaeu_data:

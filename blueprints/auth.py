@@ -54,7 +54,9 @@ def register():
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        return jsonify({'error': f"Registration failed: {str(e)}"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Registration failed: An unexpected server error occurred.'}), 500
 
 
 @auth_bp.route('/api/auth/login', methods=['POST'])
@@ -148,7 +150,9 @@ def update_default_style():
             'default_map_style': default_style
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Failed to update map style: An unexpected server error occurred.'}), 500
 
 
 @auth_bp.route('/api/auth/users', methods=['GET'])
@@ -181,4 +185,6 @@ def remove_user(delete_user_id):
         delete_user(delete_user_id)
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'error': f"Failed to delete user: {str(e)}"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Failed to delete user: An unexpected server error occurred.'}), 500

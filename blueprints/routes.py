@@ -107,7 +107,7 @@ def upload_gpx():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'error': f"Server Error: {str(e)}"}), 500
+        return jsonify({'error': 'Server Error: An unexpected error occurred.'}), 500
 
 
 @routes_bp.route('/api/routes', methods=['GET'])
@@ -158,7 +158,9 @@ def get_route_details(route_id):
         response_data['is_owner'] = (route['user_id'] == user_id)
         return jsonify(response_data)
     except Exception as e:
-        return jsonify({'error': f"Could not read route coordinates: {str(e)}"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Could not read route coordinates: Failed to read or parse file.'}), 500
 
 
 @routes_bp.route('/api/routes/<int:route_id>', methods=['PUT'])
@@ -189,7 +191,9 @@ def edit_route(route_id):
         updated['is_owner'] = True
         return jsonify(updated)
     except Exception as e:
-        return jsonify({'error': f"Could not update route: {str(e)}"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Could not update route: An unexpected error occurred.'}), 500
 
 
 @routes_bp.route('/api/routes/<int:route_id>', methods=['DELETE'])
@@ -209,7 +213,9 @@ def remove_route(route_id):
         delete_route(route_id)
         return jsonify({'success': True})
     except Exception as e:
-        return jsonify({'error': f"Could not delete route: {str(e)}"}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Could not delete route: An unexpected error occurred.'}), 500
 
 
 @routes_bp.route('/api/tags', methods=['GET'])
@@ -218,7 +224,7 @@ def list_tags():
     if not user_id:
         return jsonify({'error': 'Unauthorized. Please log in.'}), 401
         
-    return jsonify(get_all_tags())
+    return jsonify(get_all_tags(user_id))
 
 
 # Map Poster Generation Endpoints
@@ -373,4 +379,4 @@ def get_route_poster_map(route_id):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'error': f'Poster map generation failed: {str(e)}'}), 500
+        return jsonify({'error': 'Poster map generation failed: An unexpected error occurred.'}), 500

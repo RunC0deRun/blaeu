@@ -18,10 +18,19 @@ COPY blueprints/ ./blueprints/
 COPY static/ ./static/
 COPY templates/ ./templates/
 
-# Create the persistence directory
-RUN mkdir -p /data
+# Create a non-privileged user and configure permissions
+RUN groupadd -g 10001 blaeu && \
+    useradd -u 10001 -g blaeu -d /app -s /sbin/nologin blaeu && \
+    mkdir -p /data && \
+    chown -R blaeu:blaeu /app /data
+
+USER blaeu
 
 EXPOSE 5000
+
+# Health check using python standard library to avoid external dependencies
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/')" || exit 1
 
 # Run with gunicorn and a 120s timeout for heavy video/map rendering
 CMD ["gunicorn", "-w", "4", "-t", "120", "-b", "0.0.0.0:5000", "app:app"]

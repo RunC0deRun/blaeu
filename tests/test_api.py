@@ -698,6 +698,92 @@ def test_rate_limiting(client, monkeypatch):
     assert 'Rate limit exceeded' in data['error']
 
 
+def test_tag_isolation(client):
+    # GPX dummy data is imported in tests
+    from tests.test_api import GPX_DATA_1
+    
+    # 1. Logged in as 'test_user' (from client fixture).
+    # Upload a route as test_user with a tag.
+    data1 = {
+        'file': (io.BytesIO(GPX_DATA_1.encode('utf-8')), 'route1.gpx'),
+        'name': 'Route 1',
+        'tags': 'user1_tag'
+    }
+    res1 = client.post('/api/upload', data=data1, content_type='multipart/form-data')
+    assert res1.status_code == 201
+    
+    # Check that 'user1_tag' is visible to user 1
+    res_tags = client.get('/api/tags')
+    assert res_tags.status_code == 200
+    tags = [t['name'] for t in json.loads(res_tags.data)]
+    assert 'user1_tag' in tags
+    
+    # 2. Register and log in as user 2
+    client.post('/api/auth/logout')
+    reg_res = client.post('/api/auth/register', json={
+        'username': 'user2',
+        'password': 'password123'
+    })
+    assert reg_res.status_code == 201
+    
+    # Check that user 2 has no tags initially (specifically, 'user1_tag' is isolated)
+    res_tags2 = client.get('/api/tags')
+    assert res_tags2.status_code == 200
+    tags2 = [t['name'] for t in json.loads(res_tags2.data)]
+    assert 'user1_tag' not in tags2
+
+def test_sqlite_foreign_key_enforcement(client):
+    import sqlite3
+    conn = db.get_db()
+    cursor = conn.cursor()
+    
+    # 1. Verify foreign keys are enabled on the connection
+    cursor.execute("PRAGMA foreign_keys;")
+    fk_status = cursor.fetchone()[0]
+    assert fk_status == 1
+    
+    # 2. Test foreign key violation: insert a folder with non-existent user_id
+    with pytest.raises(sqlite3.IntegrityError):
+        cursor.execute("INSERT INTO folders (name, user_id) VALUES (?, ?)", ("Test FK Folder", 999999))
+    
+    # 3. Test cascade delete: create a user, folder, and route, delete user, check they are gone
+    cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", ("fk_test_user", "hash"))
+    user_id = cursor.lastrowid
+    
+    cursor.execute("INSERT INTO folders (name, user_id) VALUES (?, ?)", ("fk_test_folder", user_id))
+    folder_id = cursor.lastrowid
+    
+    cursor.execute("""
+        INSERT INTO routes (name, filename, file_hash, file_path, user_id, folder_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, ("fk_route", "file.gpx", "somehash", "path", user_id, folder_id))
+    route_id = cursor.lastrowid
+    
+    # Verify they exist
+    cursor.execute("SELECT id FROM folders WHERE id = ?", (folder_id,))
+    assert cursor.fetchone() is not None
+    cursor.execute("SELECT id FROM routes WHERE id = ?", (route_id,))
+    assert cursor.fetchone() is not None
+    
+    # Delete the user
+    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    
+    # Verify folders and routes are deleted automatically via cascade
+    cursor.execute("SELECT id FROM folders WHERE id = ?", (folder_id,))
+    assert cursor.fetchone() is None
+    cursor.execute("SELECT id FROM routes WHERE id = ?", (route_id,))
+    assert cursor.fetchone() is None
+    conn.close()
+
+def test_user_id_path_safety_validation():
+    with pytest.raises(ValueError):
+        db.delete_user("../traversal")
+
+
+
+
+
 
 
 

@@ -4,6 +4,9 @@ import json
 from datetime import datetime
 from flask import Blueprint, request, jsonify
 from garminconnect.exceptions import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
+import logging
+
+logger = logging.getLogger('blaeu.garmin')
 
 from db import (
     get_db, save_garmin_connection, get_garmin_connection, delete_garmin_connection,
@@ -169,11 +172,11 @@ def run_auto_sync_for_all_users():
         if should_sync:
             # Try to acquire Gunicorn-safe atomic SQLite write lock
             if attempt_garmin_sync_lock(user_id, now_str, last_sync_str, seconds):
-                print(f"[Auto-Sync] Locked and running Garmin Connect sync for user {user_id}...")
+                logger.info(f"[Auto-Sync] Locked and running Garmin Connect sync for user {user_id}...")
                 try:
                     sync_user_garmin_activities_in_background(user_id)
                 except Exception as e:
-                    print(f"[Auto-Sync] Error syncing activities for user {user_id}: {e}")
+                    logger.error(f"[Auto-Sync] Error syncing activities for user {user_id}: {e}", exc_info=True)
 
 
 @garmin_bp.route('/api/garmin/status', methods=['GET'])
@@ -216,7 +219,9 @@ def update_garmin_auto_sync():
         update_garmin_auto_sync_interval(user_id, interval)
         return jsonify({'status': 'success', 'auto_sync_interval': interval})
     except Exception as e:
-        return jsonify({'error': f'Failed to update auto-sync interval: {str(e)}'}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Failed to update auto-sync interval: An unexpected server error occurred.'}), 500
 
 @garmin_bp.route('/api/garmin/connect', methods=['POST'])
 @rate_limit(limit=5, period=60)
@@ -274,12 +279,18 @@ def connect_garmin():
         
     except MfaRequiredException:
         return jsonify({'status': 'mfa_required'})
+    except GarminConnectAuthenticationError as e:
+        import shutil
+        if os.path.exists(token_store):
+            shutil.rmtree(token_store, ignore_errors=True)
+        err_msg = str(e)
+        if "failed to acquire persistent DI OAuth tokens" in err_msg:
+            return jsonify({'error': f"Garmin connection failed: {err_msg}"}), 401
+        return jsonify({'error': "Garmin connection failed: Invalid email or password."}), 401
     except GarminConnectTooManyRequestsError as e:
         import shutil
         if os.path.exists(token_store):
             shutil.rmtree(token_store, ignore_errors=True)
-        import traceback
-        traceback.print_exc()
         return jsonify({'error': f"Garmin connection failed: {str(e)}"}), 429
     except Exception as e:
         import shutil
@@ -289,8 +300,8 @@ def connect_garmin():
         traceback.print_exc()
         err_msg = str(e)
         if "429" in err_msg.lower() or "too many requests" in err_msg.lower():
-            return jsonify({'error': f"Garmin connection failed: {err_msg}"}), 429
-        return jsonify({'error': f"Garmin connection failed: {err_msg}"}), 401
+            return jsonify({'error': "Garmin connection failed: Too many requests. Please try again later."}), 429
+        return jsonify({'error': "Garmin connection failed: An unexpected server error occurred."}), 500
 
 @garmin_bp.route('/api/garmin/disconnect', methods=['POST'])
 def disconnect_garmin():
@@ -338,18 +349,17 @@ def get_garmin_activities():
                 'duration': act.get('duration') # seconds
             })
         return jsonify({'status': 'success', 'activities': formatted})
-    except GarminConnectTooManyRequestsError as e:
+    except GarminConnectTooManyRequestsError:
         import traceback
         traceback.print_exc()
-        return jsonify({'error': f"Rate limit exceeded by Garmin: {str(e)}"}), 429
+        return jsonify({'error': "Rate limit exceeded by Garmin: Too many requests. Please try again later."}), 429
     except Exception as e:
         import traceback
         traceback.print_exc()
         err_msg = str(e)
         if "429" in err_msg.lower() or "too many requests" in err_msg.lower():
-            return jsonify({'error': f"Rate limit exceeded by Garmin: {err_msg}"}), 429
-        # If authentication session tokens expired/revoked, prompt reconnect
-        return jsonify({'status': 'needs_reauthentication', 'error': err_msg}), 401
+            return jsonify({'error': "Rate limit exceeded by Garmin: Too many requests. Please try again later."}), 429
+        return jsonify({'status': 'needs_reauthentication', 'error': 'Garmin session expired or was revoked. Please reconnect.'}), 401
 
 @garmin_bp.route('/api/garmin/import', methods=['POST'])
 def import_garmin_activity():
@@ -384,10 +394,12 @@ def import_garmin_activity():
             'route_id': route_id,
             'name': route['name'] if route else f"Garmin Activity {activity_id}"
         })
-    except GarminConnectTooManyRequestsError as e:
-        return jsonify({'error': f"Garmin import failed: {str(e)}"}), 429
+    except GarminConnectTooManyRequestsError:
+        return jsonify({'error': "Garmin import failed: Too many requests. Please try again later."}), 429
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         err_msg = str(e)
         if "429" in err_msg.lower() or "too many requests" in err_msg.lower():
-            return jsonify({'error': f"Garmin import failed: {err_msg}"}), 429
-        return jsonify({'error': f"Garmin import failed: {err_msg}"}), 500
+            return jsonify({'error': "Garmin import failed: Too many requests. Please try again later."}), 429
+        return jsonify({'error': "Garmin import failed: An unexpected error occurred during import."}), 500

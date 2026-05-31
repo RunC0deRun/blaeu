@@ -1,6 +1,9 @@
 import os
 import math
 import json
+import logging
+
+logger = logging.getLogger('blaeu.poster')
 import hashlib
 import matplotlib
 matplotlib.use('Agg')
@@ -64,7 +67,7 @@ def reverse_geocode(lat, lon):
             save_geocoding_cache(cache)
             return city, country
     except Exception as e:
-        print(f"Reverse geocoding error: {e}")
+        logger.error(f"Reverse geocoding error: {e}", exc_info=True)
     return "", ""
 
 def is_latin_script(text):
@@ -264,7 +267,7 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         g = ox.graph_from_point(point, dist=corner_dist, dist_type='bbox', network_type='all', truncate_by_edge=True)
         g_proj = ox.project_graph(g, to_crs='EPSG:3857')
     except Exception as e:
-        print(f"Error fetching OSMnx graph: {e}")
+        logger.error(f"Error fetching OSMnx graph: {e}", exc_info=True)
         raise e
     finally:
         update_route_poster_status(route_id, {
@@ -278,7 +281,7 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     try:
         water = ox.features_from_point(point, tags={"natural": ["water", "bay", "strait"], "waterway": "riverbank"}, dist=corner_dist)
     except Exception as e:
-        print(f"No water features found or error: {e}")
+        logger.warning(f"No water features found or error: {e}")
     finally:
         update_route_poster_status(route_id, {
             'status': 'generating',
@@ -291,7 +294,7 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     try:
         parks = ox.features_from_point(point, tags={"leisure": "park", "landuse": "grass"}, dist=corner_dist)
     except Exception as e:
-        print(f"No parks found or error: {e}")
+        logger.warning(f"No parks found or error: {e}")
     finally:
         update_route_poster_status(route_id, {
             'status': 'generating',
@@ -315,7 +318,7 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
                 water_polys = water_polys.to_crs("EPSG:3857")
                 water_polys.plot(ax=ax, facecolor=theme['water'], edgecolor='none', zorder=1)
             except Exception as e:
-                print(f"Error plotting water polygons: {e}")
+                logger.error(f"Error plotting water polygons: {e}", exc_info=True)
                 
     # Plot park polygons
     if parks is not None and not parks.empty:
@@ -325,7 +328,7 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
                 parks_polys = parks_polys.to_crs("EPSG:3857")
                 parks_polys.plot(ax=ax, facecolor=theme['parks'], edgecolor='none', zorder=2)
             except Exception as e:
-                print(f"Error plotting park polygons: {e}")
+                logger.error(f"Error plotting park polygons: {e}", exc_info=True)
                 
     # Assign road colors and widths based on highway type
     edge_colors = []

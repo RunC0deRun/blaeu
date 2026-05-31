@@ -1,6 +1,14 @@
 import os
 import secrets
 import threading
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+)
+logger = logging.getLogger('blaeu')
 from flask import Flask, jsonify, render_template, session, request
 
 from db import init_db, DATA_DIR
@@ -89,7 +97,7 @@ def auto_sync_worker_loop():
             with app.app_context():
                 run_auto_sync_for_all_users()
         except Exception as e:
-            print(f"[Auto-Sync Worker] Error in loop: {e}")
+            logger.error(f"[Auto-Sync Worker] Error in loop: {e}", exc_info=True)
 
 # Start the background daemon thread for periodic auto-sync
 auto_sync_thread = threading.Thread(target=auto_sync_worker_loop)

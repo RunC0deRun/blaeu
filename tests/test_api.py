@@ -776,6 +776,11 @@ def test_sqlite_foreign_key_enforcement(client):
     assert cursor.fetchone() is None
     conn.close()
 
+def test_user_id_path_safety_validation():
+    with pytest.raises(ValueError):
+        db.delete_user("../traversal")
+
+
 
 
 

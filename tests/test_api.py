@@ -8,39 +8,8 @@ import db
 
 # Setup temporary database for testing
 @pytest.fixture
-def client(monkeypatch):
-    db_fd, temp_db_path = tempfile.mkstemp()
-    temp_gpx_dir = tempfile.mkdtemp()
-    
-    # Configure app env vars for testing
-    monkeypatch.setenv("DATA_DIR", temp_gpx_dir)
-    monkeypatch.setenv("BLAEU_ALLOW_REGISTRATION", "true")
-    monkeypatch.setattr("db.DB_PATH", temp_db_path)
-    monkeypatch.setattr("db.DATA_DIR", temp_gpx_dir)
-    monkeypatch.setattr("app.DATA_DIR", temp_gpx_dir)
-    monkeypatch.setattr("app.GPX_STORE_DIR", os.path.join(temp_gpx_dir, 'gpx'))
-    monkeypatch.setattr("app.TILES_CACHE_DIR", os.path.join(temp_gpx_dir, 'tiles_cache'))
-    
-    # Re-initialize the test database
-    db.init_db()
-    
-    app.config.update({
-        'TESTING': True,
-        'PROPAGATE_EXCEPTIONS': True,
-        'SECRET_KEY': 'test-secret-key'
-    })
-    
-    with app.test_client() as client:
-        client.post('/api/auth/register', json={
-            'username': 'test_user',
-            'password': 'password123'
-        })
-        yield client
-        
-    os.close(db_fd)
-    os.unlink(temp_db_path)
-    import shutil
-    shutil.rmtree(temp_gpx_dir, ignore_errors=True)
+def client(authed_client):
+    return authed_client
 
 # Mock GPX data
 GPX_DATA_1 = """<?xml version="1.0" encoding="UTF-8"?>

@@ -322,7 +322,9 @@ def get_route_poster_map(route_id):
                         for pt in seg:
                             pts.append([pt['lat'], pt['lon']])
             except Exception as e:
-                return jsonify({'error': f'Could not read route coordinates to compute bounds: {str(e)}'}), 500
+                import traceback
+                traceback.print_exc()
+                return jsonify({'error': 'Failed to read route coordinates: An unexpected server error occurred.'}), 500
         
         if not pts:
             return jsonify({'error': 'No coordinate points in route'}), 400

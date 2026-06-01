@@ -20,8 +20,8 @@ def register():
         return jsonify({'error': 'Username and password are required'}), 400
         
     username = username.strip()
-    if len(username) < 3 or len(password) < 4:
-        return jsonify({'error': 'Username must be at least 3 chars, password at least 4 chars'}), 400
+    if len(username) < 3 or len(password) < 8:
+        return jsonify({'error': 'Username must be at least 3 characters, password at least 8 characters'}), 400
         
     try:
         user_count = count_users()

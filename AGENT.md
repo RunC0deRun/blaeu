@@ -10,7 +10,7 @@ Blaeu is built using a lightweight **Python (Flask) backend** and a single-page 
 
 ### Storage & Persistence
 - **SQLite Database**: A database file (`blaeu.db`) is stored in the mounted volume `/data`. The database organizes route metadata, calculated statistics, folders, and tags.
-- **Physical GPX Files**: Uploaded or synchronized GPX logs are saved on the filesystem as `/data/gpx/{filename}` (where uploaded files are named `{sha256_hash}.gpx` and Garmin activities are named `garmin_{activity_id}.gpx`).
+- **Physical GPX Files**: Uploaded or synchronized GPX logs are saved on the filesystem as `/data/gpx/{filename}` (where uploaded files are named `{sha256_hash}.gpx` and Garmin activities are named `garmin_{activity_id}_{random_suffix}.gpx`).
 - **Garmin Tokens Session Store**: Authenticated session tokens/credentials returned by Garmin Connect are persisted in `/data/garmin_tokens/{user_id}` for session restoration and token renewal.
 - **Map Tile Cache**: OpenStreetMap tiles are cached in `/data/tiles_cache/{z}/{x}/{y}.png`.
 - **Garmin OAuth Tokens**: Session and OAuth tokens for passwordless Garmin Connect authentication are persisted under `/data/garmin_tokens/<user_id>/`.
@@ -22,7 +22,7 @@ Blaeu is built using a lightweight **Python (Flask) backend** and a single-page 
 ## 2. Key Backend Features
 
 ### A. Zero-Dependency GPX Parser (`gpx_parser.py`)
-To avoid dependency bloat and guarantee robustness, we implemented a custom XML parser using Python's standard `xml.etree.ElementTree`.
+To avoid dependency bloat and guarantee robustness, we implemented a custom XML parser using the `defusedxml.ElementTree` library.
 - **Namespace Stripping**: Strips XML namespaces dynamically from tags, supporting any standard GPX namespace schema.
 - **Haversine Distance**: Calculates the distance between consecutive coordinate pairs:
   $$d = 2 R \arcsin\left(\sqrt{\sin^2\left(\frac{\Delta \text{lat}}{2}\right) + \cos(\text{lat}_1)\cos(\text{lat}_2)\sin^2\left(\frac{\Delta \text{lon}}{2}\right)}\right)$$

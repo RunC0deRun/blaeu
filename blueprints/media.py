@@ -1,11 +1,13 @@
 import os
 import requests
+import logging
 from flask import Blueprint, request, jsonify, send_file
 import app
 from utils import (
     get_current_user_id, rate_limit
 )
 
+logger = logging.getLogger('blaeu.media')
 media_bp = Blueprint('media', __name__)
 
 # Tile Proxy endpoint with local filesystem cache
@@ -47,8 +49,7 @@ def get_map_tile(z, x, y):
         else:
             return jsonify({'error': f"Failed to fetch tile from OSM: {response.status_code}"}), response.status_code
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Tile proxy error occurred")
         return jsonify({'error': 'Tile proxy error: Failed to fetch or process tile.'}), 500
 
 
@@ -145,12 +146,10 @@ def convert_video():
         )
         
     except subprocess.CalledProcessError as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("ffmpeg conversion failed")
         return jsonify({'error': 'ffmpeg conversion failed: Video transcoding failed.'}), 500
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error during video conversion")
         return jsonify({'error': 'Conversion failed: An unexpected error occurred.'}), 500
     finally:
         # Clean up temp files

@@ -649,6 +649,7 @@ def test_security_headers(client):
     assert 'Content-Security-Policy' in response.headers
     csp = response.headers.get('Content-Security-Policy')
     assert "default-src 'self'" in csp
+    assert "'unsafe-eval'" not in csp
 
 
 def test_debug_mode_default_false(monkeypatch):

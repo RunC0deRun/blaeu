@@ -762,6 +762,31 @@ def test_user_id_path_safety_validation():
         db.delete_user("../traversal")
 
 
+def test_rate_limiting_ip_spoofing(client, monkeypatch):
+    monkeypatch.setitem(app.config, 'TESTING', False)
+    
+    from app import rate_limit_records
+    rate_limit_records.clear()
+    
+    # Send 5 requests with different X-Forwarded-For headers.
+    # Without BLAEU_BEHIND_PROXY=true, X-Forwarded-For is ignored, and remote_addr (127.0.0.1) is used.
+    # So they should hit the rate limit after 5 requests.
+    for i in range(5):
+        res = client.post('/api/auth/login', 
+                          json={'username': 'test_user', 'password': 'wrong_password'},
+                          headers={'X-Forwarded-For': f'1.1.1.{i}'})
+        assert res.status_code == 401
+        
+    # The 6th request should get 429 Rate Limit Exceeded.
+    res_limit = client.post('/api/auth/login', 
+                            json={'username': 'test_user', 'password': 'wrong_password'},
+                            headers={'X-Forwarded-For': '1.1.1.5'})
+    assert res_limit.status_code == 429
+    data = json.loads(res_limit.data)
+    assert 'Rate limit exceeded' in data['error']
+
+
+
 
 
 

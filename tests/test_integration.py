@@ -94,7 +94,7 @@ def test_end_to_end_flow(server, test_gpx_path):
         
         # Log in
         page.fill('#login-username', 'admin')
-        page.fill('#login-password', 'password123')
+        page.fill('#login-password', 'Password123')
         page.click('#login-submit-btn')
         page.wait_for_selector('#login-modal', state="hidden")
         
@@ -164,7 +164,7 @@ def test_privacy_zone_cropping(server, test_gpx_path):
         
         # Log in
         page.fill('#login-username', 'admin')
-        page.fill('#login-password', 'password123')
+        page.fill('#login-password', 'Password123')
         page.click('#login-submit-btn')
         page.wait_for_selector('#login-modal', state="hidden")
         

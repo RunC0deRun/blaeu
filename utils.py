@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import logging
 from functools import wraps
 from typing import Callable, Optional, Any, Dict, List
 from flask import request, jsonify, session, current_app
@@ -12,6 +13,8 @@ from collections import defaultdict
 rate_limit_records = defaultdict(list)
 rate_limit_lock = threading.Lock()
 
+logger = logging.getLogger('blaeu.utils')
+
 def rate_limit(limit: int, period: int) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(f)
@@ -20,9 +23,6 @@ def rate_limit(limit: int, period: int) -> Callable[[Callable[..., Any]], Callab
                 return f(*args, **kwargs)
                 
             ip = request.remote_addr
-            if request.headers.getlist("X-Forwarded-For"):
-                ip = request.headers.getlist("X-Forwarded-For")[0]
-            
             key = f"{f.__name__}:{ip}"
             now = time.time()
             
@@ -115,8 +115,7 @@ def run_async_poster_generation(route_id: int, user_id: int, theme_name: str) ->
                     'display_country': data['display_country']
                 })
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error during async poster generation")
             update_route_poster_status(route_id, {
                 'status': 'failed',
                 'progress': 0,

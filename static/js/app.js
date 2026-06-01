@@ -2912,9 +2912,10 @@ async function applyMapStyle() {
                 if (countryInput) countryInput.value = '';
             }
 
+            const fetchRouteId = currentRoute.id;
             try {
-                let url = `/api/routes/${currentRoute.id}/poster-map?theme=${currentMapStyle}`;
-                if (labelsLoadedForRouteId === currentRoute.id) {
+                let url = `/api/routes/${fetchRouteId}/poster-map?theme=${currentMapStyle}`;
+                if (labelsLoadedForRouteId === fetchRouteId) {
                     const cityVal = cityInput ? cityInput.value : '';
                     const countryVal = countryInput ? countryInput.value : '';
                     url += `&displayCity=${encodeURIComponent(cityVal)}&displayCountry=${encodeURIComponent(countryVal)}`;
@@ -2923,6 +2924,11 @@ async function applyMapStyle() {
                 const res = await fetch(url);
                 if (!res.ok) throw new Error('Could not generate poster map');
                 const data = await res.json();
+
+                // If user deselected the route or switched to a different route during the fetch, abort
+                if (!currentRoute || currentRoute.id !== fetchRouteId) {
+                    return;
+                }
 
                 if (mapElement) {
                     mapElement.style.backgroundColor = data.bg_color;

@@ -46,6 +46,12 @@ def mock_gis():
 
 from tests.test_api import client, GPX_DATA_1
 
+def test_list_map_themes_unauthorized(clean_env):
+    unauthed = clean_env.test_client()
+    response = unauthed.get('/api/map-themes')
+    assert response.status_code == 401
+    assert 'Unauthorized' in json.loads(response.data)['error']
+
 def test_list_map_themes(client):
     response = client.get('/api/map-themes')
     assert response.status_code == 200

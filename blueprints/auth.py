@@ -1,4 +1,5 @@
 import os
+import logging
 from flask import Blueprint, request, jsonify, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from db import (
@@ -7,6 +8,7 @@ from db import (
 )
 from utils import rate_limit, get_csrf_token, get_current_user_id
 
+logger = logging.getLogger('blaeu.auth')
 auth_bp = Blueprint('auth', __name__)
 
 @auth_bp.route('/api/auth/register', methods=['POST'])
@@ -20,8 +22,8 @@ def register():
         return jsonify({'error': 'Username and password are required'}), 400
         
     username = username.strip()
-    if len(username) < 3 or len(password) < 4:
-        return jsonify({'error': 'Username must be at least 3 chars, password at least 4 chars'}), 400
+    if len(username) < 3 or len(password) < 8:
+        return jsonify({'error': 'Username must be at least 3 characters, password at least 8 characters'}), 400
         
     try:
         user_count = count_users()
@@ -54,8 +56,7 @@ def register():
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error during user registration")
         return jsonify({'error': 'Registration failed: An unexpected server error occurred.'}), 500
 
 
@@ -150,8 +151,7 @@ def update_default_style():
             'default_map_style': default_style
         })
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error updating map style")
         return jsonify({'error': 'Failed to update map style: An unexpected server error occurred.'}), 500
 
 
@@ -185,6 +185,5 @@ def remove_user(delete_user_id):
         delete_user(delete_user_id)
         return jsonify({'success': True})
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error deleting user")
         return jsonify({'error': 'Failed to delete user: An unexpected server error occurred.'}), 500

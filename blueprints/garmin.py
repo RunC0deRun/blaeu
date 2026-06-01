@@ -220,8 +220,7 @@ def update_garmin_auto_sync():
         update_garmin_auto_sync_interval(user_id, interval)
         return jsonify({'status': 'success', 'auto_sync_interval': interval})
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Failed to update auto-sync interval")
         return jsonify({'error': 'Failed to update auto-sync interval: An unexpected server error occurred.'}), 500
 
 @garmin_bp.route('/api/garmin/connect', methods=['POST'])
@@ -297,8 +296,7 @@ def connect_garmin():
         import shutil
         if os.path.exists(token_store):
             shutil.rmtree(token_store, ignore_errors=True)
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error during Garmin connection setup")
         err_msg = str(e)
         if "429" in err_msg.lower() or "too many requests" in err_msg.lower():
             return jsonify({'error': "Garmin connection failed: Too many requests. Please try again later."}), 429
@@ -351,12 +349,10 @@ def get_garmin_activities():
             })
         return jsonify({'status': 'success', 'activities': formatted})
     except GarminConnectTooManyRequestsError:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Garmin API rate limit exceeded")
         return jsonify({'error': "Rate limit exceeded by Garmin: Too many requests. Please try again later."}), 429
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error fetching Garmin activities")
         err_msg = str(e)
         if "429" in err_msg.lower() or "too many requests" in err_msg.lower():
             return jsonify({'error': "Rate limit exceeded by Garmin: Too many requests. Please try again later."}), 429
@@ -398,8 +394,7 @@ def import_garmin_activity():
     except GarminConnectTooManyRequestsError:
         return jsonify({'error': "Garmin import failed: Too many requests. Please try again later."}), 429
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error during Garmin activity import")
         err_msg = str(e)
         if "429" in err_msg.lower() or "too many requests" in err_msg.lower():
             return jsonify({'error': "Garmin import failed: Too many requests. Please try again later."}), 429

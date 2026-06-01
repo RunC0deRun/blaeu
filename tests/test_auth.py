@@ -32,7 +32,7 @@ def test_auth_register_and_login(client):
     # 1. Register first user (should be admin)
     response = client.post('/api/auth/register', json={
         'username': 'admin_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert response.status_code == 201
     res_data = json.loads(response.data)
@@ -61,7 +61,7 @@ def test_auth_register_and_login(client):
     # Login again
     response = client.post('/api/auth/login', json={
         'username': 'admin_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert response.status_code == 200
     res_data = json.loads(response.data)
@@ -72,7 +72,7 @@ def test_auth_invalid_credentials(client):
     # Register first user
     client.post('/api/auth/register', json={
         'username': 'test_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     client.post('/api/auth/logout')
     
@@ -86,7 +86,7 @@ def test_auth_invalid_credentials(client):
     # Non-existent user
     response = client.post('/api/auth/login', json={
         'username': 'other_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert response.status_code == 401
 
@@ -94,7 +94,7 @@ def test_registration_validation(client):
     # Short username
     response = client.post('/api/auth/register', json={
         'username': 'ab',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert response.status_code == 400
     
@@ -110,7 +110,7 @@ def test_route_scoping_and_privacy(client):
     # Register Admin user
     client.post('/api/auth/register', json={
         'username': 'admin_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     
     # Upload Route A under Admin
@@ -129,7 +129,7 @@ def test_route_scoping_and_privacy(client):
     # Register Normal User B
     client.post('/api/auth/register', json={
         'username': 'user_b',
-        'password': 'password123'
+        'password': 'Password123'
     })
     
     # List routes as User B. Route A should NOT be visible because it is private by default
@@ -155,7 +155,7 @@ def test_route_scoping_and_privacy(client):
     # Log back in as Admin User
     client.post('/api/auth/login', json={
         'username': 'admin_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     
     # Make Route A public
@@ -168,7 +168,7 @@ def test_route_scoping_and_privacy(client):
     # Log back in as User B
     client.post('/api/auth/login', json={
         'username': 'user_b',
-        'password': 'password123'
+        'password': 'Password123'
     })
     
     # List routes as User B. Route A should now be visible since it is public.
@@ -194,13 +194,13 @@ def test_admin_user_management(client):
     # 1. Register Admin
     client.post('/api/auth/register', json={
         'username': 'admin_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     
     # 2. Register Normal User B
     client.post('/api/auth/register', json={
         'username': 'user_b',
-        'password': 'password123'
+        'password': 'Password123'
     })
     user_b_id = json.loads(client.get('/api/auth/status').data)['user']['id']
     
@@ -224,7 +224,7 @@ def test_admin_user_management(client):
     # Log in as Admin
     client.post('/api/auth/login', json={
         'username': 'admin_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     
     # Admin list users
@@ -258,7 +258,7 @@ def test_default_map_style_profile(client):
     # Register and login
     res = client.post('/api/auth/register', json={
         'username': 'style_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert res.status_code == 201
     user_data = json.loads(res.data)['user']
@@ -280,7 +280,7 @@ def test_default_map_style_profile(client):
     # Login check should reflect updated default style
     res = client.post('/api/auth/login', json={
         'username': 'style_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert res.status_code == 200
     assert json.loads(res.data)['user']['default_map_style'] == 'blueprint'
@@ -289,7 +289,7 @@ def test_registration_disabled_after_first_user(client, monkeypatch):
     # Register first user
     res1 = client.post('/api/auth/register', json={
         'username': 'first_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert res1.status_code == 201
 
@@ -299,7 +299,7 @@ def test_registration_disabled_after_first_user(client, monkeypatch):
     # Attempt to register second user
     res2 = client.post('/api/auth/register', json={
         'username': 'second_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert res2.status_code == 403
     assert b"Registration is closed" in res2.data
@@ -308,7 +308,7 @@ def test_csrf_protection_enforced(client, monkeypatch):
     # Register first user
     res_reg = client.post('/api/auth/register', json={
         'username': 'csrf_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert res_reg.status_code == 201
     csrf_token = json.loads(res_reg.data)['csrf_token']
@@ -334,3 +334,53 @@ def test_csrf_protection_enforced(client, monkeypatch):
     finally:
         # Always restore TESTING mode
         app.config['TESTING'] = True
+
+
+def test_password_complexity_requirements(client):
+    # 1. No uppercase
+    response = client.post('/api/auth/register', json={
+        'username': 'weak_user1',
+        'password': 'password123'
+    })
+    assert response.status_code == 400
+    assert "Password must contain" in response.json['error']
+    
+    # 2. No lowercase
+    response = client.post('/api/auth/register', json={
+        'username': 'weak_user2',
+        'password': 'PASSWORD123'
+    })
+    assert response.status_code == 400
+    assert "Password must contain" in response.json['error']
+    
+    # 3. No digits
+    response = client.post('/api/auth/register', json={
+        'username': 'weak_user3',
+        'password': 'Passwordabc'
+    })
+    assert response.status_code == 400
+    assert "Password must contain" in response.json['error']
+    
+    # 4. Valid password
+    response = client.post('/api/auth/register', json={
+        'username': 'strong_user',
+        'password': 'Password123'
+    })
+    assert response.status_code == 201
+
+
+def test_sanitized_duplicate_registration_error(client):
+    # Register first user
+    response = client.post('/api/auth/register', json={
+        'username': 'duplicate_user',
+        'password': 'Password123'
+    })
+    assert response.status_code == 201
+    
+    # Register again with same username
+    response = client.post('/api/auth/register', json={
+        'username': 'duplicate_user',
+        'password': 'Password123'
+    })
+    assert response.status_code == 400
+    assert response.json['error'] == 'Username already exists'

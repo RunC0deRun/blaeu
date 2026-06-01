@@ -185,6 +185,10 @@ function initAppEvents() {
     if (loginForm) {
         loginForm.addEventListener('submit', handleAuthSubmit);
     }
+    const settingsForm = document.getElementById('settings-form');
+    if (settingsForm) {
+        settingsForm.addEventListener('submit', (e) => e.preventDefault());
+    }
     const loginToggleLink = document.getElementById('login-toggle-link');
     if (loginToggleLink) {
         loginToggleLink.addEventListener('click', toggleAuthMode);
@@ -270,6 +274,50 @@ function initAppEvents() {
             const userId = parseInt(deleteUserBtn.getAttribute('data-user-id'), 10);
             const username = deleteUserBtn.getAttribute('data-username');
             handleDeleteUser(userId, username);
+            return;
+        }
+
+        // Edit route from dashboard
+        const editRouteBtn = e.target.closest('.btn-edit-route');
+        if (editRouteBtn) {
+            e.stopPropagation();
+            const routeId = parseInt(editRouteBtn.getAttribute('data-route-id'), 10);
+            if (routeId) {
+                editRouteFromDashboard(routeId, e);
+            }
+            return;
+        }
+
+        // Delete folder from modal
+        const deleteFolderBtn = e.target.closest('.btn-delete-folder');
+        if (deleteFolderBtn) {
+            const folderId = parseInt(deleteFolderBtn.getAttribute('data-folder-id'), 10);
+            if (folderId) {
+                deleteFolder(folderId);
+            }
+            return;
+        }
+
+        // Select route from timeline-item
+        const timelineItem = e.target.closest('.timeline-item');
+        if (timelineItem) {
+            const routeId = parseInt(timelineItem.getAttribute('data-route-id'), 10);
+            if (routeId) {
+                selectRoute(routeId);
+            }
+            return;
+        }
+
+        // Select route from activity-card
+        const activityCard = e.target.closest('.activity-card');
+        if (activityCard) {
+            if (e.target.closest('.activity-card-actions') || e.target.closest('.tag-badge')) {
+                return;
+            }
+            const routeId = parseInt(activityCard.getAttribute('data-route-id'), 10);
+            if (routeId) {
+                selectRoute(routeId);
+            }
             return;
         }
     });
@@ -418,7 +466,7 @@ function renderRoutesLedger() {
             `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Private"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
 
         return `
-            <div class="timeline-item ${activeClass}" onclick="selectRoute(${route.id})">
+            <div class="timeline-item ${activeClass}" data-route-id="${route.id}">
                 <div class="timeline-date">${formattedDate}</div>
                 <h4 class="timeline-title">${escapeHTML(route.name)}</h4>
                 <p class="timeline-desc">${escapeHTML(route.description || 'No description provided.')}</p>
@@ -569,7 +617,7 @@ function renderDashboardGrid() {
 
         const actionsHtml = route.is_owner ? `
             <div class="activity-card-actions">
-                <button class="btn-icon" onclick="editRouteFromDashboard(${route.id}, event)" title="Edit details">
+                <button class="btn-icon btn-edit-route" data-route-id="${route.id}" title="Edit details">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                         <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
@@ -585,7 +633,7 @@ function renderDashboardGrid() {
         ` : '';
 
         return `
-            <div class="activity-card" onclick="selectRoute(${route.id})">
+            <div class="activity-card" data-route-id="${route.id}">
                 <div class="activity-card-user-banner" style="background: ${route.is_owner ? 'rgba(255,255,255,0.02)' : 'rgba(0, 240, 255, 0.04)'}; padding: 6px 16px; font-size: 0.78em; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;">
                     <span>
                         <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px; opacity: 0.8;" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
@@ -2078,7 +2126,7 @@ async function renderFoldersList() {
         list.innerHTML = folders.map(f => `
             <li class="modal-list-item">
                 <span>${escapeHTML(f.name)}</span>
-                <button class="btn btn-sm btn-danger" onclick="deleteFolder(${f.id})">Delete</button>
+                <button class="btn btn-sm btn-danger btn-delete-folder" data-folder-id="${f.id}">Delete</button>
             </li>
         `).join('');
     } catch (e) {
@@ -3586,10 +3634,7 @@ async function handleDeleteUser(userId, username) {
     }
 }
 
-window.handleDeleteUser = handleDeleteUser;
-window.selectRoute = selectRoute;
-window.editRouteFromDashboard = editRouteFromDashboard;
-window.deleteFolder = deleteFolder;
+
 
 })();
 

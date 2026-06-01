@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+import logging
 from flask import Blueprint, request, jsonify, send_file
 from db import (
     get_db, add_route, get_routes, get_route, update_route, delete_route,
@@ -12,6 +13,7 @@ from utils import (
     get_current_user_id, rate_limit, run_async_poster_generation
 )
 
+logger = logging.getLogger('blaeu.routes')
 routes_bp = Blueprint('routes', __name__)
 
 @routes_bp.route('/api/upload', methods=['POST'])
@@ -105,8 +107,7 @@ def upload_gpx():
     except ValueError as e:
         return jsonify({'error': f"GPX Parsing Error: {str(e)}"}), 400
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error uploading GPX route")
         return jsonify({'error': 'Server Error: An unexpected error occurred.'}), 500
 
 
@@ -158,8 +159,7 @@ def get_route_details(route_id):
         response_data['is_owner'] = (route['user_id'] == user_id)
         return jsonify(response_data)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error reading route coordinates")
         return jsonify({'error': 'Could not read route coordinates: Failed to read or parse file.'}), 500
 
 
@@ -191,8 +191,7 @@ def edit_route(route_id):
         updated['is_owner'] = True
         return jsonify(updated)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error updating route")
         return jsonify({'error': 'Could not update route: An unexpected error occurred.'}), 500
 
 
@@ -213,8 +212,7 @@ def remove_route(route_id):
         delete_route(route_id)
         return jsonify({'success': True})
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error deleting route")
         return jsonify({'error': 'Could not delete route: An unexpected error occurred.'}), 500
 
 
@@ -326,8 +324,7 @@ def get_route_poster_map(route_id):
                         for pt in seg:
                             pts.append([pt['lat'], pt['lon']])
             except Exception as e:
-                import traceback
-                traceback.print_exc()
+                logger.exception("Failed to read route coordinates for poster generation")
                 return jsonify({'error': 'Failed to read route coordinates: An unexpected server error occurred.'}), 500
         
         if not pts:
@@ -383,6 +380,5 @@ def get_route_poster_map(route_id):
             
         return jsonify(data)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unexpected error during poster map generation")
         return jsonify({'error': 'Poster map generation failed: An unexpected error occurred.'}), 500

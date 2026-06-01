@@ -101,9 +101,10 @@ def test_registration_validation(client):
     # Short password
     response = client.post('/api/auth/register', json={
         'username': 'valid_user',
-        'password': '123'
+        'password': '1234567'
     })
     assert response.status_code == 400
+    assert 'password at least 8 characters' in response.json['error']
 
 def test_route_scoping_and_privacy(client):
     # Register Admin user

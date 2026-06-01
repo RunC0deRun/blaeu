@@ -230,6 +230,10 @@ def list_tags():
 # Map Poster Generation Endpoints
 @routes_bp.route('/api/map-themes', methods=['GET'])
 def list_map_themes():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+
     # Import current_app dynamically to avoid import-time app context errors
     from flask import current_app
     themes_dir = os.path.join(current_app.root_path, 'static', 'themes')

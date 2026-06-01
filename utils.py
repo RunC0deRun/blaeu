@@ -20,9 +20,6 @@ def rate_limit(limit: int, period: int) -> Callable[[Callable[..., Any]], Callab
                 return f(*args, **kwargs)
                 
             ip = request.remote_addr
-            if request.headers.getlist("X-Forwarded-For"):
-                ip = request.headers.getlist("X-Forwarded-For")[0]
-            
             key = f"{f.__name__}:{ip}"
             now = time.time()
             

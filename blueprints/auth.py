@@ -54,7 +54,11 @@ def register():
             'csrf_token': csrf_token
         }), 201
     except ValueError as e:
-        return jsonify({'error': str(e)}), 400
+        err_msg = str(e)
+        logger.warning("Registration failed: %s", err_msg)
+        if "Username already exists" in err_msg:
+            return jsonify({'error': 'Username already exists'}), 400
+        return jsonify({'error': 'Registration failed. Invalid input.'}), 400
     except Exception as e:
         logger.exception("Unexpected error during user registration")
         return jsonify({'error': 'Registration failed: An unexpected server error occurred.'}), 500

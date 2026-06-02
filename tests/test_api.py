@@ -786,6 +786,16 @@ def test_rate_limiting_ip_spoofing(client, monkeypatch):
     assert 'Rate limit exceeded' in data['error']
 
 
+def test_about_endpoint(client):
+    response = client.get('/api/about')
+    assert response.status_code == 200
+    data = json.loads(response.data)
+    assert 'version' in data
+    assert 'build_date' in data
+    assert len(data['version']) > 0
+
+
+
 
 
 

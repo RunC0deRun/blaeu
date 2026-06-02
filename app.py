@@ -126,6 +126,61 @@ def add_security_headers(response):
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     return response
 
+@app.route('/api/about')
+def about():
+    # 1. Get version from environment or version.txt file
+    version = os.getenv('BLAEU_VERSION')
+    if not version:
+        version_path = os.path.join(os.path.dirname(__file__), 'version.txt')
+        if os.path.exists(version_path):
+            try:
+                with open(version_path, 'r', encoding='utf-8') as f:
+                    version = f.read().strip()
+            except Exception:
+                pass
+    if not version:
+        # Fallback to local git commit SHA
+        try:
+            import subprocess
+            version = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], text=True).strip()
+        except Exception:
+            pass
+    if not version:
+        version = '0.11.0'
+
+    # 2. Get build date from environment or build_date.txt file
+    build_date = os.getenv('BLAEU_BUILD_DATE')
+    if not build_date:
+        build_date_path = os.path.join(os.path.dirname(__file__), 'build_date.txt')
+        if os.path.exists(build_date_path):
+            try:
+                with open(build_date_path, 'r', encoding='utf-8') as f:
+                    build_date = f.read().strip()
+            except Exception:
+                pass
+    if not build_date:
+        # Fallback to local git commit date
+        try:
+            import subprocess
+            git_date = subprocess.check_output(['git', 'log', '-1', '--format=%cI'], text=True).strip()
+            if git_date:
+                build_date = git_date
+        except Exception:
+            pass
+    if not build_date:
+        # Fallback to the app.py file modification date
+        try:
+            mtime = os.path.getmtime(os.path.abspath(__file__))
+            from datetime import datetime, timezone
+            build_date = datetime.fromtimestamp(mtime, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        except Exception:
+            build_date = 'Unknown'
+
+    return jsonify({
+        'version': version,
+        'build_date': build_date
+    })
+
 # Main Frontend Routes
 
 @app.route('/')

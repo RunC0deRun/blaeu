@@ -179,6 +179,16 @@ function initAppEvents() {
         cancelSettingsBtn.addEventListener('click', cancelSettingsModal);
     }
     loadSettingsIntoModal();
+
+    // About Modal
+    const aboutBtn = document.getElementById('about-btn');
+    if (aboutBtn) {
+        aboutBtn.addEventListener('click', openAboutModal);
+    }
+    const closeAboutModalBtn = document.getElementById('close-about-modal-btn');
+    if (closeAboutModalBtn) {
+        closeAboutModalBtn.addEventListener('click', closeAboutModal);
+    }
     
     // Auth Form Submit
     const loginForm = document.getElementById('login-form');
@@ -2280,6 +2290,36 @@ async function saveSettingsModal() {
 function cancelSettingsModal() {
     loadSettingsIntoModal();
     document.getElementById('settings-modal').classList.add('hidden');
+}
+
+// About Modal Operations
+async function openAboutModal() {
+    document.getElementById('about-modal').classList.remove('hidden');
+    try {
+        const res = await fetch('/api/about');
+        const data = await res.json();
+        document.getElementById('about-version').textContent = data.version;
+        
+        // Format the build date if it's in ISO format
+        let buildDate = data.build_date;
+        if (buildDate && buildDate !== 'Unknown') {
+            try {
+                const date = new Date(buildDate);
+                if (!isNaN(date.getTime())) {
+                    buildDate = date.toLocaleString();
+                }
+            } catch (e) {}
+        }
+        document.getElementById('about-build-date').textContent = buildDate;
+    } catch (err) {
+        console.error('Error fetching about details:', err);
+        document.getElementById('about-version').textContent = '0.11.0';
+        document.getElementById('about-build-date').textContent = 'Unknown';
+    }
+}
+
+function closeAboutModal() {
+    document.getElementById('about-modal').classList.add('hidden');
 }
 
 

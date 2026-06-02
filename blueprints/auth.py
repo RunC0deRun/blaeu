@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from flask import Blueprint, request, jsonify, session
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -24,6 +25,9 @@ def register():
     username = username.strip()
     if len(username) < 3 or len(password) < 8:
         return jsonify({'error': 'Username must be at least 3 characters, password at least 8 characters'}), 400
+        
+    if not re.search(r'[A-Z]', password) or not re.search(r'[a-z]', password) or not re.search(r'[0-9]', password):
+        return jsonify({'error': 'Password must contain at least one uppercase letter, one lowercase letter, and one digit.'}), 400
         
     try:
         user_count = count_users()
@@ -54,7 +58,11 @@ def register():
             'csrf_token': csrf_token
         }), 201
     except ValueError as e:
-        return jsonify({'error': str(e)}), 400
+        err_msg = str(e)
+        logger.warning("Registration failed: %s", err_msg)
+        if "Username already exists" in err_msg:
+            return jsonify({'error': 'Username already exists'}), 400
+        return jsonify({'error': 'Registration failed. Invalid input.'}), 400
     except Exception as e:
         logger.exception("Unexpected error during user registration")
         return jsonify({'error': 'Registration failed: An unexpected server error occurred.'}), 500

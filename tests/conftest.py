@@ -43,6 +43,6 @@ def client(clean_env):
 def authed_client(client):
     client.post('/api/auth/register', json={
         'username': 'test_user',
-        'password': 'password123'
+        'password': 'Password123'
     })
     return client

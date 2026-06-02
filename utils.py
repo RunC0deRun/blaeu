@@ -77,7 +77,8 @@ def run_async_poster_generation(route_id: int, user_id: int, theme_name: str) ->
                                 for pt in seg:
                                     pts.append([pt['lat'], pt['lon']])
                     except Exception as e:
-                        update_route_poster_status(route_id, {'status': 'failed', 'progress': 0, 'error': str(e)})
+                        logger.exception("GPX parsing failed for poster generation")
+                        update_route_poster_status(route_id, {'status': 'failed', 'progress': 0, 'error': 'Failed to parse GPX data.'})
                         return
                 
                 if not pts:
@@ -119,7 +120,7 @@ def run_async_poster_generation(route_id: int, user_id: int, theme_name: str) ->
             update_route_poster_status(route_id, {
                 'status': 'failed',
                 'progress': 0,
-                'error': str(e)
+                'error': 'An unexpected error occurred during poster style generation.'
             })
                 
     thread = threading.Thread(target=worker)

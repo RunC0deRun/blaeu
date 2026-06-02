@@ -105,7 +105,8 @@ def upload_gpx():
         return jsonify(new_route), 201
         
     except ValueError as e:
-        return jsonify({'error': f"GPX Parsing Error: {str(e)}"}), 400
+        logger.warning("GPX parsing failed: %s", e)
+        return jsonify({'error': 'GPX Parsing Error: Invalid GPX data or schema violation.'}), 400
     except Exception as e:
         logger.exception("Unexpected error uploading GPX route")
         return jsonify({'error': 'Server Error: An unexpected error occurred.'}), 500

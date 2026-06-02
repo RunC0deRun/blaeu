@@ -284,14 +284,16 @@ def connect_garmin():
         if os.path.exists(token_store):
             shutil.rmtree(token_store, ignore_errors=True)
         err_msg = str(e)
+        logger.warning("Garmin connection authentication error: %s", err_msg)
         if "failed to acquire persistent DI OAuth tokens" in err_msg:
-            return jsonify({'error': f"Garmin connection failed: {err_msg}"}), 401
+            return jsonify({'error': "Garmin connection failed: Garmin connection established, but failed to acquire persistent DI OAuth tokens due to rate limiting. Please try again in a few hours."}), 401
         return jsonify({'error': "Garmin connection failed: Invalid email or password."}), 401
     except GarminConnectTooManyRequestsError as e:
         import shutil
         if os.path.exists(token_store):
             shutil.rmtree(token_store, ignore_errors=True)
-        return jsonify({'error': f"Garmin connection failed: {str(e)}"}), 429
+        logger.warning("Garmin rate limited during connect: %s", e)
+        return jsonify({'error': "Garmin connection failed: Garmin is rate limiting requests. Please try again later."}), 429
     except Exception as e:
         import shutil
         if os.path.exists(token_store):

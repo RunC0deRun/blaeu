@@ -21,7 +21,11 @@ def handle_folders():
             folder_id = create_folder(name, user_id)
             return jsonify({'id': folder_id, 'name': name.strip()}), 201
         except ValueError as e:
-            return jsonify({'error': str(e)}), 409
+            err_msg = str(e)
+            logger.warning("Folder creation failed: %s", err_msg)
+            if "Folder already exists" in err_msg:
+                return jsonify({'error': 'Folder already exists'}), 409
+            return jsonify({'error': 'Folder creation failed. Invalid input.'}), 400
         except Exception as e:
             logger.exception("Unexpected error during folder creation")
             return jsonify({'error': 'Failed to create folder: An unexpected server error occurred.'}), 500

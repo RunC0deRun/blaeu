@@ -271,7 +271,7 @@ def test_garmin_connect_mfa_required(client, monkeypatch):
     mock_garmin.return_value.login = mock_login
     monkeypatch.setattr('garminconnect.Garmin', mock_garmin)
     
-    res = client.post('/api/garmin/connect', json={'email': 'test@example.com', 'password': 'password123'})
+    res = client.post('/api/garmin/connect', json={'email': 'test@example.com', 'password': 'Password123'})
     assert res.status_code == 200
     data = json.loads(res.data)
     assert data['status'] == 'mfa_required'
@@ -287,7 +287,7 @@ def test_garmin_connect_success(client, monkeypatch):
     
     res = client.post('/api/garmin/connect', json={
         'email': 'test@example.com', 
-        'password': 'password123',
+        'password': 'Password123',
         'mfa_code': '123456'
     })
     assert res.status_code == 200
@@ -420,11 +420,11 @@ def test_garmin_connect_rate_limit(client, monkeypatch):
     
     res = client.post('/api/garmin/connect', json={
         'email': 'test@example.com',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert res.status_code == 429
     data = json.loads(res.data)
-    assert "Too many login attempts" in data['error']
+    assert "Garmin is rate limiting requests" in data['error']
 
 
 def test_garmin_activities_rate_limit(client, monkeypatch):
@@ -475,7 +475,7 @@ def test_garmin_connect_fallback_rate_limit(client, monkeypatch):
     
     res = client.post('/api/garmin/connect', json={
         'email': 'test@example.com', 
-        'password': 'password123',
+        'password': 'Password123',
         'mfa_code': '123456'
     })
     # Should fail with 401 and explain DI OAuth token failure
@@ -703,7 +703,7 @@ def test_tag_isolation(client):
     client.post('/api/auth/logout')
     reg_res = client.post('/api/auth/register', json={
         'username': 'user2',
-        'password': 'password123'
+        'password': 'Password123'
     })
     assert reg_res.status_code == 201
     

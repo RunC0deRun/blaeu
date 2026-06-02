@@ -104,7 +104,7 @@ def init_db():
     add_column_if_missing(cursor, 'routes', 'poster_status', "TEXT")
     add_column_if_missing(cursor, 'routes', 'user_id', "INTEGER REFERENCES users(id) ON DELETE CASCADE")
     add_column_if_missing(cursor, 'routes', 'is_public', "INTEGER DEFAULT 0")
-    add_column_if_missing(cursor, 'garmin_connections', 'auto_sync_interval', "TEXT DEFAULT 'off'")
+
 
     # Migrate folders table if user_id is missing to make unique(name, user_id)
     cursor.execute("PRAGMA table_info(folders);")
@@ -224,6 +224,8 @@ def init_db():
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    add_column_if_missing(cursor, 'garmin_connections', 'auto_sync_interval', "TEXT DEFAULT 'off'")
+
     # Create Indexes for Query Optimization
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_routes_user_id ON routes(user_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_routes_folder_id ON routes(folder_id);")

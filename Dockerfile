@@ -18,6 +18,24 @@ COPY blueprints/ ./blueprints/
 COPY static/ ./static/
 COPY templates/ ./templates/
 
+# Copy git metadata if present for versioning (using wildcard to prevent build failure if .git is missing)
+COPY .gi[t] ./.git
+
+# Store version and build date during image build
+ARG BLAEU_VERSION
+RUN if [ -z "$BLAEU_VERSION" ]; then \
+        if [ -d .git ]; then \
+            apt-get update && apt-get install -y git && \
+            git config --global --add safe.directory /app && \
+            BLAEU_VERSION=$(git rev-parse --short HEAD) && \
+            apt-get purge -y git && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*; \
+        else \
+            BLAEU_VERSION="unknown"; \
+        fi; \
+    fi && \
+    echo "$BLAEU_VERSION" > version.txt && \
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > build_date.txt
+
 # Create a non-privileged user and configure permissions
 RUN groupadd -g 10001 blaeu && \
     useradd -u 10001 -g blaeu -d /app -s /sbin/nologin blaeu && \

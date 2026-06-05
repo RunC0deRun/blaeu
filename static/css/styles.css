@@ -1337,3 +1337,37 @@ input[type="range"]::-webkit-slider-thumb:hover {
     height: 16px;
 }
 
+/* Settings Tab Navigation styling */
+.settings-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 8px;
+}
+
+.settings-tabs .tab-btn {
+    background: none;
+    border: none;
+    color: #fff;
+    font-family: 'Outfit', sans-serif;
+    cursor: pointer;
+    padding: 6px 12px;
+    font-weight: 500;
+    font-size: 0.9em;
+    opacity: 0.6;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s ease-in-out;
+}
+
+.settings-tabs .tab-btn:hover {
+    opacity: 0.9;
+}
+
+.settings-tabs .tab-btn.active {
+    opacity: 0.95;
+    border-bottom: 2px solid var(--primary);
+    text-shadow: 0 0 10px rgba(0, 208, 255, 0.3);
+}
+
+

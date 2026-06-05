@@ -63,6 +63,8 @@ let currentMapStyle = 'dark';
 let labelsLoadedForRouteId = null;
 let posterPollingInterval = null;
 let currentGarminAutoSync = 'off';
+let currentIntervalsAutoSync = 'off';
+
 
 
 // Initialize Page
@@ -243,7 +245,9 @@ function initAppEvents() {
     // Back to Dashboard
     document.getElementById('back-to-dashboard-btn').addEventListener('click', deselectRoute);
 
+    initSettingsTabs();
     initGarminIntegration();
+    initIntervalsIntegration();
 
     // Delegated click listeners to prevent XSS in inline event handlers
     document.addEventListener('click', (e) => {
@@ -275,6 +279,16 @@ function initAppEvents() {
         if (importGarminBtn) {
             const activityId = importGarminBtn.getAttribute('data-id');
             importSingleGarminActivity(activityId, importGarminBtn);
+            return;
+        }
+
+        // Import Intervals activity
+        const importIntervalsBtn = e.target.closest('.btn-import-single-intervals');
+        if (importIntervalsBtn) {
+            const activityId = importIntervalsBtn.getAttribute('data-id');
+            const activityName = importIntervalsBtn.getAttribute('data-name');
+            const startTime = importIntervalsBtn.getAttribute('data-start-time');
+            importSingleIntervalsActivity(activityId, activityName, startTime, importIntervalsBtn);
             return;
         }
 
@@ -2151,15 +2165,43 @@ function closeFoldersModal() {
 // Settings Modal Operations
 function openSettingsModal() {
     loadSettingsIntoModal();
+    
+    // Reset tabs to General tab
+    const tabBtns = document.querySelectorAll('#settings-modal .tab-btn');
+    tabBtns.forEach(btn => {
+        if (btn.getAttribute('data-tab') === 'settings-tab-general') {
+            btn.classList.add('active');
+            btn.style.borderBottom = '2px solid var(--primary)';
+            btn.style.opacity = '0.95';
+        } else {
+            btn.classList.remove('active');
+            btn.style.borderBottom = '2px solid transparent';
+            btn.style.opacity = '0.6';
+        }
+    });
+    const panes = document.querySelectorAll('#settings-modal .settings-tab-pane');
+    panes.forEach(pane => {
+        if (pane.id === 'settings-tab-general') {
+            pane.classList.remove('hidden');
+        } else {
+            pane.classList.add('hidden');
+        }
+    });
+
     document.getElementById('settings-modal').classList.remove('hidden');
     checkGarminStatus();
+    checkIntervalsStatus();
     if (currentUser && currentUser.is_admin) {
         const adminSec = document.getElementById('admin-user-section');
         if (adminSec) adminSec.classList.remove('hidden');
+        const adminTab = document.getElementById('settings-admin-tab-btn');
+        if (adminTab) adminTab.classList.remove('hidden');
         loadAdminUserList();
     } else {
         const adminSec = document.getElementById('admin-user-section');
         if (adminSec) adminSec.classList.add('hidden');
+        const adminTab = document.getElementById('settings-admin-tab-btn');
+        if (adminTab) adminTab.classList.add('hidden');
     }
 }
 
@@ -2191,6 +2233,10 @@ function loadSettingsIntoModal() {
     const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
     if (autoSyncSelect) {
         autoSyncSelect.value = currentGarminAutoSync;
+    }
+    const intervalsAutoSyncSelect = document.getElementById('settings-intervals-auto-sync');
+    if (intervalsAutoSyncSelect) {
+        intervalsAutoSyncSelect.value = currentIntervalsAutoSync;
     }
 }
 
@@ -2267,6 +2313,28 @@ async function saveSettingsModal() {
                 currentGarminAutoSync = interval;
             } catch (err) {
                 console.error('Error updating Garmin auto-sync:', err);
+                alert(err.message);
+            }
+        }
+    }
+
+    const intervalsAutoSyncSelect = document.getElementById('settings-intervals-auto-sync');
+    if (intervalsAutoSyncSelect && !document.getElementById('intervals-connected-section').classList.contains('hidden')) {
+        const interval = intervalsAutoSyncSelect.value;
+        if (interval !== currentIntervalsAutoSync) {
+            try {
+                const res = await fetch('/api/intervals/auto-sync', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ auto_sync_interval: interval })
+                });
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Failed to update auto-sync setting');
+                }
+                currentIntervalsAutoSync = interval;
+            } catch (err) {
+                console.error('Error updating Intervals.icu auto-sync:', err);
                 alert(err.message);
             }
         }
@@ -3675,6 +3743,358 @@ async function handleDeleteUser(userId, username) {
 }
 
 
+
+// Intervals.icu API Integration Functions
+// ----------------------------------------------------
+let intervalsActivities = []; // Store fetched activities
+
+function initIntervalsIntegration() {
+    // Check status on startup
+    checkIntervalsStatus();
+
+    // Bind event listeners
+    const connectBtn = document.getElementById('intervals-connect-btn');
+    if (connectBtn) {
+        connectBtn.addEventListener('click', connectIntervals);
+    }
+
+    const disconnectBtn = document.getElementById('intervals-disconnect-btn');
+    if (disconnectBtn) {
+        disconnectBtn.addEventListener('click', disconnectIntervals);
+    }
+
+    const syncBtn = document.getElementById('sidebar-intervals-sync-btn');
+    if (syncBtn) {
+        syncBtn.addEventListener('click', syncIntervalsActivities);
+    }
+
+    const closeActivitiesBtn = document.getElementById('close-intervals-activities-btn');
+    if (closeActivitiesBtn) {
+        closeActivitiesBtn.addEventListener('click', () => {
+            document.getElementById('intervals-activities-modal').classList.add('hidden');
+        });
+    }
+
+    const selectAllCheckbox = document.getElementById('intervals-select-all');
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', (e) => {
+            const checkboxes = document.querySelectorAll('.intervals-activity-checkbox');
+            checkboxes.forEach(cb => {
+                if (!cb.disabled) {
+                    cb.checked = e.target.checked;
+                }
+            });
+        });
+    }
+
+    const importSelectedBtn = document.getElementById('intervals-import-selected-btn');
+    if (importSelectedBtn) {
+        importSelectedBtn.addEventListener('click', importSelectedIntervalsActivities);
+    }
+}
+
+async function checkIntervalsStatus() {
+    try {
+        const res = await fetch('/api/intervals/status');
+        const data = await res.json();
+        
+        const disconnectedSection = document.getElementById('intervals-disconnected-section');
+        const connectedSection = document.getElementById('intervals-connected-section');
+        const sidebarBtn = document.getElementById('sidebar-intervals-sync-btn');
+        
+        if (data.status === 'connected') {
+            disconnectedSection.classList.add('hidden');
+            connectedSection.classList.remove('hidden');
+            if (sidebarBtn) sidebarBtn.classList.remove('hidden');
+            
+            document.getElementById('intervals-connected-athlete-id').textContent = `Athlete ID: ${data.athlete_id}`;
+            
+            const autoSyncSelect = document.getElementById('settings-intervals-auto-sync');
+            if (autoSyncSelect) {
+                currentIntervalsAutoSync = data.auto_sync_interval || 'off';
+                autoSyncSelect.value = currentIntervalsAutoSync;
+            }
+        } else {
+            disconnectedSection.classList.remove('hidden');
+            connectedSection.classList.add('hidden');
+            if (sidebarBtn) sidebarBtn.classList.add('hidden');
+            
+            document.getElementById('intervals-athlete-id').value = '';
+            document.getElementById('intervals-api-key').value = '';
+            
+            const connectBtn = document.getElementById('intervals-connect-btn');
+            if (connectBtn) {
+                connectBtn.disabled = false;
+                connectBtn.textContent = 'Connect Intervals.icu';
+            }
+        }
+    } catch (err) {
+        console.error("Error checking Intervals.icu status", err);
+    }
+}
+
+async function connectIntervals() {
+    const athleteId = document.getElementById('intervals-athlete-id').value.trim();
+    const apiKey = document.getElementById('intervals-api-key').value.trim();
+    const connectBtn = document.getElementById('intervals-connect-btn');
+
+    if (!apiKey) {
+        alert('Please enter your Intervals.icu API Key.');
+        return;
+    }
+
+    if (connectBtn) {
+        connectBtn.disabled = true;
+        connectBtn.textContent = 'Connecting...';
+    }
+
+    try {
+        const res = await fetch('/api/intervals/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ athlete_id: athleteId, api_key: apiKey })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert('Intervals.icu connected successfully!');
+            checkIntervalsStatus();
+        } else {
+            alert(data.error || 'Failed to connect to Intervals.icu.');
+            if (connectBtn) {
+                connectBtn.disabled = false;
+                connectBtn.textContent = 'Connect Intervals.icu';
+            }
+        }
+    } catch (err) {
+        console.error("Error connecting to Intervals.icu", err);
+        alert('An error occurred during connection setup.');
+        if (connectBtn) {
+            connectBtn.disabled = false;
+            connectBtn.textContent = 'Connect Intervals.icu';
+        }
+    }
+}
+
+async function disconnectIntervals() {
+    if (!confirm('Are you sure you want to disconnect Intervals.icu?')) return;
+    try {
+        const res = await fetch('/api/intervals/disconnect', { method: 'POST' });
+        if (res.ok) {
+            alert('Intervals.icu disconnected.');
+            checkIntervalsStatus();
+        } else {
+            alert('Failed to disconnect Intervals.icu.');
+        }
+    } catch (err) {
+        console.error("Error disconnecting Intervals.icu", err);
+    }
+}
+
+async function syncIntervalsActivities() {
+    const modal = document.getElementById('intervals-activities-modal');
+    const listContainer = document.getElementById('intervals-activities-list');
+    const selectAllCheckbox = document.getElementById('intervals-select-all');
+    
+    if (selectAllCheckbox) selectAllCheckbox.checked = false;
+    
+    if (listContainer) {
+        listContainer.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px;">Fetching activities from Intervals.icu...</td></tr>';
+    }
+    if (modal) {
+        modal.classList.remove('hidden');
+    }
+
+    try {
+        const res = await fetch('/api/intervals/activities');
+        const data = await res.json();
+        
+        if (data.status === 'success') {
+            intervalsActivities = data.activities;
+            renderIntervalsActivities(data.activities);
+        } else if (data.status === 'needs_reauthentication') {
+            alert(data.error || 'Authentication expired. Please reconnect.');
+            if (modal) modal.classList.add('hidden');
+            openSettingsModal();
+            const integrationsTab = document.querySelector('#settings-modal .tab-btn[data-tab="settings-tab-integrations"]');
+            if (integrationsTab) integrationsTab.click();
+        } else {
+            if (listContainer) {
+                listContainer.innerHTML = `<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 20px;">${data.error || 'Failed to fetch activities'}</td></tr>`;
+            }
+        }
+    } catch (err) {
+        console.error("Error fetching intervals activities", err);
+        if (listContainer) {
+            listContainer.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 20px;">Failed to fetch activities. An unexpected error occurred.</td></tr>';
+        }
+    }
+}
+
+function renderIntervalsActivities(activities) {
+    const listContainer = document.getElementById('intervals-activities-list');
+    if (!listContainer) return;
+    
+    if (activities.length === 0) {
+        listContainer.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 20px;">No recent activities found on Intervals.icu.</td></tr>';
+        return;
+    }
+
+    fetch('/api/routes')
+        .then(res => res.json())
+        .then(routes => {
+            const importedIds = new Set();
+            routes.forEach(r => {
+                const fn = r.filename || '';
+                if (fn.startsWith('intervals_') && fn.endsWith('.gpx')) {
+                    try {
+                        const actId = fn.split('_')[1];
+                        importedIds.add(actId);
+                    } catch(e) {}
+                }
+            });
+
+            listContainer.innerHTML = '';
+            activities.forEach(act => {
+                const isImported = importedIds.has(String(act.activityId));
+                const tr = document.createElement('tr');
+                if (isImported) {
+                    tr.style.opacity = '0.5';
+                }
+                
+                const dateStr = act.startTimeLocal ? act.startTimeLocal.replace('T', ' ').substring(0, 16) : 'Unknown';
+                const distKm = act.distance ? (act.distance / 1000).toFixed(2) + ' km' : '0.00 km';
+                const durStr = formatDuration(act.duration);
+                
+                tr.innerHTML = `
+                    <td style="text-align: center;">
+                        <input type="checkbox" class="intervals-activity-checkbox" data-id="${act.activityId}" data-name="${escapeHTML(act.activityName)}" data-start-time="${act.startTimeUTC}" ${isImported ? 'disabled' : ''}>
+                    </td>
+                    <td>${dateStr}</td>
+                    <td style="font-weight: 500;">${escapeHTML(act.activityName)}</td>
+                    <td><span class="activity-type-badge">${escapeHTML(act.activityType)}</span></td>
+                    <td>${distKm}</td>
+                    <td>${durStr}</td>
+                    <td style="text-align: right;">
+                        ${isImported ? 
+                            '<span style="color: var(--secondary); font-size: 0.85em; font-weight: bold;">Imported</span>' : 
+                            `<button class="btn btn-sm btn-primary btn-import-single-intervals" data-id="${act.activityId}" data-name="${escapeHTML(act.activityName)}" data-start-time="${act.startTimeUTC}">Import</button>`
+                        }
+                    </td>
+                `;
+                listContainer.appendChild(tr);
+            });
+        })
+        .catch(err => {
+            console.error("Error checking imported routes", err);
+        });
+}
+
+async function importSingleIntervalsActivity(activityId, activityName, startTime, btn) {
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Importing...';
+    }
+
+    try {
+        const res = await fetch('/api/intervals/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ activityId, activityName, startTimeLocal: startTime })
+        });
+        const data = await res.json();
+        
+        if (res.ok) {
+            alert(`Activity "${data.name}" imported successfully!`);
+            syncIntervalsActivities();
+            loadRoutes();
+        } else {
+            alert(data.error || 'Failed to import activity.');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Import';
+            }
+        }
+    } catch (err) {
+        console.error("Error importing activity", err);
+        alert('An error occurred during activity import.');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Import';
+        }
+    }
+}
+
+async function importSelectedIntervalsActivities() {
+    const checkboxes = document.querySelectorAll('.intervals-activity-checkbox:checked:not(:disabled)');
+    if (checkboxes.length === 0) {
+        alert('Please select at least one activity to import.');
+        return;
+    }
+
+    const importSelectedBtn = document.getElementById('intervals-import-selected-btn');
+    if (importSelectedBtn) {
+        importSelectedBtn.disabled = true;
+        importSelectedBtn.textContent = `Importing (${checkboxes.length})...`;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const cb of checkboxes) {
+        const activityId = cb.getAttribute('data-id');
+        const activityName = cb.getAttribute('data-name');
+        const startTime = cb.getAttribute('data-start-time');
+        
+        try {
+            const res = await fetch('/api/intervals/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ activityId, activityName, startTimeLocal: startTime })
+            });
+            if (res.ok) {
+                successCount++;
+            } else {
+                failCount++;
+            }
+        } catch (err) {
+            console.error(`Failed to import activity ${activityId}`, err);
+            failCount++;
+        }
+    }
+
+    alert(`Import complete! Successfully imported: ${successCount} activities. Failed: ${failCount}.`);
+    
+    if (importSelectedBtn) {
+        importSelectedBtn.disabled = false;
+        importSelectedBtn.textContent = 'Import Selected';
+    }
+
+    syncIntervalsActivities();
+    loadRoutes();
+}
+
+function initSettingsTabs() {
+    const tabBtns = document.querySelectorAll('#settings-modal .tab-btn');
+    tabBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            tabBtns.forEach(b => {
+                b.classList.remove('active');
+                b.style.borderBottom = '2px solid transparent';
+                b.style.opacity = '0.6';
+            });
+            
+            btn.classList.add('active');
+            btn.style.borderBottom = '2px solid var(--primary)';
+            btn.style.opacity = '0.95';
+            
+            const panes = document.querySelectorAll('#settings-modal .settings-tab-pane');
+            panes.forEach(pane => pane.classList.add('hidden'));
+            
+            const targetTab = btn.getAttribute('data-tab');
+            document.getElementById(targetTab).classList.remove('hidden');
+        });
+    });
+}
 
 })();
 

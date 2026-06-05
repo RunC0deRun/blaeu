@@ -618,7 +618,7 @@ function renderDashboardGrid() {
         const distanceStr = formatDistance(route.total_distance);
         const durationStr = formatDuration(route.duration);
         const gainStr = `${Math.round(route.elevation_gain || 0)} m`;
-        const avgSpeedStr = formatSpeed(route.avg_speed);
+        const avgPaceStr = formatPace(route.avg_speed);
         
         const dateObj = new Date(route.created_at + 'Z');
         const formatOptions = { 
@@ -692,8 +692,8 @@ function renderDashboardGrid() {
                             <span class="stat-value">${durationStr}</span>
                         </div>
                         <div class="activity-card-stat">
-                            <span class="stat-label">Avg Speed</span>
-                            <span class="stat-value">${avgSpeedStr}</span>
+                            <span class="stat-label">Avg Pace</span>
+                            <span class="stat-value">${avgPaceStr}</span>
                         </div>
                     </div>
                 </div>
@@ -1068,7 +1068,9 @@ async function selectRoute(routeId) {
         document.getElementById('stat-loss').textContent = `${Math.round(currentRoute.elevation_loss)} m`;
         document.getElementById('stat-duration').textContent = formatDuration(currentRoute.duration);
         document.getElementById('stat-avg-speed').textContent = formatSpeed(currentRoute.avg_speed);
+        document.getElementById('stat-avg-pace').textContent = formatPace(currentRoute.avg_speed);
         document.getElementById('stat-avg-moving-speed').textContent = formatSpeed(currentRoute.avg_moving_speed);
+        document.getElementById('stat-avg-moving-pace').textContent = formatPace(currentRoute.avg_moving_speed);
         document.getElementById('stat-max-speed').textContent = formatSpeed(currentRoute.max_speed);
         document.getElementById('stat-waypoints').textContent = currentRoute.waypoints_count;
         document.getElementById('stat-tracks').textContent = currentRoute.tracks_count;
@@ -2560,6 +2562,20 @@ function formatSpeed(mps) {
     if (!mps) return '0.0 km/h';
     const kmh = mps * 3.6;
     return `${kmh.toFixed(1)} km/h`;
+}
+
+function formatPace(mps) {
+    if (!mps || mps <= 0.1) return '--:-- m/km';
+    const totalSecondsPerKm = 1000 / mps;
+    const minutes = Math.floor(totalSecondsPerKm / 60);
+    const seconds = Math.round(totalSecondsPerKm % 60);
+    let displayMins = minutes;
+    let displaySecs = seconds;
+    if (displaySecs === 60) {
+        displayMins += 1;
+        displaySecs = 0;
+    }
+    return `${displayMins}:${displaySecs.toString().padStart(2, '0')} m/km`;
 }
 
 function escapeHTML(str) {

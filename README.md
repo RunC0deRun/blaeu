@@ -28,45 +28,6 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
 
 ---
 
-## 🛠️ Technology Stack
-
-- **Backend**: Python 3.14, Flask, SQLite, Gunicorn, GarminConnect, TimezoneFinder, FFmpeg, OSMnx, Matplotlib, Geopandas, Pyproj, Shapely, Requests
-- **Frontend**: HTML5, Vanilla CSS3 (Glassmorphic HUD theme), Vanilla JS, Leaflet.js (bundled locally)
-- **Containerization**: Docker, Docker Compose
-
-
-
----
-
-## 📁 Repository Structure
-
-```text
-├── app.py                  # Main Flask server & API endpoints (cached tile proxy, video transcoder, Garmin sync)
-├── db.py                   # SQLite database schema, initialization, and CRUD
-├── gpx_parser.py           # Custom GPX XML parser & statistics accumulator
-├── Dockerfile              # Python slim image with Gunicorn and FFmpeg
-├── docker-compose.yml      # Compose config mounting persistent /data volume
-├── requirements.txt        # Python package dependencies
-├── .gitignore              # Ignores local databases, venv, and caches
-├── .dockerignore           # Excludes development folders from container builds
-├── AGENT.md                # System design & architecture documentation
-├── static/
-│   ├── css/
-│   │   └── styles.css      # Custom HUD dashboard styles
-│   ├── js/
-│   │   └── app.js          # Interactive map drawing, animation, video exporter, and Garmin handlers
-│   └── vendor/
-│       └── leaflet/        # Bundled Leaflet assets for offline/standalone execution
-├── templates/
-│   └── index.html          # Main SPA layout and HUD control panel overlays
-└── tests/
-    ├── test_api.py         # Unit tests for Flask API endpoints & Garmin mock logic
-    ├── test_gpx_parser.py  # Unit tests for GPX statistics parsing
-    └── test_integration.py # Integration test suite utilizing Playwright
-```
-
----
-
 ## 🚀 Getting Started
 
 ### Method 1: Running with Docker Compose (Recommended)
@@ -116,6 +77,20 @@ All persistent data (sqlite database, parsed GPX files, Garmin session tokens, a
 
 ---
 
+## 🐳 Environment Variables
+
+The following environment variables can be configured when running the Docker container:
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATA_DIR` | `/data` | Directory where persistent data (database, GPX files, Garmin/Intervals.icu tokens, tiles cache) is saved. |
+| `SECRET_KEY` | *Auto-generated* | Secret key for Flask session cookie encryption. We recommend setting a secure random string in production to preserve user sessions across container restarts. |
+| `SESSION_COOKIE_SECURE` | `true` | Restricts session cookies to secure HTTPS connections. Set to `false` if hosting on HTTP only. |
+| `BLAEU_BEHIND_PROXY` | `false` | Set to `true` if hosting Blaeu behind a reverse proxy (e.g., Nginx, Traefik) to enable Flask `ProxyFix` middleware. |
+| `BLAEU_ALLOW_REGISTRATION` | `false` | Set to `true` to allow public user account registration on the login page. |
+
+---
+
 ## 🧪 Running Tests
 
 To run the unit test suite, execute pytest from the repository root:
@@ -131,5 +106,12 @@ PYTHONPATH=. pytest tests/
 ## 📝 License
 
 Distributed under the MIT License. See `LICENSE` for more information.
-Attributions:
-- Map tiles by **CartoDB** (Dark Matter), under CC BY 3.0. Data by **OpenStreetMap**, under ODbL.
+
+### Attributions & Third-Party Software
+- **Map Tiles**: CartoDB (Dark Matter) under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). Map data by [OpenStreetMap](https://www.openstreetmap.org/) under [ODbL](https://opendatacommons.org/licenses/odbl/).
+- **Leaflet.js**: Distributed under the [BSD 2-Clause License](https://github.com/Leaflet/Leaflet/blob/main/LICENSE).
+- **fix-webm-duration.js**: Distributed under the [MIT License](https://github.com/yusitaro/fix-webm-duration/blob/master/LICENSE).
+- **OSMnx**: Distributed under the [BSD 3-Clause License](https://github.com/gboeing/osmnx/blob/main/LICENSE.txt).
+- **Matplotlib**: Distributed under the [PSF License Agreement](https://matplotlib.org/stable/users/project/license.html).
+- **garminconnect**: Distributed under the [MIT License](https://github.com/cyberjunky/python-garminconnect/blob/master/LICENSE).
+- **defusedxml**: Distributed under the [Python Software Foundation License](https://github.com/tiran/defusedxml/blob/main/LICENSE).

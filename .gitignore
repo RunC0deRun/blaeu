@@ -18,6 +18,3 @@ blaeu_data/
 .DS_Store
 Thumbs.db
 
-# Cloned dependency
-maptoposter_src/
-

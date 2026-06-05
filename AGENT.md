@@ -4,7 +4,40 @@ This document details the architecture, design choices, and implementation detai
 
 ---
 
-## 1. Application Architecture
+## 1. Technology Stack
+
+- **Backend**: Python 3.14, Flask, SQLite, Gunicorn, GarminConnect, TimezoneFinder, FFmpeg, OSMnx, Matplotlib, Geopandas, Pyproj, Shapely, Requests
+- **Frontend**: HTML5, Vanilla CSS3 (Glassmorphic HUD theme), Vanilla JS, Leaflet.js (bundled locally)
+- **Containerization**: Docker, Docker Compose
+
+## 2. Repository Structure
+
+```text
+├── app.py                  # Main Flask server & API endpoints (cached tile proxy, video transcoder, Garmin sync)
+├── db.py                   # SQLite database schema, initialization, and CRUD
+├── gpx_parser.py           # Custom GPX XML parser & statistics accumulator
+├── Dockerfile              # Python slim image with Gunicorn and FFmpeg
+├── docker-compose.yml      # Compose config mounting persistent /data volume
+├── requirements.txt        # Python package dependencies
+├── .gitignore              # Ignores local databases, venv, and caches
+├── .dockerignore           # Excludes development folders from container builds
+├── AGENT.md                # System design & architecture documentation
+├── static/
+│   ├── css/
+│   │   └── styles.css      # Custom HUD dashboard styles
+│   ├── js/
+│   │   └── app.js          # Interactive map drawing, animation, video exporter, and Garmin handlers
+│   └── vendor/
+│       └── leaflet/        # Bundled Leaflet assets for offline/standalone execution
+├── templates/
+│   └── index.html          # Main SPA layout and HUD control panel overlays
+└── tests/
+    ├── test_api.py         # Unit tests for Flask API endpoints & Garmin mock logic
+    ├── test_gpx_parser.py  # Unit tests for GPX statistics parsing
+    └── test_integration.py # Integration test suite utilizing Playwright
+```
+
+## 3. Application Architecture
 
 Blaeu is built using a lightweight **Python (Flask) backend** and a single-page **HTML5/CSS3/Vanilla JS frontend**. 
 
@@ -19,7 +52,7 @@ Blaeu is built using a lightweight **Python (Flask) backend** and a single-page 
 
 ---
 
-## 2. Key Backend Features
+## 4. Key Backend Features
 
 ### A. Zero-Dependency GPX Parser (`gpx_parser.py`)
 To avoid dependency bloat and guarantee robustness, we implemented a custom XML parser using the `defusedxml.ElementTree` library.
@@ -59,7 +92,7 @@ Provides stunning map backdrops using OpenStreetMap:
 
 ---
 
-## 3. Frontend & UX Design
+## 5. Frontend & UX Design
 
 The user interface is designed with a premium, modern dark-mode HUD (Heads-Up Display) dashboard theme.
 
@@ -80,7 +113,7 @@ The user interface is designed with a premium, modern dark-mode HUD (Heads-Up Di
 
 ---
 
-## 4. Multi-Format Video Exporting
+## 6. Multi-Format Video Exporting
 
 The animation is recorded client-side and refined server-side:
 1. Preloads all tile images needed to cover the canvas viewport centered at the current map view and zoom.
@@ -91,7 +124,7 @@ The animation is recorded client-side and refined server-side:
 
 ---
 
-## 5. Automated Verification
+## 7. Automated Verification
 
 The test suite covers both backend logic and integration flows:
 - **`tests/test_gpx_parser.py`**: Validates the statistics logic against single-track, multi-track, and no-data edge cases.
@@ -105,7 +138,7 @@ PYTHONPATH=. ./venv/bin/pytest tests/
 
 ---
 
-## 6. How to Deploy
+## 8. How to Deploy
 
 Start the application inside the standalone Docker container:
 ```bash

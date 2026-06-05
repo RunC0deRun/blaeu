@@ -83,7 +83,8 @@ def csrf_protect():
 from blueprints.auth import auth_bp
 from blueprints.routes import routes_bp
 from blueprints.folders import folders_bp
-from blueprints.garmin import garmin_bp, run_auto_sync_for_all_users, MfaRequiredException
+from blueprints.garmin import garmin_bp, run_auto_sync_for_all_users as run_garmin_auto_sync, MfaRequiredException
+from blueprints.intervals import intervals_bp, run_auto_sync_for_all_users as run_intervals_auto_sync
 from blueprints.media import media_bp
 
 # Register Blueprints
@@ -91,18 +92,28 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(routes_bp)
 app.register_blueprint(folders_bp)
 app.register_blueprint(garmin_bp)
+app.register_blueprint(intervals_bp)
 app.register_blueprint(media_bp)
 
-# Garmin Auto-Sync Background Scheduler Thread
+# Garmin & Intervals.icu Auto-Sync Background Scheduler Thread
 def auto_sync_worker_loop():
     import time
     while True:
         try:
             time.sleep(60)
             with app.app_context():
-                run_auto_sync_for_all_users()
+                try:
+                    run_garmin_auto_sync()
+                except Exception as e:
+                    logger.error(f"[Auto-Sync Worker] Garmin error: {e}", exc_info=True)
+                
+                try:
+                    run_intervals_auto_sync()
+                except Exception as e:
+                    logger.error(f"[Auto-Sync Worker] Intervals error: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"[Auto-Sync Worker] Error in loop: {e}", exc_info=True)
+
 
 # Start the background daemon thread for periodic auto-sync
 auto_sync_thread = threading.Thread(target=auto_sync_worker_loop)

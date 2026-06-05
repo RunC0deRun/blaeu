@@ -226,6 +226,20 @@ def init_db():
     """)
     add_column_if_missing(cursor, 'garmin_connections', 'auto_sync_interval', "TEXT DEFAULT 'off'")
 
+    # Create Intervals.icu Connections Table (supporting multi-user readiness via user_id)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS intervals_connections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER DEFAULT 1,
+        athlete_id TEXT NOT NULL DEFAULT '0',
+        api_key TEXT NOT NULL,
+        last_sync TEXT,
+        auto_sync_interval TEXT DEFAULT 'off',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+
     # Create Indexes for Query Optimization
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_routes_user_id ON routes(user_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_routes_folder_id ON routes(folder_id);")
@@ -782,3 +796,104 @@ def attempt_garmin_sync_lock(user_id, now_str, last_sync_str, seconds):
         return False
     finally:
         conn.close()
+
+# Helper Functions for Intervals.icu Connections
+def save_intervals_connection(user_id, athlete_id, api_key):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        # Check if there is an existing auto_sync_interval to preserve
+        cursor.execute("SELECT auto_sync_interval FROM intervals_connections WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        existing_interval = row['auto_sync_interval'] if row else 'off'
+        
+        cursor.execute("DELETE FROM intervals_connections WHERE user_id = ?", (user_id,))
+        cursor.execute("""
+            INSERT INTO intervals_connections (user_id, athlete_id, api_key, auto_sync_interval)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, athlete_id, api_key, existing_interval))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_intervals_connection(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM intervals_connections WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_intervals_connection(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM intervals_connections WHERE user_id = ?", (user_id,))
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def update_intervals_last_sync(user_id, last_sync_time):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE intervals_connections SET last_sync = ? WHERE user_id = ?", (last_sync_time, user_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_all_active_intervals_connections():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM intervals_connections WHERE auto_sync_interval IS NOT NULL AND auto_sync_interval != 'off'")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def update_intervals_auto_sync_interval(user_id, auto_sync_interval):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE intervals_connections SET auto_sync_interval = ? WHERE user_id = ?", (auto_sync_interval, user_id))
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def attempt_intervals_sync_lock(user_id, now_str, last_sync_str, seconds):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        if last_sync_str is None:
+            cursor.execute("""
+                UPDATE intervals_connections 
+                SET last_sync = ? 
+                WHERE user_id = ? AND last_sync IS NULL
+            """, (now_str, user_id))
+        else:
+            cursor.execute("""
+                UPDATE intervals_connections 
+                SET last_sync = ? 
+                WHERE user_id = ? AND last_sync = ?
+            """, (now_str, user_id, last_sync_str))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+

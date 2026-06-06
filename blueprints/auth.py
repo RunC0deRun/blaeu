@@ -53,7 +53,8 @@ def register():
                 'id': user_id,
                 'username': username,
                 'is_admin': is_admin,
-                'default_map_style': 'dark'
+                'default_map_style': 'dark',
+                'week_start_day': 'Monday'
             },
             'csrf_token': csrf_token
         }), 201
@@ -90,7 +91,8 @@ def login():
             'id': user['id'],
             'username': user['username'],
             'is_admin': user['is_admin'],
-            'default_map_style': user.get('default_map_style', 'dark')
+            'default_map_style': user.get('default_map_style', 'dark'),
+            'week_start_day': user.get('week_start_day', 'Monday')
         },
         'csrf_token': csrf_token
     })
@@ -135,7 +137,8 @@ def auth_status():
             'id': user['id'],
             'username': user['username'],
             'is_admin': user['is_admin'],
-            'default_map_style': user.get('default_map_style', 'dark')
+            'default_map_style': user.get('default_map_style', 'dark'),
+            'week_start_day': user.get('week_start_day', 'Monday')
         },
         'csrf_token': csrf_token
     })
@@ -161,6 +164,34 @@ def update_default_style():
     except Exception as e:
         logger.exception("Unexpected error updating map style")
         return jsonify({'error': 'Failed to update map style: An unexpected server error occurred.'}), 500
+
+
+@auth_bp.route('/api/auth/week-start-day', methods=['PUT'])
+def update_week_start_day():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
+    data = request.json or {}
+    week_start_day = data.get('week_start_day')
+    if not week_start_day:
+        return jsonify({'error': 'week_start_day is required'}), 400
+        
+    # Validation
+    VALID_DAYS = {'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'}
+    if week_start_day not in VALID_DAYS:
+        return jsonify({'error': f'Invalid week_start_day. Must be one of: {", ".join(VALID_DAYS)}'}), 400
+        
+    try:
+        from db import update_user_week_start_day
+        update_user_week_start_day(user_id, week_start_day)
+        return jsonify({
+            'success': True,
+            'week_start_day': week_start_day
+        })
+    except Exception as e:
+        logger.exception("Unexpected error updating week start day")
+        return jsonify({'error': 'Failed to update week start day: An unexpected server error occurred.'}), 500
 
 
 @auth_bp.route('/api/auth/users', methods=['GET'])

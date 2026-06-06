@@ -35,6 +35,37 @@ def save_geocoding_cache(cache):
     except Exception:
         pass
 
+def cleanup_corrupted_cache(cache_folder):
+    """
+    Scans the cache folder for 0-byte or invalid JSON files and removes them.
+    """
+    if not cache_folder or not os.path.isdir(cache_folder):
+        return
+    logger.info(f"Cleaning up corrupted cache files in {cache_folder} due to JSONDecodeError")
+    removed_count = 0
+    for root, _, files in os.walk(cache_folder):
+        for file in files:
+            path = os.path.join(root, file)
+            try:
+                if os.path.getsize(path) == 0:
+                    os.remove(path)
+                    removed_count += 1
+                    logger.warning(f"Removed 0-byte cache file: {path}")
+                    continue
+                if file.endswith('.json'):
+                    with open(path, 'r', encoding='utf-8') as f:
+                        json.load(f)
+            except (json.JSONDecodeError, ValueError, OSError) as e:
+                try:
+                    os.remove(path)
+                    removed_count += 1
+                    logger.warning(f"Removed corrupted cache file {path}: {e}")
+                except Exception as rm_err:
+                    logger.error(f"Failed to remove corrupted cache file {path}: {rm_err}")
+    if removed_count > 0:
+        logger.info(f"Successfully cleaned up {removed_count} corrupted cache files")
+
+
 def reverse_geocode(lat, lon):
     try:
         lat_f = float(lat)
@@ -262,45 +293,64 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     # Fetch map data
     point = (center_lat, center_lon)
     
-    # 1. Fetch street network
-    try:
-        g = ox.graph_from_point(point, dist=corner_dist, dist_type='bbox', network_type='all', truncate_by_edge=True)
-        g_proj = ox.project_graph(g, to_crs='EPSG:3857')
-    except Exception as e:
-        logger.error(f"Error fetching OSMnx graph: {e}", exc_info=True)
-        raise e
-    finally:
-        update_route_poster_status(route_id, {
-            'status': 'generating',
-            'progress': 2,
-            'error': None
-        })
-        
-    # 2. Fetch water features (optional)
-    water = None
-    try:
-        water = ox.features_from_point(point, tags={"natural": ["water", "bay", "strait"], "waterway": "riverbank"}, dist=corner_dist)
-    except Exception as e:
-        logger.warning(f"No water features found or error: {e}")
-    finally:
-        update_route_poster_status(route_id, {
-            'status': 'generating',
-            'progress': 3,
-            'error': None
-        })
-        
-    # 3. Fetch parks (optional)
-    parks = None
-    try:
-        parks = ox.features_from_point(point, tags={"leisure": "park", "landuse": "grass"}, dist=corner_dist)
-    except Exception as e:
-        logger.warning(f"No parks found or error: {e}")
-    finally:
-        update_route_poster_status(route_id, {
-            'status': 'generating',
-            'progress': 4,
-            'error': None
-        })
+    max_retries = 1
+    for attempt in range(max_retries + 1):
+        try:
+            # 1. Fetch street network
+            try:
+                g = ox.graph_from_point(point, dist=corner_dist, dist_type='bbox', network_type='all', truncate_by_edge=True)
+                g_proj = ox.project_graph(g, to_crs='EPSG:3857')
+            except json.JSONDecodeError as e:
+                raise e
+            except Exception as e:
+                logger.error(f"Error fetching OSMnx graph: {e}", exc_info=True)
+                raise e
+            finally:
+                update_route_poster_status(route_id, {
+                    'status': 'generating',
+                    'progress': 2,
+                    'error': None
+                })
+                
+            # 2. Fetch water features (optional)
+            water = None
+            try:
+                water = ox.features_from_point(point, tags={"natural": ["water", "bay", "strait"], "waterway": "riverbank"}, dist=corner_dist)
+            except json.JSONDecodeError as e:
+                raise e
+            except Exception as e:
+                logger.warning(f"No water features found or error: {e}")
+            finally:
+                update_route_poster_status(route_id, {
+                    'status': 'generating',
+                    'progress': 3,
+                    'error': None
+                })
+                
+            # 3. Fetch parks (optional)
+            parks = None
+            try:
+                parks = ox.features_from_point(point, tags={"leisure": "park", "landuse": "grass"}, dist=corner_dist)
+            except json.JSONDecodeError as e:
+                raise e
+            except Exception as e:
+                logger.warning(f"No parks found or error: {e}")
+            finally:
+                update_route_poster_status(route_id, {
+                    'status': 'generating',
+                    'progress': 4,
+                    'error': None
+                })
+                
+            break
+        except json.JSONDecodeError as e:
+            if attempt < max_retries:
+                logger.warning(f"JSONDecodeError encountered during OSMnx query (attempt {attempt + 1}/{max_retries + 1}): {e}. Cleaning up corrupted cache and retrying...")
+                cleanup_corrupted_cache(ox.settings.cache_folder)
+            else:
+                logger.error(f"JSONDecodeError persisted after cache cleanup: {e}", exc_info=True)
+                raise e
+
         
     # 4. Render the matplotlib figure
     fig_width = 12.0

@@ -191,3 +191,77 @@ def test_reverse_geocode_input_validation():
     assert reverse_geocode(52.5, float('inf')) == ("", "")
 
 
+def test_generate_poster_map_with_corrupted_cache(client, mock_gis, tmp_path):
+    import json
+    from poster_map import generate_poster_background, ox
+    
+    # 1. Setup a temp cache folder and write corrupted files
+    cache_dir = tmp_path / "osmnx_cache"
+    cache_dir.mkdir()
+    
+    # Write a 0-byte file
+    zero_byte_file = cache_dir / "empty.json"
+    zero_byte_file.touch()
+    
+    # Write an invalid JSON file
+    corrupted_file = cache_dir / "corrupted.json"
+    corrupted_file.write_text("invalid json data here")
+    
+    # Write a valid JSON file
+    valid_file = cache_dir / "valid.json"
+    valid_file.write_text('{"status": "ok"}')
+    
+    # Temporarily override ox.settings.cache_folder
+    original_cache_folder = ox.settings.cache_folder
+    ox.settings.cache_folder = str(cache_dir)
+    
+    # Setup mock graph_from_point side effect
+    call_count = 0
+    original_side_effect = mock_gis['graph_from_point'].side_effect
+    original_return = mock_gis['graph_from_point'].return_value
+    
+    def side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise json.JSONDecodeError("Expecting value", "", 0)
+        # On second call, return the mock graph
+        return original_return
+        
+    mock_gis['graph_from_point'].side_effect = side_effect
+    mock_gis['graph_from_point'].return_value = None
+    
+    try:
+        # Generate poster map
+        res = generate_poster_background(
+            route_id=1,
+            lat_min=52.5, lat_max=52.6,
+            lon_min=13.4, lon_max=13.5,
+            theme_name="noir",
+            display_city="Paris",
+            display_country="France"
+        )
+        
+        # Verify call count is 2 (first failed, second succeeded)
+        assert call_count == 2
+        
+        # Verify the corrupted cache files were removed
+        assert not zero_byte_file.exists()
+        assert not corrupted_file.exists()
+        
+        # Verify the valid cache file is still present
+        assert valid_file.exists()
+        
+        # Verify result format
+        assert 'image_url' in res
+        assert res['display_city'] == 'Paris'
+        assert res['display_country'] == 'France'
+        
+    finally:
+        # Restore mock state and ox cache folder
+        ox.settings.cache_folder = original_cache_folder
+        mock_gis['graph_from_point'].side_effect = original_side_effect
+        mock_gis['graph_from_point'].return_value = original_return
+
+
+

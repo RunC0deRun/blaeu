@@ -577,6 +577,28 @@ function deselectRoute() {
 }
 
 // Render Dashboard View grid and aggregate statistics banner
+function getStartOfWeek(date, weekStartDayName = 'Monday') {
+    const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const targetDayIndex = daysOfWeek.indexOf(weekStartDayName);
+    
+    const d = new Date(date);
+    d.setUTCHours(0, 0, 0, 0);
+    
+    const currentDayIndex = d.getUTCDay();
+    let diffIndex = currentDayIndex - targetDayIndex;
+    if (diffIndex < 0) {
+        diffIndex += 7;
+    }
+    
+    d.setUTCDate(d.getUTCDate() - diffIndex);
+    return d;
+}
+
+function formatWeekTitle(startDate) {
+    const options = { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' };
+    return `Week of ${startDate.toLocaleDateString('en-US', options)}`;
+}
+
 function renderDashboardGrid() {
     const gridContainer = document.getElementById('dashboard-grid');
     const activityCountEl = document.getElementById('dashboard-activity-count');
@@ -590,15 +612,18 @@ function renderDashboardGrid() {
         filtered = filtered.filter(r => r.tags && r.tags.includes(activeTagFilter));
     }
     
+    // Only count active user's own activities for summary counts and statistics
+    const ownedFiltered = filtered.filter(r => r.is_owner);
+    
     // Update count
-    activityCountEl.textContent = filtered.length === 1 ? '1 Activity Loaded' : `${filtered.length} Activities Loaded`;
+    activityCountEl.textContent = ownedFiltered.length === 1 ? '1 Activity Loaded' : `${ownedFiltered.length} Activities Loaded`;
     
     // Calculate aggregate statistics
     let totalDist = 0;
     let totalGain = 0;
     let totalDur = 0;
     
-    filtered.forEach(r => {
+    ownedFiltered.forEach(r => {
         totalDist += r.total_distance || 0;
         totalGain += r.elevation_gain || 0;
         totalDur += r.duration || 0;
@@ -609,100 +634,174 @@ function renderDashboardGrid() {
     document.getElementById('summary-total-duration').textContent = formatDuration(totalDur);
     
     if (filtered.length === 0) {
-        gridContainer.innerHTML = '<div class="timeline-empty" style="grid-column: 1/-1;">No activities match the current filters. Import a GPX file to get started.</div>';
+        gridContainer.innerHTML = '<div class="timeline-empty">No activities match the current filters. Import a GPX file to get started.</div>';
         return;
     }
     
-    gridContainer.innerHTML = filtered.map(route => {
-        const folderBadge = route.folder_name ? `<span class="folder-badge">${escapeHTML(route.folder_name)}</span>` : '';
-        const distanceStr = formatDistance(route.total_distance);
-        const durationStr = formatDuration(route.duration);
-        const gainStr = `${Math.round(route.elevation_gain || 0)} m`;
-        const avgPaceStr = formatPace(route.avg_speed);
-        
+    // Group routes by week
+    const weekStartDay = (currentUser && currentUser.week_start_day) || 'Monday';
+    const weeksMap = new Map();
+    
+    filtered.forEach(route => {
         const dateObj = new Date(route.created_at + 'Z');
-        const formatOptions = { 
-            year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-            hour12: false
-        };
-        if (route.timezone) {
-            formatOptions.timeZone = route.timezone;
-        }
-        let formattedDate = dateObj.toLocaleDateString(undefined, formatOptions);
-        if (route.timezone_abbr) {
-            formattedDate += ` ${escapeHTML(route.timezone_abbr)}`;
-        }
+        const startOfWeek = getStartOfWeek(dateObj, weekStartDay);
+        const year = startOfWeek.getUTCFullYear();
+        const month = String(startOfWeek.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(startOfWeek.getUTCDate()).padStart(2, '0');
+        const key = `${year}-${month}-${day}`;
         
-        const tagsHtml = route.tags ? route.tags.map(t => `<span class="tag-badge" data-tag-name="${escapeHTML(t)}">#${escapeHTML(t)}</span>`).join('') : '';
+        if (!weeksMap.has(key)) {
+            weeksMap.set(key, {
+                startDate: startOfWeek,
+                key: key,
+                routes: []
+            });
+        }
+        weeksMap.get(key).routes.push(route);
+    });
+    
+    // Sort weeks by key DESC (newest first)
+    const sortedWeeks = Array.from(weeksMap.values()).sort((a, b) => b.key.localeCompare(a.key));
+    
+    gridContainer.innerHTML = sortedWeeks.map(week => {
+        let weekDist = 0;
+        let weekGain = 0;
+        let weekDur = 0;
+        let ownedCount = 0;
+        
+        week.routes.forEach(r => {
+            if (r.is_owner) {
+                weekDist += r.total_distance || 0;
+                weekGain += r.elevation_gain || 0;
+                weekDur += r.duration || 0;
+                ownedCount++;
+            }
+        });
+        
+        const weekHeaderHtml = `
+            <div class="week-header-hud">
+                <div class="week-info">
+                    <h3 class="week-title-hud">${formatWeekTitle(week.startDate)}</h3>
+                    <span class="week-activity-count-hud">${ownedCount === 1 ? '1 Activity' : `${ownedCount} Activities`}</span>
+                </div>
 
-        const privacyIcon = route.is_public ? 
-            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Public"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>` :
-            `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Private"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
-
-        const actionsHtml = route.is_owner ? `
-            <div class="activity-card-actions">
-                <button class="btn-icon btn-edit-route" data-route-id="${route.id}" title="Edit details">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                        <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                    </svg>
-                </button>
-                <button class="btn-icon btn-delete-route" data-route-id="${route.id}" data-route-name="${escapeHTML(route.name)}" title="Delete activity">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="3 6 5 6 21 6"></polyline>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                    </svg>
-                </button>
+                <div class="week-totals-hud">
+                    <div class="week-total-item-hud">
+                        <span class="week-total-label-hud">Distance</span>
+                        <span class="week-total-value-hud">${formatDistance(weekDist)}</span>
+                    </div>
+                    <div class="week-total-item-hud">
+                        <span class="week-total-label-hud">Elev Gain</span>
+                        <span class="week-total-value-hud">${Math.round(weekGain)} m</span>
+                    </div>
+                    <div class="week-total-item-hud">
+                        <span class="week-total-label-hud">Duration</span>
+                        <span class="week-total-value-hud">${formatDuration(weekDur)}</span>
+                    </div>
+                </div>
             </div>
-        ` : '';
-
+        `;
+        
+        const cardsHtml = week.routes.map(route => {
+            const folderBadge = route.folder_name ? `<span class="folder-badge">${escapeHTML(route.folder_name)}</span>` : '';
+            const distanceStr = formatDistance(route.total_distance);
+            const durationStr = formatDuration(route.duration);
+            const gainStr = `${Math.round(route.elevation_gain || 0)} m`;
+            const avgPaceStr = formatPace(route.avg_speed);
+            
+            const dateObj = new Date(route.created_at + 'Z');
+            const formatOptions = { 
+                year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                hour12: false
+            };
+            if (route.timezone) {
+                formatOptions.timeZone = route.timezone;
+            }
+            let formattedDate = dateObj.toLocaleDateString(undefined, formatOptions);
+            if (route.timezone_abbr) {
+                formattedDate += ` ${escapeHTML(route.timezone_abbr)}`;
+            }
+            
+            const tagsHtml = route.tags ? route.tags.map(t => `<span class="tag-badge" data-tag-name="${escapeHTML(t)}">#${escapeHTML(t)}</span>`).join('') : '';
+    
+            const privacyIcon = route.is_public ? 
+                `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Public"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>` :
+                `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Private"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
+    
+            const actionsHtml = route.is_owner ? `
+                <div class="activity-card-actions">
+                    <button class="btn-icon btn-edit-route" data-route-id="${route.id}" title="Edit details">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-delete-route" data-route-id="${route.id}" data-route-name="${escapeHTML(route.name)}" title="Delete activity">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            ` : '';
+    
+            return `
+                <div class="activity-card" data-route-id="${route.id}">
+                    <div class="activity-card-user-banner" style="background: ${route.is_owner ? 'rgba(255,255,255,0.02)' : 'rgba(0, 240, 255, 0.04)'}; padding: 6px 16px; font-size: 0.78em; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;">
+                        <span>
+                            <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px; opacity: 0.8;" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                            <span style="opacity: 0.6; margin-right: 2px;">BY</span> <strong style="color: ${route.is_owner ? '#fff' : 'var(--primary)'}; font-weight: 700;">${escapeHTML(route.owner_username || 'Unknown')}</strong>
+                        </span>
+                        ${!route.is_owner ? 
+                            `<span style="color: var(--primary); font-size: 0.9em; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; background: rgba(0,240,255,0.1); padding: 2px 8px; border-radius: 4px; text-shadow: 0 0 4px rgba(0,240,255,0.25);">Public</span>` : 
+                            `<span style="color: #94a3b8; font-size: 0.9em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Owner</span>`
+                        }
+                    </div>
+                    <div class="activity-card-preview">
+                        <canvas class="activity-mini-canvas" data-route-id="${route.id}"></canvas>
+                    </div>
+                    <div class="activity-card-body">
+                        <div class="activity-card-time" style="display: flex; align-items: center; justify-content: space-between;">
+                            <span>${formattedDate}</span>
+                            <span style="opacity: 0.7; display: inline-flex; align-items: center;">${privacyIcon}</span>
+                        </div>
+                        <h3 class="activity-card-title" title="${escapeHTML(route.name)}">${escapeHTML(route.name)}</h3>
+                        <p class="activity-card-desc">${escapeHTML(route.description || 'No description provided.')}</p>
+                        <div class="activity-card-stats-grid">
+                            <div class="activity-card-stat">
+                                <span class="stat-label">Distance</span>
+                                <span class="stat-value">${distanceStr}</span>
+                            </div>
+                            <div class="activity-card-stat">
+                                <span class="stat-label">Elev Gain</span>
+                                <span class="stat-value">${gainStr}</span>
+                            </div>
+                            <div class="activity-card-stat">
+                                <span class="stat-label">Duration</span>
+                                <span class="stat-value">${durationStr}</span>
+                            </div>
+                            <div class="activity-card-stat">
+                                <span class="stat-label">Avg Pace</span>
+                                <span class="stat-value">${avgPaceStr}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="activity-card-footer">
+                        <div class="activity-card-tags">
+                            ${folderBadge}
+                            ${tagsHtml}
+                        </div>
+                        ${actionsHtml}
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
         return `
-            <div class="activity-card" data-route-id="${route.id}">
-                <div class="activity-card-user-banner" style="background: ${route.is_owner ? 'rgba(255,255,255,0.02)' : 'rgba(0, 240, 255, 0.04)'}; padding: 6px 16px; font-size: 0.78em; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;">
-                    <span>
-                        <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px; opacity: 0.8;" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-                        <span style="opacity: 0.6; margin-right: 2px;">BY</span> <strong style="color: ${route.is_owner ? '#fff' : 'var(--primary)'}; font-weight: 700;">${escapeHTML(route.owner_username || 'Unknown')}</strong>
-                    </span>
-                    ${!route.is_owner ? 
-                        `<span style="color: var(--primary); font-size: 0.9em; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; background: rgba(0,240,255,0.1); padding: 2px 8px; border-radius: 4px; text-shadow: 0 0 4px rgba(0,240,255,0.25);">Public</span>` : 
-                        `<span style="color: #94a3b8; font-size: 0.9em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Owner</span>`
-                    }
-                </div>
-                <div class="activity-card-preview">
-                    <canvas class="activity-mini-canvas" data-route-id="${route.id}"></canvas>
-                </div>
-                <div class="activity-card-body">
-                    <div class="activity-card-time" style="display: flex; align-items: center; justify-content: space-between;">
-                        <span>${formattedDate}</span>
-                        <span style="opacity: 0.7; display: inline-flex; align-items: center;">${privacyIcon}</span>
-                    </div>
-                    <h3 class="activity-card-title" title="${escapeHTML(route.name)}">${escapeHTML(route.name)}</h3>
-                    <p class="activity-card-desc">${escapeHTML(route.description || 'No description provided.')}</p>
-                    <div class="activity-card-stats-grid">
-                        <div class="activity-card-stat">
-                            <span class="stat-label">Distance</span>
-                            <span class="stat-value">${distanceStr}</span>
-                        </div>
-                        <div class="activity-card-stat">
-                            <span class="stat-label">Elev Gain</span>
-                            <span class="stat-value">${gainStr}</span>
-                        </div>
-                        <div class="activity-card-stat">
-                            <span class="stat-label">Duration</span>
-                            <span class="stat-value">${durationStr}</span>
-                        </div>
-                        <div class="activity-card-stat">
-                            <span class="stat-label">Avg Pace</span>
-                            <span class="stat-value">${avgPaceStr}</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="activity-card-footer">
-                    <div class="activity-card-tags">
-                        ${folderBadge}
-                        ${tagsHtml}
-                    </div>
-                    ${actionsHtml}
+            <div class="week-section">
+                ${weekHeaderHtml}
+                <div class="dashboard-grid">
+                    ${cardsHtml}
                 </div>
             </div>
         `;
@@ -2232,6 +2331,10 @@ function loadSettingsIntoModal() {
     if (defaultStyleSelect && currentUser) {
         defaultStyleSelect.value = currentUser.default_map_style || 'dark';
     }
+    const weekStartSelect = document.getElementById('week-start-day-select');
+    if (weekStartSelect && currentUser) {
+        weekStartSelect.value = currentUser.week_start_day || 'Monday';
+    }
     const autoSyncSelect = document.getElementById('settings-garmin-auto-sync');
     if (autoSyncSelect) {
         autoSyncSelect.value = currentGarminAutoSync;
@@ -2294,6 +2397,29 @@ async function saveSettingsModal() {
                 }
             } catch (err) {
                 console.error('Error updating default map style:', err);
+            }
+        }
+    }
+
+    const weekStartSelect = document.getElementById('week-start-day-select');
+    if (weekStartSelect && currentUser) {
+        const newVal = weekStartSelect.value;
+        const oldVal = currentUser.week_start_day || 'Monday';
+        if (newVal !== oldVal) {
+            try {
+                const res = await fetch('/api/auth/week-start-day', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ week_start_day: newVal })
+                });
+                if (res.ok) {
+                    currentUser.week_start_day = newVal;
+                    renderDashboardGrid();
+                } else {
+                    console.error('Failed to update week start day');
+                }
+            } catch (err) {
+                console.error('Error updating week start day:', err);
             }
         }
     }

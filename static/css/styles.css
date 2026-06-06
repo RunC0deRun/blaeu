@@ -1371,4 +1371,81 @@ input[type="range"]::-webkit-slider-thumb:hover {
     text-shadow: 0 0 10px rgba(0, 208, 255, 0.3);
 }
 
+/* Weekly Section HUD Styling */
+.week-section {
+    margin-bottom: 40px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(14, 19, 32, 0.3);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: inset 0 0 20px rgba(0, 240, 255, 0.02);
+}
+
+.week-header-hud {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px dashed rgba(0, 240, 255, 0.15);
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.week-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.week-title-hud {
+    font-family: var(--font-main);
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: 0.5px;
+    margin: 0;
+}
+
+.week-activity-count-hud {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.week-totals-hud {
+    display: flex;
+    gap: 20px;
+    background: rgba(7, 10, 19, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 8px;
+    padding: 8px 16px;
+}
+
+.week-total-item-hud {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 70px;
+}
+
+.week-total-label-hud {
+    font-family: var(--font-main);
+    font-size: 0.55rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    margin-bottom: 2px;
+}
+
+.week-total-value-hud {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--primary);
+    text-shadow: 0 0 5px rgba(0, 240, 255, 0.2);
+}
+
+
 

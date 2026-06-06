@@ -49,7 +49,8 @@ def init_db():
         password_hash TEXT NOT NULL,
         is_admin INTEGER DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        default_map_style TEXT DEFAULT 'dark'
+        default_map_style TEXT DEFAULT 'dark',
+        week_start_day TEXT DEFAULT 'Monday'
     );
     """)
     
@@ -99,6 +100,7 @@ def init_db():
 
     # Ensure columns exist (migration for existing DBs)
     add_column_if_missing(cursor, 'users', 'default_map_style', "TEXT DEFAULT 'dark'")
+    add_column_if_missing(cursor, 'users', 'week_start_day', "TEXT DEFAULT 'Monday'")
     add_column_if_missing(cursor, 'routes', 'timezone', "TEXT")
     add_column_if_missing(cursor, 'routes', 'simplified_path', "TEXT")
     add_column_if_missing(cursor, 'routes', 'poster_status', "TEXT")
@@ -732,6 +734,18 @@ def update_user_default_map_style(user_id, default_map_style):
     cursor = conn.cursor()
     try:
         cursor.execute("UPDATE users SET default_map_style = ? WHERE id = ?", (default_map_style, user_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def update_user_week_start_day(user_id, week_start_day):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET week_start_day = ? WHERE id = ?", (week_start_day, user_id))
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()

@@ -285,6 +285,47 @@ def test_default_map_style_profile(client):
     assert res.status_code == 200
     assert json.loads(res.data)['user']['default_map_style'] == 'blueprint'
 
+def test_week_start_day_profile(client):
+    # Try to set start of week while unauthorized
+    res = client.put('/api/auth/week-start-day', json={'week_start_day': 'Sunday'})
+    assert res.status_code == 401
+    
+    # Register and login
+    res = client.post('/api/auth/register', json={
+        'username': 'week_user',
+        'password': 'Password123'
+    })
+    assert res.status_code == 201
+    user_data = json.loads(res.data)['user']
+    assert user_data['week_start_day'] == 'Monday' # default
+    
+    # Try to set an invalid day
+    res = client.put('/api/auth/week-start-day', json={'week_start_day': 'Funday'})
+    assert res.status_code == 400
+    assert 'Invalid week_start_day' in json.loads(res.data)['error']
+    
+    # Update to a valid day
+    res = client.put('/api/auth/week-start-day', json={'week_start_day': 'Sunday'})
+    assert res.status_code == 200
+    assert json.loads(res.data)['week_start_day'] == 'Sunday'
+    
+    # Status check should reflect updated start day
+    res = client.get('/api/auth/status')
+    assert res.status_code == 200
+    assert json.loads(res.data)['user']['week_start_day'] == 'Sunday'
+    
+    # Log out
+    client.post('/api/auth/logout')
+    
+    # Login check should reflect updated start day
+    res = client.post('/api/auth/login', json={
+        'username': 'week_user',
+        'password': 'Password123'
+    })
+    assert res.status_code == 200
+    assert json.loads(res.data)['user']['week_start_day'] == 'Sunday'
+
+
 def test_registration_disabled_after_first_user(client, monkeypatch):
     # Register first user
     res1 = client.post('/api/auth/register', json={

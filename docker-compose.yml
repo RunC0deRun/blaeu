@@ -8,6 +8,7 @@ services:
     environment:
       - DATA_DIR=/data
       - BLAEU_ALLOW_REGISTRATION=${BLAEU_ALLOW_REGISTRATION:-false}
+      - BLAEU_WORKERS=${BLAEU_WORKERS:-2}
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -15,7 +16,7 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 2048M
 
 volumes:
   blaeu_data:

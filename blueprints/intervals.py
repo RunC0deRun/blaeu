@@ -86,6 +86,17 @@ def import_single_intervals_activity(user_id, athlete_id, api_key, activity_id, 
         resp = requests.get(streams_url, auth=auth, params={"types": "time,latlng,altitude"}, timeout=30)
         resp.raise_for_status()
         streams_data = resp.json()
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else None
+        logger.error(f"Failed to fetch streams for activity {activity_id} (HTTP {status_code}): {e}")
+        if status_code == 403:
+            raise ValueError(
+                "Failed to fetch streams from Intervals.icu: 403 Forbidden. "
+                "This typically happens for activities synced from Strava, as Strava's API terms restrict sharing "
+                "activity data with external apps. Please try syncing directly from your device provider (e.g., Garmin) "
+                "to Intervals.icu, or upload the GPX file manually."
+            )
+        raise ValueError(f"Failed to fetch streams from Intervals.icu (HTTP {status_code}): {e}")
     except Exception as e:
         logger.error(f"Failed to fetch streams for activity {activity_id}: {e}")
         raise ValueError(f"Failed to fetch streams from Intervals.icu: {e}")

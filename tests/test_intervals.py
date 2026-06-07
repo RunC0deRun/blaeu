@@ -161,3 +161,36 @@ def test_intervals_import(mock_get, authed):
     routes = json.loads(routes_resp.data)
     assert len(routes) == 1
     assert routes[0]['name'] == 'Imported Run'
+
+
+@patch('requests.get')
+def test_intervals_import_forbidden_403(mock_get, authed):
+    # Set up connection
+    mock_resp_validate = MagicMock()
+    mock_resp_validate.status_code = 200
+    mock_resp_validate.json.return_value = {'id': '12345', 'name': 'Test Athlete'}
+    mock_get.return_value = mock_resp_validate
+
+    authed.post('/api/intervals/connect', json={
+        'athlete_id': '12345',
+        'api_key': 'test_key_abc'
+    })
+
+    # Mock streams API response to return a 403 Forbidden error
+    import requests
+    mock_resp_streams = MagicMock()
+    mock_resp_streams.status_code = 403
+    http_error = requests.exceptions.HTTPError("403 Client Error: Forbidden")
+    http_error.response = mock_resp_streams
+    mock_resp_streams.raise_for_status.side_effect = http_error
+    mock_get.return_value = mock_resp_streams
+
+    resp = authed.post('/api/intervals/import', json={
+        'activityId': '9999',
+        'activityName': 'Imported Run',
+        'startTimeLocal': '2026-06-03T18:00:00Z'
+    })
+    assert resp.status_code == 400
+    error_msg = json.loads(resp.data)['error']
+    assert "403 Forbidden" in error_msg
+    assert "Strava" in error_msg

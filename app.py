@@ -9,6 +9,18 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 )
 logger = logging.getLogger('blaeu')
+
+# Integrate application logging with Gunicorn error handlers if running under Gunicorn
+if __name__ != '__main__':
+    gunicorn_logger = logging.getLogger('gunicorn.error')
+    if gunicorn_logger.handlers:
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+        for handler in gunicorn_logger.handlers:
+            root_logger.addHandler(handler)
+        root_logger.setLevel(gunicorn_logger.level)
+
 from flask import Flask, jsonify, render_template, session, request
 
 from db import init_db, DATA_DIR

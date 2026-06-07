@@ -51,4 +51,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/')" || exit 1
 
 # Run with gunicorn and a 120s timeout for heavy video/map rendering
-CMD ["gunicorn", "-w", "4", "-t", "120", "-b", "0.0.0.0:5000", "app:app"]
+CMD ["sh", "-c", "gunicorn -w ${BLAEU_WORKERS:-2} -t 120 -b 0.0.0.0:5000 app:app"]

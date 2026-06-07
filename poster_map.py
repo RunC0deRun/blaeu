@@ -232,6 +232,8 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     
     # Calculate radius for OSM querying (distance from center to furthest corner)
     corner_dist = math.sqrt((width_m / 2)**2 + (height_m / 2)**2)
+    # Cap the query radius to 50km to avoid OOM or excessive processing on massive/corrupted routes
+    corner_dist = min(corner_dist, 50000)
     
     # Resolve display city/country if not specified
     if display_city is None or display_country is None:
@@ -298,7 +300,12 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         try:
             # 1. Fetch street network
             try:
-                g = ox.graph_from_point(point, dist=corner_dist, dist_type='bbox', network_type='all', truncate_by_edge=True)
+                # If the area is large (>15km), fetch only major roads to save memory and CPU
+                if corner_dist > 15000:
+                    cf = '["highway"~"motorway|trunk|primary|secondary|tertiary"]'
+                    g = ox.graph_from_point(point, dist=corner_dist, dist_type='bbox', custom_filter=cf, truncate_by_edge=True)
+                else:
+                    g = ox.graph_from_point(point, dist=corner_dist, dist_type='bbox', network_type='all', truncate_by_edge=True)
                 g_proj = ox.project_graph(g, to_crs='EPSG:3857')
             except json.JSONDecodeError as e:
                 raise e

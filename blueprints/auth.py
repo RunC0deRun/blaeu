@@ -5,7 +5,8 @@ from flask import Blueprint, request, jsonify, session
 from werkzeug.security import generate_password_hash, check_password_hash
 from db import (
     count_users, get_user_by_username, get_user_by_id, add_user, delete_user,
-    get_users, backfill_ownerless_data, update_user_default_map_style
+    get_users, backfill_ownerless_data, update_user_default_map_style,
+    update_user_default_aspect_ratio
 )
 from utils import rate_limit, get_csrf_token, get_current_user_id
 
@@ -54,7 +55,8 @@ def register():
                 'username': username,
                 'is_admin': is_admin,
                 'default_map_style': 'dark',
-                'week_start_day': 'Monday'
+                'week_start_day': 'Monday',
+                'default_aspect_ratio': '16:9'
             },
             'csrf_token': csrf_token
         }), 201
@@ -92,7 +94,8 @@ def login():
             'username': user['username'],
             'is_admin': user['is_admin'],
             'default_map_style': user.get('default_map_style', 'dark'),
-            'week_start_day': user.get('week_start_day', 'Monday')
+            'week_start_day': user.get('week_start_day', 'Monday'),
+            'default_aspect_ratio': user.get('default_aspect_ratio', '16:9')
         },
         'csrf_token': csrf_token
     })
@@ -138,7 +141,8 @@ def auth_status():
             'username': user['username'],
             'is_admin': user['is_admin'],
             'default_map_style': user.get('default_map_style', 'dark'),
-            'week_start_day': user.get('week_start_day', 'Monday')
+            'week_start_day': user.get('week_start_day', 'Monday'),
+            'default_aspect_ratio': user.get('default_aspect_ratio', '16:9')
         },
         'csrf_token': csrf_token
     })
@@ -192,6 +196,32 @@ def update_week_start_day():
     except Exception as e:
         logger.exception("Unexpected error updating week start day")
         return jsonify({'error': 'Failed to update week start day: An unexpected server error occurred.'}), 500
+
+
+@auth_bp.route('/api/auth/default-aspect-ratio', methods=['PUT'])
+def update_default_aspect_ratio():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+        
+    data = request.json or {}
+    default_aspect_ratio = data.get('default_aspect_ratio')
+    if not default_aspect_ratio:
+        return jsonify({'error': 'default_aspect_ratio is required'}), 400
+        
+    VALID_RATIOS = {'16:9', '4:3', '2:3', '3:2', '3:4', '9:16'}
+    if default_aspect_ratio not in VALID_RATIOS:
+        return jsonify({'error': f'Invalid aspect ratio. Must be one of: {", ".join(VALID_RATIOS)}'}), 400
+        
+    try:
+        update_user_default_aspect_ratio(user_id, default_aspect_ratio)
+        return jsonify({
+            'success': True,
+            'default_aspect_ratio': default_aspect_ratio
+        })
+    except Exception as e:
+        logger.exception("Unexpected error updating aspect ratio")
+        return jsonify({'error': 'Failed to update aspect ratio: An unexpected server error occurred.'}), 500
 
 
 @auth_bp.route('/api/auth/users', methods=['GET'])

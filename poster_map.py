@@ -175,11 +175,17 @@ os.makedirs(ox.settings.cache_folder, exist_ok=True)
 to_3857 = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 to_4326 = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
 
-def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, theme_name, display_city=None, display_country=None, apply_padding=True):
+def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, theme_name, display_city=None, display_country=None, apply_padding=True, aspect_ratio="16:9"):
     """
     Generates a minimalist styled background map centered and scaled to the bounding box.
     Returns metadata including bounds and static URL.
     """
+    try:
+        parts = aspect_ratio.split(':')
+        target_aspect = float(parts[0]) / float(parts[1])
+    except (ValueError, IndexError, ZeroDivisionError, AttributeError):
+        target_aspect = 16.0 / 9.0
+
     # 1. Project bounding box corners to EPSG:3857
     x_min, y_min = to_3857.transform(lon_min, lat_min)
     x_max, y_max = to_3857.transform(lon_max, lat_max)
@@ -203,9 +209,10 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         y_max = center_y + 250
         height_m = 500
         
-    # Add 2000m padding on each side to accommodate camera pans in video exports
+    # Add padding on each side to accommodate camera pans in video exports.
+    # Capped at 1000m to keep Overpass queries fast and prevent OOM/timeouts on large routes.
     if apply_padding:
-        padding_m = 2000
+        padding_m = 1000
         x_min -= padding_m
         x_max += padding_m
         y_min -= padding_m
@@ -213,24 +220,24 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         width_m = x_max - x_min
         height_m = y_max - y_min
     
-    # Clamp aspect ratio between 0.5 (tall) and 2.0 (wide) to look nice
+    # Adjust aspect ratio to match target_aspect exactly
     aspect = width_m / height_m
-    if aspect < 0.5:
-        # Too tall: expand width to achieve aspect = 0.5
-        target_width = height_m * 0.5
+    if aspect < target_aspect:
+        # Too tall: expand width to achieve target_aspect
+        target_width = height_m * target_aspect
         diff = target_width - width_m
         x_min -= diff / 2
         x_max += diff / 2
         width_m = target_width
-        aspect = 0.5
-    elif aspect > 2.0:
-        # Too wide: expand height to achieve aspect = 2.0
-        target_height = width_m / 2.0
+    elif aspect > target_aspect:
+        # Too wide: expand height to achieve target_aspect
+        target_height = width_m / target_aspect
         diff = target_height - height_m
         y_min -= diff / 2
         y_max += diff / 2
         height_m = target_height
-        aspect = 2.0
+        
+    aspect = width_m / height_m
         
     # Calculate final bounding box and center in EPSG:4326
     lon_min_final, lat_min_final = to_4326.transform(x_min, y_min)
@@ -250,9 +257,9 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         if display_country is None:
             display_country = detected_country
 
-    # Generate bbox hash to uniquely identify this crop area and label settings
+    # Generate bbox hash to uniquely identify this crop area and label/aspect settings
     label_str = f"{display_city or ''}_{display_country or ''}"
-    bbox_str = f"{lat_min:.6f}_{lat_max:.6f}_{lon_min:.6f}_{lon_max:.6f}_{label_str}"
+    bbox_str = f"{lat_min:.6f}_{lat_max:.6f}_{lon_min:.6f}_{lon_max:.6f}_{label_str}_{aspect_ratio}"
     bbox_hash = hashlib.md5(bbox_str.encode()).hexdigest()[:8]
     filename = f"{route_id}_{theme_name}_{bbox_hash}.png"
     output_path = os.path.join(POSTER_MAPS_DIR, filename)
@@ -529,8 +536,6 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     plt.savefig(
         output_path,
         facecolor=theme["bg"],
-        bbox_inches="tight",
-        pad_inches=0.0,
         dpi=300
     )
     plt.close()

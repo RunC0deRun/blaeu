@@ -293,4 +293,27 @@ def test_generate_poster_map_osm_timeout(client, mock_gis):
         mock_gis['graph_from_point'].return_value = original_return
 
 
+def test_generate_poster_map_with_aspect_ratio(client, mock_gis):
+    # 1. Upload a route first
+    data = {
+        'file': (io.BytesIO(GPX_DATA_1.encode('utf-8')), 'test_route.gpx')
+    }
+    upload_res = client.post('/api/upload', data=data, content_type='multipart/form-data')
+    assert upload_res.status_code == 201
+    route_id = json.loads(upload_res.data)['id']
+    
+    # 2. Get poster map with default aspect ratio
+    response_default = client.get(f'/api/routes/{route_id}/poster-map?theme=noir')
+    assert response_default.status_code == 200
+    url_default = json.loads(response_default.data)['image_url']
+    
+    # 3. Get poster map with 3:4 aspect ratio
+    response_custom = client.get(f'/api/routes/{route_id}/poster-map?theme=noir&aspectRatio=3:4')
+    assert response_custom.status_code == 200
+    url_custom = json.loads(response_custom.data)['image_url']
+    
+    # The image URLs should be different because the aspect ratio is part of the file hash
+    assert url_default != url_custom
+
+
 

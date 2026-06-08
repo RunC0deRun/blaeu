@@ -17,6 +17,10 @@ import numpy as np
 import matplotlib.colors as mcolors
 from matplotlib.font_manager import FontProperties
 
+class OSMNetworkError(Exception):
+    """Exception raised when OSM query fails due to network or timeout issues."""
+    pass
+
 GEO_CACHE_FILE = os.path.join(ox.settings.cache_folder, 'geocoding_cache.json')
 
 def load_geocoding_cache():
@@ -97,6 +101,8 @@ def reverse_geocode(lat, lon):
             cache[key] = {'city': city, 'country': country}
             save_geocoding_cache(cache)
             return city, country
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Reverse geocoding query failed: {e}")
     except Exception as e:
         logger.error(f"Reverse geocoding error: {e}", exc_info=True)
     return "", ""
@@ -161,6 +167,7 @@ os.makedirs(POSTER_MAPS_DIR, exist_ok=True)
 # Configure OSMnx settings
 ox.settings.use_cache = True
 ox.settings.cache_folder = os.path.join(DATA_DIR, 'osmnx_cache')
+ox.settings.requests_timeout = 30
 os.makedirs(ox.settings.cache_folder, exist_ok=True)
 
 # Transformers for EPSG:4326 <-> EPSG:3857
@@ -309,6 +316,9 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
                 g_proj = ox.project_graph(g, to_crs='EPSG:3857')
             except json.JSONDecodeError as e:
                 raise e
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Network/timeout error fetching OSMnx graph: {e}")
+                raise OSMNetworkError("OpenStreetMap API request timed out or failed. Please try again later.") from e
             except Exception as e:
                 logger.error(f"Error fetching OSMnx graph: {e}", exc_info=True)
                 raise e
@@ -355,8 +365,8 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
                 logger.warning(f"JSONDecodeError encountered during OSMnx query (attempt {attempt + 1}/{max_retries + 1}): {e}. Cleaning up corrupted cache and retrying...")
                 cleanup_corrupted_cache(ox.settings.cache_folder)
             else:
-                logger.error(f"JSONDecodeError persisted after cache cleanup: {e}", exc_info=True)
-                raise e
+                logger.error(f"JSONDecodeError persisted after cache cleanup: {e}")
+                raise OSMNetworkError("OpenStreetMap API returned invalid data. Please try again later.") from e
 
         
     # 4. Render the matplotlib figure

@@ -1787,11 +1787,11 @@ async function exportVideo() {
 
     // Web Mercator Formulas
     function lngToX(lng, z) {
-        return (lng + 180) / 360 * Math.pow(2, z) * 256;
+        return (lng + 180) / 360 * Math.pow(2, z) * 256 * scaleFactor;
     }
     function latToY(lat, z) {
         const latRad = lat * Math.PI / 180;
-        return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256;
+        return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256 * scaleFactor;
     }
 
     const cameraMode = localStorage.getItem('blaeu_camera_mode') || 'follow';
@@ -1829,10 +1829,10 @@ async function exportVideo() {
         animationPoints.forEach(pt => {
             const pxX = lngToX(pt.lon, zoom);
             const pxY = latToY(pt.lat, zoom);
-            const minTX = Math.floor((pxX - width / 2) / 256);
-            const maxTX = Math.floor((pxX + width / 2) / 256);
-            const minTY = Math.floor((pxY - height / 2) / 256);
-            const maxTY = Math.floor((pxY + height / 2) / 256);
+            const minTX = Math.floor((pxX - width / 2) / (256 * scaleFactor));
+            const maxTX = Math.floor((pxX + width / 2) / (256 * scaleFactor));
+            const minTY = Math.floor((pxY - height / 2) / (256 * scaleFactor));
+            const maxTY = Math.floor((pxY + height / 2) / (256 * scaleFactor));
             for (let tx = minTX; tx <= maxTX; tx++) {
                 for (let ty = minTY; ty <= maxTY; ty++) {
                     tilesSet.add(`${tx}_${ty}`);
@@ -2103,18 +2103,19 @@ async function exportVideo() {
                 ctx.drawImage(posterMapImg, dx, dy, dw, dh);
             }
         } else {
-            const frameTileMinX = Math.floor(minPxX / 256);
-            const frameTileMaxX = Math.floor((minPxX + width) / 256);
-            const frameTileMinY = Math.floor(minPxY / 256);
-            const frameTileMaxY = Math.floor((minPxY + height) / 256);
+            const frameTileMinX = Math.floor(minPxX / (256 * scaleFactor));
+            const frameTileMaxX = Math.floor((minPxX + width) / (256 * scaleFactor));
+            const frameTileMinY = Math.floor(minPxY / (256 * scaleFactor));
+            const frameTileMaxY = Math.floor((minPxY + height) / (256 * scaleFactor));
 
             for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
                 for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
                     const img = loadedTilesMap[`${tx}_${ty}`];
                     if (img) {
-                        const dx = tx * 256 - minPxX;
-                        const dy = ty * 256 - minPxY;
-                        ctx.drawImage(img, dx, dy);
+                        const dx = tx * 256 * scaleFactor - minPxX;
+                        const dy = ty * 256 * scaleFactor - minPxY;
+                        const ds = 256 * scaleFactor;
+                        ctx.drawImage(img, dx, dy, ds, ds);
                     }
                 }
             }
@@ -3558,11 +3559,11 @@ async function saveImage() {
 
         // Web Mercator Formulas
         function lngToX(lng, z) {
-            return (lng + 180) / 360 * Math.pow(2, z) * 256;
+            return (lng + 180) / 360 * Math.pow(2, z) * 256 * scaleFactor;
         }
         function latToY(lat, z) {
             const latRad = lat * Math.PI / 180;
-            return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256;
+            return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256 * scaleFactor;
         }
 
         const centerPxX = lngToX(centerLon, zoom);
@@ -3572,10 +3573,10 @@ async function saveImage() {
 
         // Collect all tiles covering the viewport centered on the track
         const tilesSet = new Set();
-        const frameTileMinX = Math.floor(minPxX / 256);
-        const frameTileMaxX = Math.floor((minPxX + width) / 256);
-        const frameTileMinY = Math.floor(minPxY / 256);
-        const frameTileMaxY = Math.floor((minPxY + height) / 256);
+        const frameTileMinX = Math.floor(minPxX / (256 * scaleFactor));
+        const frameTileMaxX = Math.floor((minPxX + width) / (256 * scaleFactor));
+        const frameTileMinY = Math.floor(minPxY / (256 * scaleFactor));
+        const frameTileMaxY = Math.floor((minPxY + height) / (256 * scaleFactor));
 
         for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
             for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
@@ -3622,9 +3623,10 @@ async function saveImage() {
             for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
                 const img = loadedTilesMap[`${tx}_${ty}`];
                 if (img) {
-                    const dx = tx * 256 - minPxX;
-                    const dy = ty * 256 - minPxY;
-                    ctx.drawImage(img, dx, dy);
+                    const dx = tx * 256 * scaleFactor - minPxX;
+                    const dy = ty * 256 * scaleFactor - minPxY;
+                    const ds = 256 * scaleFactor;
+                    ctx.drawImage(img, dx, dy, ds, ds);
                 }
             }
         }

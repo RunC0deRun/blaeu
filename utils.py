@@ -98,9 +98,14 @@ def run_async_poster_generation(route_id: int, user_id: int, theme_name: str) ->
                     'error': None
                 })
                 
+                from db import get_user_by_id
+                user = get_user_by_id(user_id)
+                aspect_ratio = user.get('default_aspect_ratio', '16:9') if user else '16:9'
+
                 from poster_map import generate_poster_background, OSMNetworkError
                 data = generate_poster_background(
-                    route_id, lat_min, lat_max, lon_min, lon_max, theme_name
+                    route_id, lat_min, lat_max, lon_min, lon_max, theme_name,
+                    aspect_ratio=aspect_ratio
                 )
                 
                 update_route_poster_status(route_id, {
@@ -113,7 +118,8 @@ def run_async_poster_generation(route_id: int, user_id: int, theme_name: str) ->
                     'bg_color': data['bg_color'],
                     'text_color': data['text_color'],
                     'display_city': data['display_city'],
-                    'display_country': data['display_country']
+                    'display_country': data['display_country'],
+                    'aspect_ratio': aspect_ratio
                 })
         except OSMNetworkError as e:
             logger.warning(f"Async poster generation failed: {e}")

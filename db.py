@@ -50,7 +50,8 @@ def init_db():
         is_admin INTEGER DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         default_map_style TEXT DEFAULT 'dark',
-        week_start_day TEXT DEFAULT 'Monday'
+        week_start_day TEXT DEFAULT 'Monday',
+        default_aspect_ratio TEXT DEFAULT '16:9'
     );
     """)
     
@@ -101,6 +102,7 @@ def init_db():
     # Ensure columns exist (migration for existing DBs)
     add_column_if_missing(cursor, 'users', 'default_map_style', "TEXT DEFAULT 'dark'")
     add_column_if_missing(cursor, 'users', 'week_start_day', "TEXT DEFAULT 'Monday'")
+    add_column_if_missing(cursor, 'users', 'default_aspect_ratio', "TEXT DEFAULT '16:9'")
     add_column_if_missing(cursor, 'routes', 'timezone', "TEXT")
     add_column_if_missing(cursor, 'routes', 'simplified_path', "TEXT")
     add_column_if_missing(cursor, 'routes', 'poster_status', "TEXT")
@@ -746,6 +748,18 @@ def update_user_week_start_day(user_id, week_start_day):
     cursor = conn.cursor()
     try:
         cursor.execute("UPDATE users SET week_start_day = ? WHERE id = ?", (week_start_day, user_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def update_user_default_aspect_ratio(user_id, default_aspect_ratio):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET default_aspect_ratio = ? WHERE id = ?", (default_aspect_ratio, user_id))
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()

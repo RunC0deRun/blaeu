@@ -425,3 +425,44 @@ def test_sanitized_duplicate_registration_error(client):
     })
     assert response.status_code == 400
     assert response.json['error'] == 'Username already exists'
+
+
+def test_default_aspect_ratio_profile(client):
+    # Try to set aspect ratio while unauthorized
+    res = client.put('/api/auth/default-aspect-ratio', json={'default_aspect_ratio': '16:9'})
+    assert res.status_code == 401
+    
+    # Register and login
+    res = client.post('/api/auth/register', json={
+        'username': 'ratio_user',
+        'password': 'Password123'
+    })
+    assert res.status_code == 201
+    user_data = json.loads(res.data)['user']
+    assert user_data['default_aspect_ratio'] == '16:9' # default
+    
+    # Try to set an invalid aspect ratio
+    res = client.put('/api/auth/default-aspect-ratio', json={'default_aspect_ratio': 'invalid'})
+    assert res.status_code == 400
+    assert 'Invalid aspect ratio' in json.loads(res.data)['error']
+    
+    # Update to a valid ratio
+    res = client.put('/api/auth/default-aspect-ratio', json={'default_aspect_ratio': '9:16'})
+    assert res.status_code == 200
+    assert json.loads(res.data)['default_aspect_ratio'] == '9:16'
+    
+    # Status check should reflect updated aspect ratio
+    res = client.get('/api/auth/status')
+    assert res.status_code == 200
+    assert json.loads(res.data)['user']['default_aspect_ratio'] == '9:16'
+    
+    # Log out
+    client.post('/api/auth/logout')
+    
+    # Login check should reflect updated aspect ratio
+    res = client.post('/api/auth/login', json={
+        'username': 'ratio_user',
+        'password': 'Password123'
+    })
+    assert res.status_code == 200
+    assert json.loads(res.data)['user']['default_aspect_ratio'] == '9:16'

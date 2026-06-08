@@ -356,12 +356,17 @@ def get_route_poster_map(route_id):
     if lat_min_arg and lat_max_arg and lon_min_arg and lon_max_arg:
         apply_padding = False
 
+    aspect_ratio = request.args.get('aspectRatio')
+    if not aspect_ratio:
+        user = get_user_by_id(user_id)
+        aspect_ratio = user.get('default_aspect_ratio', '16:9') if user else '16:9'
+
     from poster_map import generate_poster_background, OSMNetworkError
     try:
         data = generate_poster_background(
             route_id, lat_min, lat_max, lon_min, lon_max, theme_name,
             display_city=display_city, display_country=display_country,
-            apply_padding=apply_padding
+            apply_padding=apply_padding, aspect_ratio=aspect_ratio
         )
         
         # Save completed details in poster_status column of DB if this is a default padding map
@@ -376,7 +381,8 @@ def get_route_poster_map(route_id):
                 'bg_color': data['bg_color'],
                 'text_color': data['text_color'],
                 'display_city': data['display_city'],
-                'display_country': data['display_country']
+                'display_country': data['display_country'],
+                'aspect_ratio': aspect_ratio
             })
             
         return jsonify(data)

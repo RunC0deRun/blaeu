@@ -1721,7 +1721,8 @@ function updateAnimationState(reset = false) {
     }
 
     // Pan map dynamically to follow active point
-    if (isPlaying && activePoint) {
+    const cameraMode = localStorage.getItem('blaeu_camera_mode') || 'follow';
+    if (isPlaying && activePoint && cameraMode === 'follow') {
         map.panTo([activePoint.lat, activePoint.lon], { animate: true, duration: 0.1 });
     }
 
@@ -1750,18 +1751,23 @@ async function exportVideo() {
     // Canvas resolution configuration
     const resSelect = document.getElementById('res-select');
     const resVal = resSelect ? resSelect.value : '1080';
-    let width = 1920;
     let height = 1080;
     let videoBitrate = 12000000; // 12 Mbps default for 1080p
     
     if (resVal === '720') {
-        width = 1280;
         height = 720;
         videoBitrate = 6000000; // 6 Mbps for 720p
     } else if (resVal === '2160') {
-        width = 3840;
         height = 2160;
         videoBitrate = 50000000; // 50 Mbps for 4K UHD
+    }
+
+    const aspectStr = (currentUser && currentUser.default_aspect_ratio) || '16:9';
+    const parts = aspectStr.split(':');
+    const targetAspect = parseFloat(parts[0]) / parseFloat(parts[1]);
+    let width = Math.round(height * targetAspect);
+    if (width % 2 !== 0) {
+        width += 1;
     }
 
     const canvas = document.getElementById('export-canvas');
@@ -1781,12 +1787,18 @@ async function exportVideo() {
 
     // Web Mercator Formulas
     function lngToX(lng, z) {
-        return (lng + 180) / 360 * Math.pow(2, z) * 256;
+        return (lng + 180) / 360 * Math.pow(2, z) * 256 * scaleFactor;
     }
     function latToY(lat, z) {
         const latRad = lat * Math.PI / 180;
-        return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256;
+        return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256 * scaleFactor;
     }
+
+    const cameraMode = localStorage.getItem('blaeu_camera_mode') || 'follow';
+    const cPxX = lngToX(center.lng, zoom);
+    const cPxY = latToY(center.lat, zoom);
+    const staticMinPxX = cPxX - width / 2;
+    const staticMinPxY = cPxY - height / 2;
 
     // Define bounds for dynamic camera-following
     let minPxX = 0;
@@ -1817,10 +1829,10 @@ async function exportVideo() {
         animationPoints.forEach(pt => {
             const pxX = lngToX(pt.lon, zoom);
             const pxY = latToY(pt.lat, zoom);
-            const minTX = Math.floor((pxX - width / 2) / 256);
-            const maxTX = Math.floor((pxX + width / 2) / 256);
-            const minTY = Math.floor((pxY - height / 2) / 256);
-            const maxTY = Math.floor((pxY + height / 2) / 256);
+            const minTX = Math.floor((pxX - width / 2) / (256 * scaleFactor));
+            const maxTX = Math.floor((pxX + width / 2) / (256 * scaleFactor));
+            const minTY = Math.floor((pxY - height / 2) / (256 * scaleFactor));
+            const maxTY = Math.floor((pxY + height / 2) / (256 * scaleFactor));
             for (let tx = minTX; tx <= maxTX; tx++) {
                 for (let ty = minTY; ty <= maxTY; ty++) {
                     tilesSet.add(`${tx}_${ty}`);
@@ -2021,11 +2033,45 @@ async function exportVideo() {
             };
         }
 
-        // Update camera position to follow active point (centering on activePt)
-        const activePxX = lngToX(activePt.lon, zoom);
-        const activePxY = latToY(activePt.lat, zoom);
-        minPxX = activePxX - width / 2;
-        minPxY = activePxY - height / 2;
+        if (cameraMode === 'static') {
+            minPxX = staticMinPxX;
+            minPxY = staticMinPxY;
+        } else {
+            // Update camera position to follow active point (centering on activePt)
+            const activePxX = lngToX(activePt.lon, zoom);
+            const activePxY = latToY(activePt.lat, zoom);
+            minPxX = activePxX - width / 2;
+            minPxY = activePxY - height / 2;
+        }
+
+        // Clamp viewport coordinates to poster bounds if poster is active
+        if (isPosterActive && currentRoute.posterMapBounds) {
+            const bounds = currentRoute.posterMapBounds;
+            const latMin = bounds[0][0];
+            const lonMin = bounds[0][1];
+            const latMax = bounds[1][0];
+            const lonMax = bounds[1][1];
+            
+            const xMin = lngToX(lonMin, zoom);
+            const xMax = lngToX(lonMax, zoom);
+            const yMin = latToY(latMax, zoom);
+            const yMax = latToY(latMin, zoom);
+            
+            const mapWidth = xMax - xMin;
+            const mapHeight = yMax - yMin;
+            
+            if (mapWidth <= width) {
+                minPxX = xMin - (width - mapWidth) / 2;
+            } else {
+                minPxX = Math.max(xMin, Math.min(xMax - width, minPxX));
+            }
+            
+            if (mapHeight <= height) {
+                minPxY = yMin - (height - mapHeight) / 2;
+            } else {
+                minPxY = Math.max(yMin, Math.min(yMax - height, minPxY));
+            }
+        }
 
         // 1. Draw Map Tiles or Poster Background that cover the current viewport
         ctx.clearRect(0, 0, width, height);
@@ -2057,18 +2103,19 @@ async function exportVideo() {
                 ctx.drawImage(posterMapImg, dx, dy, dw, dh);
             }
         } else {
-            const frameTileMinX = Math.floor(minPxX / 256);
-            const frameTileMaxX = Math.floor((minPxX + width) / 256);
-            const frameTileMinY = Math.floor(minPxY / 256);
-            const frameTileMaxY = Math.floor((minPxY + height) / 256);
+            const frameTileMinX = Math.floor(minPxX / (256 * scaleFactor));
+            const frameTileMaxX = Math.floor((minPxX + width) / (256 * scaleFactor));
+            const frameTileMinY = Math.floor(minPxY / (256 * scaleFactor));
+            const frameTileMaxY = Math.floor((minPxY + height) / (256 * scaleFactor));
 
             for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
                 for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
                     const img = loadedTilesMap[`${tx}_${ty}`];
                     if (img) {
-                        const dx = tx * 256 - minPxX;
-                        const dy = ty * 256 - minPxY;
-                        ctx.drawImage(img, dx, dy);
+                        const dx = tx * 256 * scaleFactor - minPxX;
+                        const dy = ty * 256 * scaleFactor - minPxY;
+                        const ds = 256 * scaleFactor;
+                        ctx.drawImage(img, dx, dy, ds, ds);
                     }
                 }
             }
@@ -2311,6 +2358,14 @@ function loadSettingsIntoModal() {
     if (modeSelect) {
         modeSelect.value = localStorage.getItem('blaeu_animation_mode') || 'realtime';
     }
+    const cameraSelect = document.getElementById('camera-select');
+    if (cameraSelect) {
+        cameraSelect.value = localStorage.getItem('blaeu_camera_mode') || 'follow';
+    }
+    const aspectSelect = document.getElementById('aspect-ratio-select');
+    if (aspectSelect && currentUser) {
+        aspectSelect.value = currentUser.default_aspect_ratio || '16:9';
+    }
     const resSelect = document.getElementById('res-select');
     if (resSelect) {
         resSelect.value = localStorage.getItem('blaeu_video_res') || '1080';
@@ -2350,6 +2405,39 @@ async function saveSettingsModal() {
     const oldMode = localStorage.getItem('blaeu_animation_mode') || 'realtime';
     const newMode = modeSelect ? modeSelect.value : oldMode;
     localStorage.setItem('blaeu_animation_mode', newMode);
+
+    const cameraSelect = document.getElementById('camera-select');
+    const oldCamera = localStorage.getItem('blaeu_camera_mode') || 'follow';
+    const newCamera = cameraSelect ? cameraSelect.value : oldCamera;
+    localStorage.setItem('blaeu_camera_mode', newCamera);
+
+    const aspectSelect = document.getElementById('aspect-ratio-select');
+    if (aspectSelect && currentUser) {
+        const newVal = aspectSelect.value;
+        const oldVal = currentUser.default_aspect_ratio || '16:9';
+        if (newVal !== oldVal) {
+            try {
+                const res = await fetch('/api/auth/default-aspect-ratio', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ default_aspect_ratio: newVal })
+                });
+                if (res.ok) {
+                    currentUser.default_aspect_ratio = newVal;
+                    if (currentRoute && currentMapStyle !== 'dark') {
+                        delete currentRoute.posterMapUrl;
+                        delete currentRoute.posterMapBounds;
+                        delete currentRoute.posterMapBgColor;
+                        applyMapStyle();
+                    }
+                } else {
+                    console.error('Failed to update default map aspect ratio');
+                }
+            } catch (err) {
+                console.error('Error updating default map aspect ratio:', err);
+            }
+        }
+    }
 
     const resSelect = document.getElementById('res-select');
     if (resSelect) {
@@ -3143,6 +3231,8 @@ async function applyMapStyle() {
         delete currentRoute.posterMapBounds;
         delete currentRoute.posterMapBgColor;
 
+        map.setMaxBounds(null);
+
         const labelsContainer = document.getElementById('hud-map-poster-labels');
         if (labelsContainer) {
             labelsContainer.classList.add('hidden');
@@ -3170,9 +3260,11 @@ async function applyMapStyle() {
 
         // Check if there is completed poster map data matching our active style in database-cached status
         let cachedData = null;
+        const currentAspectRatio = (currentUser && currentUser.default_aspect_ratio) || '16:9';
         if (currentRoute.poster_status && 
             currentRoute.poster_status.status === 'completed' && 
             currentRoute.poster_status.theme === currentMapStyle && 
+            currentRoute.poster_status.aspect_ratio === currentAspectRatio &&
             labelsLoadedForRouteId !== currentRoute.id) {
             cachedData = currentRoute.poster_status;
         }
@@ -3187,6 +3279,7 @@ async function applyMapStyle() {
                 zIndex: 1
             }).addTo(map);
             posterMapOverlay.bringToBack();
+            map.setMaxBounds(posterMapOverlay.getBounds());
 
             currentRoute.posterMapUrl = cachedData.image_url;
             currentRoute.posterMapBounds = cachedData.bounds;
@@ -3212,7 +3305,7 @@ async function applyMapStyle() {
 
             const fetchRouteId = currentRoute.id;
             try {
-                let url = `/api/routes/${fetchRouteId}/poster-map?theme=${currentMapStyle}`;
+                let url = `/api/routes/${fetchRouteId}/poster-map?theme=${currentMapStyle}&aspectRatio=${encodeURIComponent(currentAspectRatio)}`;
                 if (labelsLoadedForRouteId === fetchRouteId) {
                     const cityVal = cityInput ? cityInput.value : '';
                     const countryVal = countryInput ? countryInput.value : '';
@@ -3236,6 +3329,7 @@ async function applyMapStyle() {
                     zIndex: 1
                 }).addTo(map);
                 posterMapOverlay.bringToBack();
+                map.setMaxBounds(posterMapOverlay.getBounds());
 
                 currentRoute.posterMapUrl = data.image_url;
                 currentRoute.posterMapBounds = data.bounds;
@@ -3437,15 +3531,20 @@ async function saveImage() {
         // Canvas resolution configuration
         const resSelect = document.getElementById('res-select');
         const resVal = resSelect ? resSelect.value : '1080';
-        let width = 1920;
         let height = 1080;
         
         if (resVal === '720') {
-            width = 1280;
             height = 720;
         } else if (resVal === '2160') {
-            width = 3840;
             height = 2160;
+        }
+
+        const aspectStr = (currentUser && currentUser.default_aspect_ratio) || '16:9';
+        const parts = aspectStr.split(':');
+        const targetAspect = parseFloat(parts[0]) / parseFloat(parts[1]);
+        let width = Math.round(height * targetAspect);
+        if (width % 2 !== 0) {
+            width += 1;
         }
 
         canvas.width = width;
@@ -3460,11 +3559,11 @@ async function saveImage() {
 
         // Web Mercator Formulas
         function lngToX(lng, z) {
-            return (lng + 180) / 360 * Math.pow(2, z) * 256;
+            return (lng + 180) / 360 * Math.pow(2, z) * 256 * scaleFactor;
         }
         function latToY(lat, z) {
             const latRad = lat * Math.PI / 180;
-            return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256;
+            return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * 256 * scaleFactor;
         }
 
         const centerPxX = lngToX(centerLon, zoom);
@@ -3474,10 +3573,10 @@ async function saveImage() {
 
         // Collect all tiles covering the viewport centered on the track
         const tilesSet = new Set();
-        const frameTileMinX = Math.floor(minPxX / 256);
-        const frameTileMaxX = Math.floor((minPxX + width) / 256);
-        const frameTileMinY = Math.floor(minPxY / 256);
-        const frameTileMaxY = Math.floor((minPxY + height) / 256);
+        const frameTileMinX = Math.floor(minPxX / (256 * scaleFactor));
+        const frameTileMaxX = Math.floor((minPxX + width) / (256 * scaleFactor));
+        const frameTileMinY = Math.floor(minPxY / (256 * scaleFactor));
+        const frameTileMaxY = Math.floor((minPxY + height) / (256 * scaleFactor));
 
         for (let tx = frameTileMinX; tx <= frameTileMaxX; tx++) {
             for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
@@ -3524,9 +3623,10 @@ async function saveImage() {
             for (let ty = frameTileMinY; ty <= frameTileMaxY; ty++) {
                 const img = loadedTilesMap[`${tx}_${ty}`];
                 if (img) {
-                    const dx = tx * 256 - minPxX;
-                    const dy = ty * 256 - minPxY;
-                    ctx.drawImage(img, dx, dy);
+                    const dx = tx * 256 * scaleFactor - minPxX;
+                    const dy = ty * 256 * scaleFactor - minPxY;
+                    const ds = 256 * scaleFactor;
+                    ctx.drawImage(img, dx, dy, ds, ds);
                 }
             }
         }

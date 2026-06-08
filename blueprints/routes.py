@@ -356,7 +356,7 @@ def get_route_poster_map(route_id):
     if lat_min_arg and lat_max_arg and lon_min_arg and lon_max_arg:
         apply_padding = False
 
-    from poster_map import generate_poster_background
+    from poster_map import generate_poster_background, OSMNetworkError
     try:
         data = generate_poster_background(
             route_id, lat_min, lat_max, lon_min, lon_max, theme_name,
@@ -380,6 +380,9 @@ def get_route_poster_map(route_id):
             })
             
         return jsonify(data)
+    except OSMNetworkError as e:
+        logger.warning(f"OSM network query error: {e}")
+        return jsonify({'error': str(e)}), 503
     except Exception as e:
         logger.exception("Unexpected error during poster map generation")
         return jsonify({'error': 'Poster map generation failed: An unexpected error occurred.'}), 500

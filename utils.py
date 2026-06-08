@@ -98,7 +98,7 @@ def run_async_poster_generation(route_id: int, user_id: int, theme_name: str) ->
                     'error': None
                 })
                 
-                from poster_map import generate_poster_background
+                from poster_map import generate_poster_background, OSMNetworkError
                 data = generate_poster_background(
                     route_id, lat_min, lat_max, lon_min, lon_max, theme_name
                 )
@@ -115,6 +115,13 @@ def run_async_poster_generation(route_id: int, user_id: int, theme_name: str) ->
                     'display_city': data['display_city'],
                     'display_country': data['display_country']
                 })
+        except OSMNetworkError as e:
+            logger.warning(f"Async poster generation failed: {e}")
+            update_route_poster_status(route_id, {
+                'status': 'failed',
+                'progress': 0,
+                'error': str(e)
+            })
         except Exception as e:
             logger.exception("Error during async poster generation")
             update_route_poster_status(route_id, {

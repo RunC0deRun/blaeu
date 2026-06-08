@@ -264,4 +264,33 @@ def test_generate_poster_map_with_corrupted_cache(client, mock_gis, tmp_path):
         mock_gis['graph_from_point'].return_value = original_return
 
 
+def test_generate_poster_map_osm_timeout(client, mock_gis):
+    # 1. Upload a route first
+    data = {
+        'file': (io.BytesIO(GPX_DATA_1.encode('utf-8')), 'test_route.gpx')
+    }
+    upload_res = client.post('/api/upload', data=data, content_type='multipart/form-data')
+    assert upload_res.status_code == 201
+    route_id = json.loads(upload_res.data)['id']
+    
+    # 2. Make graph_from_point raise requests.exceptions.Timeout
+    import requests
+    original_side_effect = mock_gis['graph_from_point'].side_effect
+    original_return = mock_gis['graph_from_point'].return_value
+    
+    mock_gis['graph_from_point'].side_effect = requests.exceptions.Timeout("Connection timed out")
+    mock_gis['graph_from_point'].return_value = None
+    
+    try:
+        response = client.get(f'/api/routes/{route_id}/poster-map?theme=noir')
+        assert response.status_code == 503
+        res_data = json.loads(response.data)
+        assert 'error' in res_data
+        assert 'timed out or failed' in res_data['error']
+    finally:
+        # Restore mock state
+        mock_gis['graph_from_point'].side_effect = original_side_effect
+        mock_gis['graph_from_point'].return_value = original_return
+
+
 

@@ -395,26 +395,13 @@
                     <!-- Tabs Navigation -->
                     <div class="settings-tabs" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">
                         <button type="button" class="tab-btn active" data-tab="settings-tab-general" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.95; border-bottom: 2px solid var(--primary); transition: all 0.2s;">General</button>
+                        <button type="button" class="tab-btn" data-tab="settings-tab-video" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Video</button>
                         <button type="button" class="tab-btn" data-tab="settings-tab-integrations" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Integrations</button>
                         <button type="button" class="tab-btn hidden" id="settings-admin-tab-btn" data-tab="settings-tab-admin" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">User Management</button>
                     </div>
 
                     <!-- General Settings Tab -->
                     <div id="settings-tab-general" class="settings-tab-pane">
-                        <div class="form-group">
-                            <label for="mode-select">Animation Mode</label>
-                            <select id="mode-select">
-                                <option value="realtime" selected>Real-Time (Time-Based)</option>
-                                <option value="smooth">Smooth (Constant Speed)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="camera-select">Camera Mode</label>
-                            <select id="camera-select">
-                                <option value="follow" selected>Follow Marker (Dynamic)</option>
-                                <option value="static">Static (Centered on Route)</option>
-                            </select>
-                        </div>
                         <div class="form-group">
                             <label for="aspect-ratio-select">Default Map Aspect Ratio</label>
                             <select id="aspect-ratio-select">
@@ -424,30 +411,6 @@
                                 <option value="3:2">3:2</option>
                                 <option value="3:4">3:4</option>
                                 <option value="9:16">9:16</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="res-select">Resolution</label>
-                            <select id="res-select">
-                                <option value="720">720p</option>
-                                <option value="1080" selected>1080p</option>
-                                <option value="2160">2160p</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="fps-select">Framerate (FPS)</label>
-                            <select id="fps-select">
-                                <option value="24">24</option>
-                                <option value="25">25</option>
-                                <option value="30" selected>30</option>
-                                <option value="50">50</option>
-                                <option value="60">60</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="format-select">File Format</label>
-                            <select id="format-select">
-                                <!-- Populated dynamically via JS -->
                             </select>
                         </div>
                         <div class="form-group">
@@ -484,6 +447,55 @@
                             <select id="watermark-select">
                                 <option value="off" selected>Off (Default)</option>
                                 <option value="on">On</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="export-stats-select">Include Statistics on Export</label>
+                            <select id="export-stats-select">
+                                <option value="off">Off</option>
+                                <option value="on" selected>On (Default)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Video Settings Tab -->
+                    <div id="settings-tab-video" class="settings-tab-pane hidden">
+                        <div class="form-group">
+                            <label for="mode-select">Animation Mode</label>
+                            <select id="mode-select">
+                                <option value="realtime" selected>Real-Time (Time-Based)</option>
+                                <option value="smooth">Smooth (Constant Speed)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="camera-select">Camera Mode</label>
+                            <select id="camera-select">
+                                <option value="follow" selected>Follow Marker (Dynamic)</option>
+                                <option value="static">Static (Centered on Route)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="res-select">Resolution</label>
+                            <select id="res-select">
+                                <option value="720">720p</option>
+                                <option value="1080" selected>1080p</option>
+                                <option value="2160">2160p</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="fps-select">Framerate (FPS)</label>
+                            <select id="fps-select">
+                                <option value="24">24</option>
+                                <option value="25">25</option>
+                                <option value="30" selected>30</option>
+                                <option value="50">50</option>
+                                <option value="60">60</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="format-select">File Format</label>
+                            <select id="format-select">
+                                <!-- Populated dynamically via JS -->
                             </select>
                         </div>
                     </div>

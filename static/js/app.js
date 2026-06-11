@@ -2408,6 +2408,10 @@ function loadSettingsIntoModal() {
     if (watermarkSelect) {
         watermarkSelect.value = localStorage.getItem('blaeu_show_watermark') || 'off';
     }
+    const exportStatsSelect = document.getElementById('export-stats-select');
+    if (exportStatsSelect) {
+        exportStatsSelect.value = localStorage.getItem('blaeu_show_export_stats') || 'on';
+    }
 }
 
 async function saveSettingsModal() {
@@ -2570,6 +2574,10 @@ async function saveSettingsModal() {
     const watermarkSelect = document.getElementById('watermark-select');
     if (watermarkSelect) {
         localStorage.setItem('blaeu_show_watermark', watermarkSelect.value);
+    }
+    const exportStatsSelect = document.getElementById('export-stats-select');
+    if (exportStatsSelect) {
+        localStorage.setItem('blaeu_show_export_stats', exportStatsSelect.value);
     }
 
     if (newMode !== oldMode || newPrivacy !== oldPrivacy) {
@@ -2847,6 +2855,9 @@ function drawIcon(ctx, type, x, y, size, color) {
 
 function drawTopStats(ctx, width, scaleFactor) {
     if (!currentRoute) return;
+
+    const showStats = localStorage.getItem('blaeu_show_export_stats') !== 'off';
+    if (!showStats) return;
 
     const isPosterActive = currentMapStyle !== 'dark' && currentRoute.posterMapUrl;
     const statsColor = isPosterActive ? (currentRoute.posterMapTextColor || '#8B4513') : '#00f0ff';

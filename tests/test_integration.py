@@ -180,21 +180,25 @@ def test_privacy_zone_cropping(server, test_gpx_path):
         
         # Check initial state: privacy distance should be default '0'
         assert page.evaluate("localStorage.getItem('blaeu_privacy_distance')") is None or page.evaluate("localStorage.getItem('blaeu_privacy_distance')") == '0'
+        assert page.evaluate("localStorage.getItem('blaeu_show_watermark')") is None or page.evaluate("localStorage.getItem('blaeu_show_watermark')") == 'off'
         
         # 3. Open settings modal
         page.click('#settings-btn')
         page.wait_for_selector('#settings-modal:not(.hidden)')
         
-        # 4. Select privacy zone range of 1000m
+        # 4. Select privacy zone range of 1000m and enable watermark
         page.select_option('#privacy-select', '1000')
+        page.select_option('#watermark-select', 'on')
         
         # Close/Save settings
         page.click('#close-settings-btn')
         page.wait_for_selector('#settings-modal', state="hidden")
         
-        # Verify the privacy setting is persisted in localStorage after saving
+        # Verify settings are persisted in localStorage after saving
         privacy_val = page.evaluate("localStorage.getItem('blaeu_privacy_distance')")
         assert privacy_val == '1000'
+        watermark_val = page.evaluate("localStorage.getItem('blaeu_show_watermark')")
+        assert watermark_val == 'on'
         
         # 5. Open settings modal again to test Cancel button
         page.click('#settings-btn')
@@ -202,23 +206,29 @@ def test_privacy_zone_cropping(server, test_gpx_path):
         
         # Change option but click Cancel
         page.select_option('#privacy-select', '0')
+        page.select_option('#watermark-select', 'off')
         page.click('#cancel-settings-btn')
         page.wait_for_selector('#settings-modal', state="hidden")
         
         # Verify that setting was NOT changed in localStorage
         privacy_val = page.evaluate("localStorage.getItem('blaeu_privacy_distance')")
         assert privacy_val == '1000'
+        watermark_val = page.evaluate("localStorage.getItem('blaeu_show_watermark')")
+        assert watermark_val == 'on'
         
-        # 6. Open settings modal again to restore privacy to 0
+        # 6. Open settings modal again to restore privacy to 0 and watermark to off
         page.click('#settings-btn')
         page.wait_for_selector('#settings-modal:not(.hidden)')
         page.select_option('#privacy-select', '0')
+        page.select_option('#watermark-select', 'off')
         page.click('#close-settings-btn')
         page.wait_for_selector('#settings-modal', state="hidden")
         
-        # Verify that setting was saved to 0
+        # Verify that settings were saved back to default
         privacy_val = page.evaluate("localStorage.getItem('blaeu_privacy_distance')")
         assert privacy_val == '0'
+        watermark_val = page.evaluate("localStorage.getItem('blaeu_show_watermark')")
+        assert watermark_val == 'off'
         
         # Verify that we can still play/scrub the animation without errors
         page.click('#play-pause-btn')

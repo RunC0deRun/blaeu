@@ -2236,12 +2236,15 @@ async function exportVideo() {
         ctx.stroke();
 
         // 6. Draw Modern Watermark Corner
-        ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
-        ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
-        ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
-        ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
-        ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
-        ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+        const showWatermark = localStorage.getItem('blaeu_show_watermark') === 'on';
+        if (showWatermark) {
+            ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+            ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
+            ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
+            ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
+            ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
+            ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+        }
 
         // Update progress bar
         currentFrame++;
@@ -2397,6 +2400,10 @@ function loadSettingsIntoModal() {
     const intervalsAutoSyncSelect = document.getElementById('settings-intervals-auto-sync');
     if (intervalsAutoSyncSelect) {
         intervalsAutoSyncSelect.value = currentIntervalsAutoSync;
+    }
+    const watermarkSelect = document.getElementById('watermark-select');
+    if (watermarkSelect) {
+        watermarkSelect.value = localStorage.getItem('blaeu_show_watermark') || 'off';
     }
 }
 
@@ -2554,6 +2561,11 @@ async function saveSettingsModal() {
                 alert(err.message);
             }
         }
+    }
+
+    const watermarkSelect = document.getElementById('watermark-select');
+    if (watermarkSelect) {
+        localStorage.setItem('blaeu_show_watermark', watermarkSelect.value);
     }
 
     if (newMode !== oldMode || newPrivacy !== oldPrivacy) {
@@ -3519,12 +3531,15 @@ async function saveImage() {
         }
 
         // Draw Watermark
-        ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
-        ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
-        ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
-        ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
-        ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
-        ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+        const showWatermark = localStorage.getItem('blaeu_show_watermark') === 'on';
+        if (showWatermark) {
+            ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+            ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
+            ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
+            ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
+            ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
+            ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+        }
 
     } else {
         // Dark Matter Style
@@ -3708,12 +3723,15 @@ async function saveImage() {
         }
 
         // 6. Draw Watermark
-        ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
-        ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
-        ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
-        ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
-        ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
-        ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+        const showWatermark = localStorage.getItem('blaeu_show_watermark') === 'on';
+        if (showWatermark) {
+            ctx.fillStyle = 'rgba(0, 240, 255, 0.85)';
+            ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
+            ctx.fillText(currentRoute.name.toUpperCase(), 40 * scaleFactor, height - 65 * scaleFactor);
+            ctx.fillStyle = 'rgba(147, 51, 234, 0.85)';
+            ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
+            ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
+        }
     }
 
     // Save/Download

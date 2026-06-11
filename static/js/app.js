@@ -2246,6 +2246,9 @@ async function exportVideo() {
             ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
         }
 
+        // Draw Top Stats Overlay
+        drawTopStats(ctx, width, scaleFactor);
+
         // Update progress bar
         currentFrame++;
         const totalProgress = 30 + Math.round(ratio * 70); // 30-100% progress
@@ -2435,6 +2438,7 @@ async function saveSettingsModal() {
                         delete currentRoute.posterMapUrl;
                         delete currentRoute.posterMapBounds;
                         delete currentRoute.posterMapBgColor;
+                        delete currentRoute.posterMapTextColor;
                         applyMapStyle();
                     }
                 } else {
@@ -2760,6 +2764,128 @@ async function handleDeleteRoute() {
     } catch (err) {
         alert(err.message);
     }
+}
+
+
+function hexToRgba(hex, alpha) {
+    let c = hex.substring(1);
+    if (c.length === 3) {
+        c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+    }
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function drawIcon(ctx, type, x, y, size, color) {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5 * (size / 20); // Scale line width proportionally
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    if (type === 'duration') {
+        // Clock icon
+        ctx.beginPath();
+        ctx.arc(x, y, size / 2, 0, 2 * Math.PI);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y - size / 3);
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + size / 4, y + size / 8);
+        ctx.stroke();
+    } else if (type === 'distance') {
+        // Map Pin / Marker icon
+        ctx.beginPath();
+        ctx.arc(x, y - size / 6, size / 3, 0, 2 * Math.PI);
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.moveTo(x - size / 3, y - size / 6);
+        ctx.bezierCurveTo(x - size / 3, y + size / 6, x, y + size / 2, x, y + size / 2);
+        ctx.bezierCurveTo(x, y + size / 2, x + size / 3, y + size / 6, x + size / 3, y - size / 6);
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.arc(x, y - size / 6, size / 8, 0, 2 * Math.PI);
+        ctx.stroke();
+    } else if (type === 'pace') {
+        // Fast-forward / Speedometer icon
+        ctx.beginPath();
+        ctx.arc(x, y + size / 8, size / 2, 0.8 * Math.PI, 2.2 * Math.PI); // Open circle
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.moveTo(x, y + size / 8);
+        ctx.lineTo(x + size / 4, y - size / 8); // Hand
+        ctx.stroke();
+        
+        // Dash at top
+        ctx.beginPath();
+        ctx.moveTo(x - size / 6, y - size / 3);
+        ctx.lineTo(x + size / 6, y - size / 3);
+        ctx.stroke();
+    } else if (type === 'gain') {
+        // Mountains icon
+        ctx.beginPath();
+        // Left small peak
+        ctx.moveTo(x - size / 2, y + size / 3);
+        ctx.lineTo(x - size / 6, y - size / 4);
+        ctx.lineTo(x + size / 6, y + size / 3);
+        // Right big peak
+        ctx.moveTo(x - size / 4, y + size / 3);
+        ctx.lineTo(x + size / 6, y - size / 2);
+        ctx.lineTo(x + size / 2, y + size / 3);
+        ctx.stroke();
+    }
+
+    ctx.restore();
+}
+
+function drawTopStats(ctx, width, scaleFactor) {
+    if (!currentRoute) return;
+
+    const isPosterActive = currentMapStyle !== 'dark' && currentRoute.posterMapUrl;
+    const statsColor = isPosterActive ? (currentRoute.posterMapTextColor || '#8B4513') : '#00f0ff';
+    const baseColor = isPosterActive ? (currentRoute.posterMapBgColor || '#F5EDE4') : '#070a19';
+
+    // Draw top linear gradient
+    const topGrad = ctx.createLinearGradient(0, 0, 0, 110 * scaleFactor);
+    topGrad.addColorStop(0, hexToRgba(baseColor, 0.85));
+    topGrad.addColorStop(1, hexToRgba(baseColor, 0.0));
+    ctx.fillStyle = topGrad;
+    ctx.fillRect(0, 0, width, 110 * scaleFactor);
+
+    // Prepare stats data
+    const stats = [
+        { type: 'distance', value: formatDistance(currentRoute.total_distance) },
+        { type: 'duration', value: formatDuration(currentRoute.duration) },
+        { type: 'pace', value: formatPace(currentRoute.avg_speed) },
+        { type: 'gain', value: `${Math.round(currentRoute.elevation_gain)} m` }
+    ];
+
+    // Draw each stat distributed horizontally
+    ctx.save();
+    ctx.textAlign = 'center';
+    
+    stats.forEach((stat, idx) => {
+        const x = (width / 4) * (idx + 0.5);
+        
+        // Draw Icon
+        const iconSize = 20 * scaleFactor;
+        const iconY = 35 * scaleFactor;
+        drawIcon(ctx, stat.type, x, iconY, iconSize, statsColor);
+        
+        // Draw Value
+        ctx.fillStyle = statsColor;
+        ctx.font = `700 ${Math.round(20 * scaleFactor)}px "Outfit", sans-serif`;
+        ctx.fillText(stat.value, x, 75 * scaleFactor);
+    });
+    
+    ctx.restore();
 }
 
 // ----------------------------------------------------
@@ -3296,6 +3422,7 @@ async function applyMapStyle() {
             currentRoute.posterMapUrl = cachedData.image_url;
             currentRoute.posterMapBounds = cachedData.bounds;
             currentRoute.posterMapBgColor = cachedData.bg_color;
+            currentRoute.posterMapTextColor = cachedData.text_color;
 
             if (labelsLoadedForRouteId !== currentRoute.id) {
                 if (cityInput) cityInput.value = cachedData.display_city || '';
@@ -3346,6 +3473,7 @@ async function applyMapStyle() {
                 currentRoute.posterMapUrl = data.image_url;
                 currentRoute.posterMapBounds = data.bounds;
                 currentRoute.posterMapBgColor = data.bg_color;
+                currentRoute.posterMapTextColor = data.text_color;
 
                 if (labelsLoadedForRouteId !== currentRoute.id) {
                     if (cityInput) cityInput.value = data.display_city || '';
@@ -3541,6 +3669,9 @@ async function saveImage() {
             ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
         }
 
+        // Draw Top Stats Overlay
+        drawTopStats(ctx, width, scaleFactor);
+
     } else {
         // Dark Matter Style
         // Canvas resolution configuration
@@ -3732,6 +3863,9 @@ async function saveImage() {
             ctx.font = `600 ${Math.round(11 * scaleFactor)}px "Outfit", sans-serif`;
             ctx.fillText('BLAEU GPX CARTOGRAPHER', 40 * scaleFactor, height - 45 * scaleFactor);
         }
+
+        // Draw Top Stats Overlay
+        drawTopStats(ctx, width, scaleFactor);
     }
 
     // Save/Download

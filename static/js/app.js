@@ -91,8 +91,31 @@ function initMap() {
     waypointMarkersGroup = L.layerGroup().addTo(map);
 }
 
+// Mobile navigation helper functions
+function closeMobileSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    if (sidebar) sidebar.classList.remove('open');
+    if (backdrop) backdrop.classList.remove('active');
+}
+
+function openMobileSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    if (sidebar) sidebar.classList.add('open');
+    if (backdrop) backdrop.classList.add('active');
+}
+
 // Bind DOM and custom event handlers
 function initAppEvents() {
+    // Register mobile navigation listeners
+    const menuToggle = document.getElementById('menu-toggle-btn');
+    const menuClose = document.getElementById('menu-close-btn');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    if (menuToggle) menuToggle.addEventListener('click', openMobileSidebar);
+    if (menuClose) menuClose.addEventListener('click', closeMobileSidebar);
+    if (backdrop) backdrop.addEventListener('click', closeMobileSidebar);
+
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('file-input');
     const fileNameDisplay = document.getElementById('file-name-display');
@@ -540,6 +563,7 @@ function showDashboardView(show) {
 // Deselect selected route and return to dashboard
 function deselectRoute() {
     stopAnimation();
+    closeMobileSidebar();
     if (routePolyline) map.removeLayer(routePolyline);
     if (animatedPolyline) map.removeLayer(animatedPolyline);
     if (animationMarker) map.removeLayer(animationMarker);
@@ -1103,6 +1127,7 @@ async function handleUpload() {
 async function selectRoute(routeId) {
     stopAnimation();
     showDashboardView(false); // Switch to Map Mode
+    closeMobileSidebar();
 
     try {
         const res = await fetch(`/api/routes/${routeId}`);
@@ -2318,6 +2343,7 @@ function closeFoldersModal() {
 
 // Settings Modal Operations
 function openSettingsModal() {
+    closeMobileSidebar();
     loadSettingsIntoModal();
     
     // Reset tabs to General tab
@@ -2602,6 +2628,7 @@ function cancelSettingsModal() {
 
 // About Modal Operations
 async function openAboutModal() {
+    closeMobileSidebar();
     document.getElementById('about-modal').classList.remove('hidden');
     try {
         const res = await fetch('/api/about');

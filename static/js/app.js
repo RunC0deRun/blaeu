@@ -1805,10 +1805,44 @@ async function exportVideo() {
     // Scale factor for drawing vectors and fonts relative to baseline 1080p
     const scaleFactor = height / 1080;
 
-    // Get current map zoom and bounds
-    const zoom = map.getZoom();
-    const mapBounds = map.getBounds();
-    const center = map.getCenter();
+    // Calculate optimal zoom level independently of the browser window size/view
+    let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+    animationPoints.forEach(pt => {
+        if (pt.lat < minLat) minLat = pt.lat;
+        if (pt.lat > maxLat) maxLat = pt.lat;
+        if (pt.lon < minLon) minLon = pt.lon;
+        if (pt.lon > maxLon) maxLon = pt.lon;
+    });
+
+    // Helper functions for Web Mercator at zoom 0
+    function lngToX0(lng) {
+        return (lng + 180) / 360 * 256;
+    }
+    function latToY0(lat) {
+        const latRad = lat * Math.PI / 180;
+        return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * 256;
+    }
+
+    const xMin0 = lngToX0(minLon);
+    const xMax0 = lngToX0(maxLon);
+    const yMin0 = latToY0(maxLat);
+    const yMax0 = latToY0(minLat);
+
+    const routeW0 = xMax0 - xMin0;
+    const routeH0 = yMax0 - yMin0;
+
+    // Target box with 15% padding on all sides (70% of canvas dimensions)
+    const targetW = width * 0.7;
+    const targetH = height * 0.7;
+
+    const zWidth = Math.log2(targetW / (routeW0 * scaleFactor));
+    const zHeight = Math.log2(targetH / (routeH0 * scaleFactor));
+    
+    const zoom = Math.max(0, Math.min(18, Math.floor(Math.min(zWidth, zHeight))));
+    const center = {
+        lat: (minLat + maxLat) / 2,
+        lng: (minLon + maxLon) / 2
+    };
 
     // Web Mercator Formulas
     function lngToX(lng, z) {
@@ -2020,12 +2054,37 @@ async function exportVideo() {
     recorder.start();
 
     // Map GPX coords to Canvas pixels
-    function latLngToCanvasPx(lat, lng) {
-        const pxX = lngToX(lng, zoom);
-        const pxY = latToY(lat, zoom);
-        return {
-            x: pxX - minPxX,
-            y: pxY - minPxY
+    let latLngToCanvasPx;
+    if (isPosterActive && currentRoute.posterMapBounds) {
+        const bounds = currentRoute.posterMapBounds;
+        const bLatMin = bounds[0][0];
+        const bLonMin = bounds[0][1];
+        const bLatMax = bounds[1][0];
+        const bLonMax = bounds[1][1];
+        
+        const pMin = map.options.crs.project(L.latLng(bLatMin, bLonMin));
+        const pMax = map.options.crs.project(L.latLng(bLatMax, bLonMax));
+        
+        const xMin = pMin.x;
+        const xMax = pMax.x;
+        const yMin = pMin.y;
+        const yMax = pMax.y;
+
+        latLngToCanvasPx = function(lat, lng) {
+            const p = map.options.crs.project(L.latLng(lat, lng));
+            return {
+                x: ((p.x - xMin) / (xMax - xMin)) * width,
+                y: (1.0 - (p.y - yMin) / (yMax - yMin)) * height
+            };
+        };
+    } else {
+        latLngToCanvasPx = function(lat, lng) {
+            const pxX = lngToX(lng, zoom);
+            const pxY = latToY(lat, zoom);
+            return {
+                x: pxX - minPxX,
+                y: pxY - minPxY
+            };
         };
     }
 
@@ -2058,43 +2117,16 @@ async function exportVideo() {
             };
         }
 
-        if (cameraMode === 'static') {
-            minPxX = staticMinPxX;
-            minPxY = staticMinPxY;
-        } else {
-            // Update camera position to follow active point (centering on activePt)
-            const activePxX = lngToX(activePt.lon, zoom);
-            const activePxY = latToY(activePt.lat, zoom);
-            minPxX = activePxX - width / 2;
-            minPxY = activePxY - height / 2;
-        }
-
-        // Clamp viewport coordinates to poster bounds if poster is active
-        if (isPosterActive && currentRoute.posterMapBounds) {
-            const bounds = currentRoute.posterMapBounds;
-            const latMin = bounds[0][0];
-            const lonMin = bounds[0][1];
-            const latMax = bounds[1][0];
-            const lonMax = bounds[1][1];
-            
-            const xMin = lngToX(lonMin, zoom);
-            const xMax = lngToX(lonMax, zoom);
-            const yMin = latToY(latMax, zoom);
-            const yMax = latToY(latMin, zoom);
-            
-            const mapWidth = xMax - xMin;
-            const mapHeight = yMax - yMin;
-            
-            if (mapWidth <= width) {
-                minPxX = xMin - (width - mapWidth) / 2;
+        if (!isPosterActive) {
+            if (cameraMode === 'static') {
+                minPxX = staticMinPxX;
+                minPxY = staticMinPxY;
             } else {
-                minPxX = Math.max(xMin, Math.min(xMax - width, minPxX));
-            }
-            
-            if (mapHeight <= height) {
-                minPxY = yMin - (height - mapHeight) / 2;
-            } else {
-                minPxY = Math.max(yMin, Math.min(yMax - height, minPxY));
+                // Update camera position to follow active point (centering on activePt)
+                const activePxX = lngToX(activePt.lon, zoom);
+                const activePxY = latToY(activePt.lat, zoom);
+                minPxX = activePxX - width / 2;
+                minPxY = activePxY - height / 2;
             }
         }
 
@@ -2103,29 +2135,11 @@ async function exportVideo() {
         ctx.save();
         
         if (isPosterActive) {
-            // Draw solid background color
-            ctx.fillStyle = currentRoute.posterMapBgColor || '#0e1320';
-            ctx.fillRect(0, 0, width, height);
-            
-            // Draw static poster map image oriented correctly
-            if (posterMapImg && currentRoute.posterMapBounds) {
-                const bounds = currentRoute.posterMapBounds;
-                const latMin = bounds[0][0];
-                const lonMin = bounds[0][1];
-                const latMax = bounds[1][0];
-                const lonMax = bounds[1][1];
-                
-                const xMin = lngToX(lonMin, zoom);
-                const xMax = lngToX(lonMax, zoom);
-                const yMin = latToY(latMax, zoom);
-                const yMax = latToY(latMin, zoom);
-                
-                const dx = xMin - minPxX;
-                const dy = yMin - minPxY;
-                const dw = xMax - xMin;
-                const dh = yMax - yMin;
-                
-                ctx.drawImage(posterMapImg, dx, dy, dw, dh);
+            if (posterMapImg) {
+                ctx.drawImage(posterMapImg, 0, 0, width, height);
+            } else {
+                ctx.fillStyle = currentRoute.posterMapBgColor || '#0e1320';
+                ctx.fillRect(0, 0, width, height);
             }
         } else {
             const frameTileMinX = Math.floor(minPxX / (256 * scaleFactor));

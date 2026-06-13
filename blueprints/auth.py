@@ -39,7 +39,10 @@ def register():
         is_first = (user_count == 0)
         is_admin = 1 if is_first else 0
         
-        password_hash = generate_password_hash(password)
+        try:
+            password_hash = generate_password_hash(password)
+        except AttributeError:
+            password_hash = generate_password_hash(password, method='pbkdf2:sha256')
         user_id = add_user(username, password_hash, is_admin)
         
         # Backfill existing ownerless data to the first admin user

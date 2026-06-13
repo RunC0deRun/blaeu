@@ -412,7 +412,7 @@ def test_garmin_import_success(client, monkeypatch):
 
 def test_garmin_connect_rate_limit(client, monkeypatch):
     from unittest.mock import MagicMock
-    from garminconnect.exceptions import GarminConnectTooManyRequestsError
+    from garminconnect import GarminConnectTooManyRequestsError
     
     mock_garmin = MagicMock()
     mock_garmin.return_value.login.side_effect = GarminConnectTooManyRequestsError("Too many login attempts.")
@@ -429,7 +429,7 @@ def test_garmin_connect_rate_limit(client, monkeypatch):
 
 def test_garmin_activities_rate_limit(client, monkeypatch):
     from unittest.mock import MagicMock
-    from garminconnect.exceptions import GarminConnectTooManyRequestsError
+    from garminconnect import GarminConnectTooManyRequestsError
     import db
     
     db.save_garmin_connection(1, 'test@example.com', 'Garmin Champ')
@@ -449,7 +449,7 @@ def test_garmin_activities_rate_limit(client, monkeypatch):
 
 def test_garmin_import_rate_limit(client, monkeypatch):
     from unittest.mock import MagicMock
-    from garminconnect.exceptions import GarminConnectTooManyRequestsError
+    from garminconnect import GarminConnectTooManyRequestsError
     import db
     
     db.save_garmin_connection(1, 'test@example.com', 'Garmin Champ')
@@ -466,7 +466,7 @@ def test_garmin_import_rate_limit(client, monkeypatch):
 
 def test_garmin_connect_fallback_rate_limit(client, monkeypatch):
     from unittest.mock import MagicMock
-    from garminconnect.exceptions import GarminConnectAuthenticationError
+    from garminconnect import GarminConnectAuthenticationError
     
     mock_garmin = MagicMock()
     # Mock login to succeed, but di_token is None (fallback case)

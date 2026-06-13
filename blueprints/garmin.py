@@ -3,7 +3,7 @@ import hashlib
 import json
 from datetime import datetime
 from flask import Blueprint, request, jsonify
-from garminconnect.exceptions import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
+from garminconnect import GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
 import logging
 
 logger = logging.getLogger('blaeu.garmin')

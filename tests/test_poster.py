@@ -8,11 +8,11 @@ import geopandas as gpd
 # Mock the entire osmnx and matplotlib operations to make test fast and network-free
 @pytest.fixture
 def mock_gis():
-    with patch('osmnx.graph_from_point') as mock_graph_pt, \
+    with patch('osmnx.graph_from_bbox') as mock_graph_bbox, \
          patch('osmnx.project_graph') as mock_proj, \
-         patch('osmnx.features_from_point') as mock_feats, \
+         patch('osmnx.features_from_bbox') as mock_feats, \
          patch('matplotlib.pyplot.savefig') as mock_save:
-        
+         
         # Create a real MultiDiGraph with nodes and edges to satisfy graph_to_gdfs
         import networkx as nx
         from shapely.geometry import LineString
@@ -24,10 +24,10 @@ def mock_gis():
         geom = LineString([(0, 0), (1000, 1000)])
         g.add_edge(1, 2, highway='primary', geometry=geom)
         
-        mock_graph_pt.return_value = g
+        mock_graph_bbox.return_value = g
         mock_proj.return_value = g
         
-        # Mock features_from_point to return empty gdf
+        # Mock features_from_bbox to return empty gdf
         mock_feats.return_value = gpd.GeoDataFrame()
         
         # Mock savefig to actually touch the target output file so it exists
@@ -38,9 +38,9 @@ def mock_gis():
         mock_save.side_effect = side_effect
         
         yield {
-            'graph_from_point': mock_graph_pt,
+            'graph_from_bbox': mock_graph_bbox,
             'project_graph': mock_proj,
-            'features_from_point': mock_feats,
+            'features_from_bbox': mock_feats,
             'savefig': mock_save
         }
 
@@ -215,10 +215,10 @@ def test_generate_poster_map_with_corrupted_cache(client, mock_gis, tmp_path):
     original_cache_folder = ox.settings.cache_folder
     ox.settings.cache_folder = str(cache_dir)
     
-    # Setup mock graph_from_point side effect
+    # Setup mock graph_from_bbox side effect
     call_count = 0
-    original_side_effect = mock_gis['graph_from_point'].side_effect
-    original_return = mock_gis['graph_from_point'].return_value
+    original_side_effect = mock_gis['graph_from_bbox'].side_effect
+    original_return = mock_gis['graph_from_bbox'].return_value
     
     def side_effect(*args, **kwargs):
         nonlocal call_count
@@ -228,8 +228,8 @@ def test_generate_poster_map_with_corrupted_cache(client, mock_gis, tmp_path):
         # On second call, return the mock graph
         return original_return
         
-    mock_gis['graph_from_point'].side_effect = side_effect
-    mock_gis['graph_from_point'].return_value = None
+    mock_gis['graph_from_bbox'].side_effect = side_effect
+    mock_gis['graph_from_bbox'].return_value = None
     
     try:
         # Generate poster map
@@ -260,8 +260,8 @@ def test_generate_poster_map_with_corrupted_cache(client, mock_gis, tmp_path):
     finally:
         # Restore mock state and ox cache folder
         ox.settings.cache_folder = original_cache_folder
-        mock_gis['graph_from_point'].side_effect = original_side_effect
-        mock_gis['graph_from_point'].return_value = original_return
+        mock_gis['graph_from_bbox'].side_effect = original_side_effect
+        mock_gis['graph_from_bbox'].return_value = original_return
 
 
 def test_generate_poster_map_osm_timeout(client, mock_gis):
@@ -273,13 +273,13 @@ def test_generate_poster_map_osm_timeout(client, mock_gis):
     assert upload_res.status_code == 201
     route_id = json.loads(upload_res.data)['id']
     
-    # 2. Make graph_from_point raise requests.exceptions.Timeout
+    # 2. Make graph_from_bbox raise requests.exceptions.Timeout
     import requests
-    original_side_effect = mock_gis['graph_from_point'].side_effect
-    original_return = mock_gis['graph_from_point'].return_value
+    original_side_effect = mock_gis['graph_from_bbox'].side_effect
+    original_return = mock_gis['graph_from_bbox'].return_value
     
-    mock_gis['graph_from_point'].side_effect = requests.exceptions.Timeout("Connection timed out")
-    mock_gis['graph_from_point'].return_value = None
+    mock_gis['graph_from_bbox'].side_effect = requests.exceptions.Timeout("Connection timed out")
+    mock_gis['graph_from_bbox'].return_value = None
     
     try:
         response = client.get(f'/api/routes/{route_id}/poster-map?theme=noir')
@@ -289,8 +289,8 @@ def test_generate_poster_map_osm_timeout(client, mock_gis):
         assert 'timed out or failed' in res_data['error']
     finally:
         # Restore mock state
-        mock_gis['graph_from_point'].side_effect = original_side_effect
-        mock_gis['graph_from_point'].return_value = original_return
+        mock_gis['graph_from_bbox'].side_effect = original_side_effect
+        mock_gis['graph_from_bbox'].return_value = original_return
 
 
 def test_generate_poster_map_with_aspect_ratio(client, mock_gis):
@@ -314,6 +314,67 @@ def test_generate_poster_map_with_aspect_ratio(client, mock_gis):
     
     # The image URLs should be different because the aspect ratio is part of the file hash
     assert url_default != url_custom
+
+
+def test_generate_poster_background_safe_zone(client, mock_gis):
+    from poster_map import generate_poster_background
+    
+    # 1. Upload a route first to get a valid route ID and initialize the DB
+    data = {
+        'file': (io.BytesIO(GPX_DATA_1.encode('utf-8')), 'test_route.gpx')
+    }
+    upload_res = client.post('/api/upload', data=data, content_type='multipart/form-data')
+    assert upload_res.status_code == 201
+    route_id = json.loads(upload_res.data)['id']
+
+    # 2. No labels/gradients:
+    res_no_labels = generate_poster_background(
+        route_id=route_id,
+        lat_min=52.5, lat_max=52.6,
+        lon_min=13.4, lon_max=13.5,
+        theme_name="noir",
+        display_city="", display_country="",  # falsy => no gradients
+        aspect_ratio="1:1"
+    )
+    bounds_no_labels = res_no_labels['bounds']
+    lat_min_no, lon_min_no = bounds_no_labels[0]
+    lat_max_no, lon_max_no = bounds_no_labels[1]
+    
+    # 3. With labels/gradients:
+    res_labels = generate_poster_background(
+        route_id=route_id,
+        lat_min=52.5, lat_max=52.6,
+        lon_min=13.4, lon_max=13.5,
+        theme_name="noir",
+        display_city="Berlin", display_country="Germany",  # truthy => gradients active
+        aspect_ratio="1:1"
+    )
+    bounds_labels = res_labels['bounds']
+    lat_min_l, lon_min_l = bounds_labels[0]
+    lat_max_l, lon_max_l = bounds_labels[1]
+    
+    # With gradients/labels active and aspect_ratio 1:1, the height must be significantly larger (taller) 
+    # than when they are inactive, because of the safe zone requirement.
+    height_no_labels = lat_max_no - lat_min_no
+    height_labels = lat_max_l - lat_min_l
+    
+    assert height_labels > height_no_labels
+    
+    # Also verify that the original route latitude bounds [52.5, 52.6] are strictly within 
+    # the middle 50% of the returned bounds_labels [lat_min_l, lat_max_l].
+    from pyproj import Transformer
+    to_3857 = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    _, y_route_min = to_3857.transform(13.4, 52.5)
+    _, y_route_max = to_3857.transform(13.5, 52.6)
+    
+    _, y_min_l = to_3857.transform(lon_min_l, lat_min_l)
+    _, y_max_l = to_3857.transform(lon_max_l, lat_max_l)
+    height_m_l = y_max_l - y_min_l
+    
+    assert y_route_min >= y_min_l + 0.25 * height_m_l - 1.0
+    assert y_route_max <= y_max_l - 0.25 * height_m_l + 1.0
+
+
 
 
 

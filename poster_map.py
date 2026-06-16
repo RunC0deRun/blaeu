@@ -220,23 +220,62 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
         width_m = x_max - x_min
         height_m = y_max - y_min
     
-    # Adjust aspect ratio to match target_aspect exactly
-    aspect = width_m / height_m
-    if aspect < target_aspect:
-        # Too tall: expand width to achieve target_aspect
-        target_width = height_m * target_aspect
-        diff = target_width - width_m
-        x_min -= diff / 2
-        x_max += diff / 2
-        width_m = target_width
-    elif aspect > target_aspect:
-        # Too wide: expand height to achieve target_aspect
-        target_height = width_m / target_aspect
-        diff = target_height - height_m
-        y_min -= diff / 2
-        y_max += diff / 2
-        height_m = target_height
+    # Resolve display city/country if not specified
+    if display_city is None or display_country is None:
+        temp_center_lon = (lon_min + lon_max) / 2
+        temp_center_lat = (lat_min + lat_max) / 2
+        detected_city, detected_country = reverse_geocode(temp_center_lat, temp_center_lon)
+        if display_city is None:
+            display_city = detected_city
+        if display_country is None:
+            display_country = detected_country
+
+    if display_city or display_country:
+        # We have top and bottom gradients/labels. The safe zone is between 25% and 75% height.
+        bottom_margin = 0.25
+        top_margin = 0.25
         
+        # Calculate minimum height to satisfy the vertical safe zone constraint:
+        # H >= H_route / (1 - bottom_margin - top_margin)
+        safe_y_ratio = 1.0 - bottom_margin - top_margin
+        min_h_for_safe_zone = height_m / safe_y_ratio
+        
+        # H must also satisfy the aspect ratio constraint: W = R * H >= W_route => H >= W_route / R
+        h_min_required = max(width_m / target_aspect, min_h_for_safe_zone)
+        
+        # Final width and height
+        height_m = h_min_required
+        width_m = height_m * target_aspect
+        
+        # Center the route in the horizontal and vertical space
+        center_x = (x_min + x_max) / 2
+        center_y = (y_min + y_max) / 2
+        
+        x_min = center_x - width_m / 2
+        x_max = center_x + width_m / 2
+        
+        # Center in the vertical safe zone:
+        # y_min = y_route_center - 0.5 * H * (1 + bottom_margin - top_margin)
+        y_min = center_y - 0.5 * height_m * (1.0 + bottom_margin - top_margin)
+        y_max = y_min + height_m
+    else:
+        # Standard aspect ratio adjustment (original code)
+        aspect = width_m / height_m
+        if aspect < target_aspect:
+            # Too tall: expand width to achieve target_aspect
+            target_width = height_m * target_aspect
+            diff = target_width - width_m
+            x_min -= diff / 2
+            x_max += diff / 2
+            width_m = target_width
+        elif aspect > target_aspect:
+            # Too wide: expand height to achieve target_aspect
+            target_height = width_m / target_aspect
+            diff = target_height - height_m
+            y_min -= diff / 2
+            y_max += diff / 2
+            height_m = target_height
+            
     aspect = width_m / height_m
         
     # Calculate final bounding box and center in EPSG:4326
@@ -248,14 +287,6 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     corner_dist = math.sqrt((width_m / 2)**2 + (height_m / 2)**2)
     # Cap the query radius to 50km to avoid OOM or excessive processing on massive/corrupted routes
     corner_dist = min(corner_dist, 50000)
-    
-    # Resolve display city/country if not specified
-    if display_city is None or display_country is None:
-        detected_city, detected_country = reverse_geocode(center_lat, center_lon)
-        if display_city is None:
-            display_city = detected_city
-        if display_country is None:
-            display_country = detected_country
 
     # Generate bbox hash to uniquely identify this crop area and label/aspect settings
     label_str = f"{display_city or ''}_{display_country or ''}"
@@ -307,19 +338,19 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
 
         
     # Fetch map data
-    point = (center_lat, center_lon)
+    bbox = (lon_min_final, lat_min_final, lon_max_final, lat_max_final)
     
     max_retries = 1
     for attempt in range(max_retries + 1):
         try:
             # 1. Fetch street network
             try:
-                # If the area is large (>15km), fetch only major roads to save memory and CPU
-                if corner_dist > 15000:
+                # If the area is large (>15km in either direction), fetch only major roads to save memory and CPU
+                if max(width_m, height_m) > 15000:
                     cf = '["highway"~"motorway|trunk|primary|secondary|tertiary"]'
-                    g = ox.graph_from_point(point, dist=corner_dist, dist_type='bbox', custom_filter=cf, truncate_by_edge=True)
+                    g = ox.graph_from_bbox(bbox, custom_filter=cf, truncate_by_edge=True)
                 else:
-                    g = ox.graph_from_point(point, dist=corner_dist, dist_type='bbox', network_type='all', truncate_by_edge=True)
+                    g = ox.graph_from_bbox(bbox, network_type='all', truncate_by_edge=True)
                 g_proj = ox.project_graph(g, to_crs='EPSG:3857')
             except json.JSONDecodeError as e:
                 raise e
@@ -339,7 +370,7 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
             # 2. Fetch water features (optional)
             water = None
             try:
-                water = ox.features_from_point(point, tags={"natural": ["water", "bay", "strait"], "waterway": "riverbank"}, dist=corner_dist)
+                water = ox.features_from_bbox(bbox, tags={"natural": ["water", "bay", "strait"], "waterway": "riverbank"})
             except json.JSONDecodeError as e:
                 raise e
             except Exception as e:
@@ -354,7 +385,12 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
             # 3. Fetch parks (optional)
             parks = None
             try:
-                parks = ox.features_from_point(point, tags={"leisure": "park", "landuse": "grass"}, dist=corner_dist)
+                # If the area is large (>15km in either direction), skip landuse=grass to avoid huge queries, memory usage and timeouts.
+                # Tiny grass features are not visible at this scale anyway.
+                if max(width_m, height_m) > 15000:
+                    parks = ox.features_from_bbox(bbox, tags={"leisure": "park"})
+                else:
+                    parks = ox.features_from_bbox(bbox, tags={"leisure": "park", "landuse": "grass"})
             except json.JSONDecodeError as e:
                 raise e
             except Exception as e:

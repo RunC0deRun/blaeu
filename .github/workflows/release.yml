@@ -12,7 +12,7 @@ jobs:
       contents: write # Required to create releases
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # Fetches all history so the changelog tool can see past commits
 

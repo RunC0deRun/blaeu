@@ -7,6 +7,7 @@ __pycache__/
 
 # Caches
 .cache/
+cache
 
 # Virtual Environment
 venv/

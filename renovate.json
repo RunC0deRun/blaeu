@@ -6,7 +6,7 @@
   "packageRules": [
     {
       "description": "Hold Python at 3.14 until h3 and pyogrio publish cp315 wheels",
-      "matchPackageNames": ["python"],
+      "matchDepNames": ["python"],
       "allowedVersions": "<3.15"
     }
   ]

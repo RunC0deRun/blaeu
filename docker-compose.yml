@@ -9,6 +9,10 @@ services:
       - DATA_DIR=/data
       - BLAEU_ALLOW_REGISTRATION=${BLAEU_ALLOW_REGISTRATION:-false}
       - BLAEU_WORKERS=${BLAEU_WORKERS:-2}
+      - CARTO_API_KEY=${CARTO_API_KEY:-}
+      - BLAEU_OVERPASS_TIMEOUT=${BLAEU_OVERPASS_TIMEOUT:-180}
+      - BLAEU_OVERPASS_URL=${BLAEU_OVERPASS_URL:-}
+      - BLAEU_WORKER_TIMEOUT=${BLAEU_WORKER_TIMEOUT:-300}
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

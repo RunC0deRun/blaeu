@@ -1,4 +1,6 @@
+import io
 import os
+import hashlib
 import requests
 import logging
 from flask import Blueprint, request, jsonify, send_file
@@ -9,6 +11,16 @@ from utils import (
 
 logger = logging.getLogger('blaeu.media')
 media_bp = Blueprint('media', __name__)
+
+CARTO_API_KEY = os.getenv('CARTO_API_KEY', '').strip()
+CARTO_TILE_URL = "https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png"
+
+# MD5 of the "API KEY REQUIRED" image CARTO serves (with HTTP 200) for dark_all
+# when the key is missing or invalid. These must never be written to the tile cache.
+CARTO_PLACEHOLDER_MD5 = {'df9307c738f2c6dbc0f8d31837019f98'}
+
+if not CARTO_API_KEY:
+    logger.warning("CARTO_API_KEY is not set; map tiles will show CARTO's 'API KEY REQUIRED' placeholder.")
 
 # Tile Proxy endpoint with local filesystem cache
 @media_bp.route('/api/tiles/<int:z>/<int:x>/<int:y>.png', methods=['GET'])
@@ -32,7 +44,8 @@ def get_map_tile(z, x, y):
         return send_file(tile_path, mimetype='image/png')
         
     # Fetch from CartoDB Dark Matter
-    url = f"https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+    url = CARTO_TILE_URL.format(z=z, x=x, y=y)
+    params = {'key': CARTO_API_KEY} if CARTO_API_KEY else None
     headers = {
         'User-Agent': 'BlaeuGPXCartographer/1.0 (https://github.com/jan/blaeu)',
         'Referer': request.referrer or 'https://github.com/jan/blaeu'
@@ -40,9 +53,14 @@ def get_map_tile(z, x, y):
     
     try:
         os.makedirs(tile_dir, exist_ok=True)
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, params=params, timeout=10)
         
-        if response.status_code == 200:
+        if response.status_code == 200 and hashlib.md5(response.content).hexdigest() in CARTO_PLACEHOLDER_MD5:
+            logger.warning("CARTO returned the 'API KEY REQUIRED' placeholder tile; check CARTO_API_KEY.")
+            resp = send_file(io.BytesIO(response.content), mimetype='image/png')
+            resp.headers['Cache-Control'] = 'no-store'
+            return resp
+        elif response.status_code == 200:
             with open(tile_path, 'wb') as f:
                 f.write(response.content)
             return send_file(tile_path, mimetype='image/png')

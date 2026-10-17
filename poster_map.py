@@ -167,7 +167,10 @@ os.makedirs(POSTER_MAPS_DIR, exist_ok=True)
 # Configure OSMnx settings
 ox.settings.use_cache = True
 ox.settings.cache_folder = os.path.join(DATA_DIR, 'osmnx_cache')
-ox.settings.requests_timeout = 30
+# Overpass can be slow under load; the timeout is also sent to Overpass as the server-side query timeout.
+ox.settings.requests_timeout = int(os.getenv('BLAEU_OVERPASS_TIMEOUT', '180'))
+if os.getenv('BLAEU_OVERPASS_URL'):
+    ox.settings.overpass_url = os.getenv('BLAEU_OVERPASS_URL').rstrip('/')
 os.makedirs(ox.settings.cache_folder, exist_ok=True)
 
 # Transformers for EPSG:4326 <-> EPSG:3857

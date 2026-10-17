@@ -635,6 +635,32 @@ def test_tile_proxy_boundaries(client, monkeypatch):
     assert res_invalid_y.status_code == 400
     assert b"Tile coordinates out of bounds" in res_invalid_y.data
 
+def test_tile_proxy_carto_key_and_placeholder(client, monkeypatch, tmp_path):
+    import sys
+    import hashlib
+    import requests
+    from unittest.mock import MagicMock
+    from blueprints import media
+
+    placeholder = b"carto_placeholder_tile"
+    monkeypatch.setattr(media, "CARTO_API_KEY", "test-key")
+    monkeypatch.setattr(media, "CARTO_PLACEHOLDER_MD5", {hashlib.md5(placeholder).hexdigest()})
+    monkeypatch.setattr(sys.modules["app"], "TILES_CACHE_DIR", str(tmp_path))
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = placeholder
+    mock_get = MagicMock(return_value=mock_response)
+    monkeypatch.setattr(requests, "get", mock_get)
+
+    res = client.get('/api/tiles/4/8/5.png')
+    assert res.status_code == 200
+    assert res.data == placeholder
+    assert res.headers['Cache-Control'] == 'no-store'
+    assert mock_get.call_args.kwargs['params'] == {'key': 'test-key'}
+    # Placeholder must not be written to the tile cache
+    assert not (tmp_path / '4' / '8' / '5.png').exists()
+
 def test_session_cookie_flags():
     assert app.config['SESSION_COOKIE_HTTPONLY'] is True
     assert app.config['SESSION_COOKIE_SAMESITE'] == 'Lax'

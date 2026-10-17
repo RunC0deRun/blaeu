@@ -88,6 +88,10 @@ The following environment variables can be configured when running the Docker co
 | `SESSION_COOKIE_SECURE` | `true` | Restricts session cookies to secure HTTPS connections. Set to `false` if hosting on HTTP only. |
 | `BLAEU_BEHIND_PROXY` | `false` | Set to `true` if hosting Blaeu behind a reverse proxy (e.g., Nginx, Traefik) to enable Flask `ProxyFix` middleware. |
 | `BLAEU_ALLOW_REGISTRATION` | `false` | Set to `true` to allow public user account registration on the login page. |
+| `CARTO_API_KEY` | *None* | API key for the CARTO Dark Matter basemap tiles. Required since CARTO's September 2026 basemap terms; without it every tile shows "API KEY REQUIRED". Request a free key at [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey). |
+| `BLAEU_OVERPASS_URL` | `https://overpass-api.de/api` | Overpass API endpoint used by OSMnx to fetch poster map data. Point it at another Overpass instance if the public one is overloaded. |
+| `BLAEU_OVERPASS_TIMEOUT` | `180` | Timeout in seconds for Overpass queries when generating poster maps. |
+| `BLAEU_WORKER_TIMEOUT` | `300` | Gunicorn worker timeout in seconds. Keep it above `BLAEU_OVERPASS_TIMEOUT`, since poster maps are generated within the request. |
 
 ---
 

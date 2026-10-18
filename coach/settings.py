@@ -17,6 +17,9 @@ DEFAULT_TEMPERATURE = 0.4
 DEFAULT_MAX_ANSWER_TOKENS = 1024
 # How much a reasoning model thinks before answering. '' keeps the model's default.
 REASONING_LEVELS = ('', 'off', 'low', 'medium', 'high')
+# How the coach uses the library: 'auto' lets the model search with a tool when it supports
+# tools and otherwise searches once with the question; 'tools' and 'always' force one way
+LIBRARY_SEARCH_MODES = ('auto', 'tools', 'always', 'off')
 
 # Host names that stay on this machine or local network
 LOCAL_SUFFIXES = ('.local', '.lan', '.home', '.internal', '.home.arpa', '.localhost')
@@ -29,6 +32,10 @@ class SettingsError(ValueError):
 def _env_bool(name, default=False):
     value = os.getenv(name)
     return default if value is None else value.lower() == 'true'
+
+
+def _valid(value, allowed, default):
+    return value if value in allowed else default
 
 
 def get_llm_config():
@@ -60,6 +67,11 @@ def get_llm_config():
         'temperature': temperature,
         'reasoning': reasoning if reasoning in REASONING_LEVELS else '',
         'max_answer_tokens': DEFAULT_MAX_ANSWER_TOKENS,
+        'library_search': _valid(pick('library_search', 'BLAEU_LLM_LIBRARY_SEARCH', 'auto'), LIBRARY_SEARCH_MODES, 'auto'),
+        # Embeddings for the training literature library; empty means no library search
+        'embedding_model': pick('embedding_model', 'BLAEU_LLM_EMBEDDING_MODEL', '') or '',
+        # Optional separate endpoint for embeddings, e.g. a local Ollama next to a hosted chat model
+        'embedding_base_url': (pick('embedding_base_url', 'BLAEU_LLM_EMBEDDING_BASE_URL', '') or '').rstrip('/'),
     }
 
 
@@ -68,12 +80,28 @@ def public_llm_config(config=None):
     config = dict(config or get_llm_config())
     api_key = config.pop('api_key')
     config['api_key_set'] = bool(api_key)
-    config['is_external'] = is_external_endpoint(config['base_url']) if config['base_url'] else False
+    config['is_external'] = any(
+        is_external_endpoint(url) for url in (config['base_url'], config['embedding_base_url']) if url
+    )
     return config
 
 
 def is_configured(config):
     return bool(config['enabled'] and config['base_url'] and config['model'])
+
+
+def embedding_config(config):
+    """
+    The endpoint used for embeddings. A separate embedding endpoint never receives the chat
+    endpoint's API key, so a hosted provider's key isn't sent to another server.
+    """
+    if config.get('embedding_base_url') and config['embedding_base_url'] != config['base_url']:
+        return dict(config, base_url=config['embedding_base_url'], api_key='')
+    return config
+
+
+def is_library_configured(config):
+    return bool(embedding_config(config)['base_url'] and config['embedding_model'])
 
 
 def is_external_endpoint(base_url):
@@ -133,6 +161,18 @@ def parse_llm_settings(data):
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 2:
             raise SettingsError('The temperature must be a number between 0 and 2.')
         changes['temperature'] = float(value)
+    if 'library_search' in data:
+        if data['library_search'] not in LIBRARY_SEARCH_MODES:
+            raise SettingsError('Library search must be one of: auto, tools, always or off.')
+        changes['library_search'] = data['library_search']
+    if 'embedding_model' in data:
+        value = (data['embedding_model'] or '').strip()
+        if len(value) > 200:
+            raise SettingsError('The embedding model name is too long.')
+        changes['embedding_model'] = value
+    if 'embedding_base_url' in data:
+        value = (data['embedding_base_url'] or '').strip()
+        changes['embedding_base_url'] = validate_base_url(value) if value else ''
     if 'reasoning' in data:
         value = data['reasoning'] or ''
         if value not in REASONING_LEVELS:

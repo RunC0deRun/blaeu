@@ -148,7 +148,18 @@ class ThinkSplitter:
         return events
 
 
-def _stream_ollama(config, messages, max_tokens, temperature):
+def _parse_arguments(arguments):
+    """Tool arguments arrive as an object (Ollama) or a JSON string (OpenAI)."""
+    if isinstance(arguments, dict):
+        return arguments
+    try:
+        parsed = json.loads(arguments or '{}')
+        return parsed if isinstance(parsed, dict) else {}
+    except ValueError:
+        return {}
+
+
+def _stream_ollama(config, messages, max_tokens, temperature, tools=None):
     payload = {
         'model': config['model'],
         'messages': messages,
@@ -162,6 +173,8 @@ def _stream_ollama(config, messages, max_tokens, temperature):
     # Only sent when the admin chose a level, so models without reasoning are unaffected
     if config.get('reasoning'):
         payload['think'] = False if config['reasoning'] == 'off' else config['reasoning']
+    if tools:
+        payload['tools'] = tools
     resp = _request('POST', f"{api_root(config['base_url'])}/api/chat", config, 'generating an answer',
                     json=payload, stream=True, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
     with resp:
@@ -179,13 +192,19 @@ def _stream_ollama(config, messages, max_tokens, temperature):
                 yield ('reasoning', message['thinking'])
             if message.get('content'):
                 yield ('content', message['content'])
+            for call in message.get('tool_calls') or []:
+                function = call.get('function') or {}
+                yield ('tool_call', {
+                    'id': call.get('id'), 'name': function.get('name'),
+                    'arguments': _parse_arguments(function.get('arguments')),
+                })
             if chunk.get('done'):
                 if chunk.get('done_reason') == 'length':
                     yield ('truncated', '')
                 return
 
 
-def _stream_openai(config, messages, max_tokens, temperature):
+def _stream_openai(config, messages, max_tokens, temperature, tools=None):
     payload = {
         'model': config['model'],
         'messages': messages,
@@ -195,16 +214,20 @@ def _stream_openai(config, messages, max_tokens, temperature):
     }
     if config.get('reasoning'):
         payload['reasoning_effort'] = 'none' if config['reasoning'] == 'off' else config['reasoning']
+    if tools:
+        payload['tools'] = tools
     resp = _request('POST', f"{config['base_url']}/chat/completions", config,
                     'generating an answer', json=payload, stream=True,
                     timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+    # Tool calls arrive in fragments (name first, arguments in pieces), keyed by index
+    calls = {}
     with resp:
         for line in resp.iter_lines(decode_unicode=True):
             if not line or not line.startswith('data:'):
                 continue
             data = line[5:].strip()
             if data == '[DONE]':
-                return
+                break
             try:
                 chunk = json.loads(data)
             except ValueError:
@@ -222,25 +245,78 @@ def _stream_openai(config, messages, max_tokens, temperature):
                     yield ('reasoning', reasoning)
                 if delta.get('content'):
                     yield ('content', delta['content'])
+                for fragment in delta.get('tool_calls') or []:
+                    call = calls.setdefault(fragment.get('index', 0), {'id': None, 'name': '', 'arguments': ''})
+                    call['id'] = fragment.get('id') or call['id']
+                    function = fragment.get('function') or {}
+                    call['name'] += function.get('name') or ''
+                    call['arguments'] += function.get('arguments') or ''
+    for index in sorted(calls):
+        call = calls[index]
+        yield ('tool_call', {'id': call['id'], 'name': call['name'], 'arguments': _parse_arguments(call['arguments'])})
 
 
-def stream_chat(config, messages, max_tokens=None, temperature=None, is_ollama=None):
-    """Streams an answer as ('content' | 'reasoning', text) events."""
+def stream_chat(config, messages, max_tokens=None, temperature=None, is_ollama=None, tools=None):
+    """
+    Streams an answer as ('content' | 'reasoning', text) events, plus ('tool_call', call)
+    when tools are offered and the model wants to use one.
+    """
     if is_ollama is None:
         is_ollama = detect_ollama(config)
     max_tokens = max_tokens or config['max_answer_tokens']
     temperature = config['temperature'] if temperature is None else temperature
-    source = (_stream_ollama if is_ollama else _stream_openai)(config, messages, max_tokens, temperature)
+    source = (_stream_ollama if is_ollama else _stream_openai)(config, messages, max_tokens, temperature, tools)
     splitter = ThinkSplitter()
     try:
-        for kind, text in source:
-            if kind in ('reasoning', 'truncated'):
-                yield (kind, text)
+        for kind, value in source:
+            if kind == 'content':
+                yield from splitter.feed(value)
             else:
-                yield from splitter.feed(text)
+                yield (kind, value)
         yield from splitter.flush()
     except requests.exceptions.RequestException:
         raise LLMError('The connection to the LLM endpoint was interrupted.')
+
+
+def assistant_tool_call_message(calls, content, is_ollama):
+    """The assistant's turn that requested tools, in the format the endpoint expects back."""
+    if is_ollama:
+        return {'role': 'assistant', 'content': content,
+                'tool_calls': [{'function': {'name': c['name'], 'arguments': c['arguments']}} for c in calls]}
+    return {'role': 'assistant', 'content': content or None, 'tool_calls': [
+        {'id': c['id'], 'type': 'function',
+         'function': {'name': c['name'], 'arguments': json.dumps(c['arguments'])}}
+        for c in calls
+    ]}
+
+
+def tool_result_message(call, content, is_ollama):
+    if is_ollama:
+        return {'role': 'tool', 'tool_name': call['name'], 'content': content}
+    return {'role': 'tool', 'tool_call_id': call['id'], 'content': content}
+
+
+_tools_cache = {}
+
+
+def model_supports_tools(config):
+    """
+    Whether the model can call tools. Ollama reports it per model; other OpenAI-compatible
+    endpoints are assumed to support it (admins can choose automatic search instead).
+    """
+    if not detect_ollama(config):
+        return True
+    key = (api_root(config['base_url']), config['model'])
+    cached = _tools_cache.get(key)
+    if cached and time.monotonic() - cached[1] < OLLAMA_CACHE_SECONDS:
+        return cached[0]
+    try:
+        resp = requests.post(f"{key[0]}/api/show", json={'model': config['model']}, timeout=PROBE_TIMEOUT)
+        result = resp.status_code == 200 and 'tools' in (resp.json().get('capabilities') or [])
+    except (requests.exceptions.RequestException, ValueError):
+        result = False
+    _tools_cache[key] = (result, time.monotonic())
+    return result
 
 
 def test_connection(config):

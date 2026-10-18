@@ -1433,7 +1433,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
 /* Settings Tab Navigation styling */
 .settings-tabs {
     display: flex;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 4px 6px;
     margin-bottom: 20px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     padding-bottom: 8px;
@@ -2331,4 +2332,188 @@ input[type="range"]::-webkit-slider-thumb:hover {
         flex-direction: column;
         gap: 0;
     }
+}
+
+/* Training literature library */
+.library-upload {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.library-heading {
+    color: var(--primary);
+    font-family: var(--font-main);
+    margin: 0 0 10px;
+}
+
+.library-documents {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.library-document {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.15);
+}
+
+.library-document-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.library-document-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+}
+
+.library-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 10px;
+    margin-left: 6px;
+    vertical-align: middle;
+    border: 1px solid var(--border-hover);
+    color: var(--primary);
+}
+
+.library-badge.personal {
+    border-color: rgba(147, 51, 234, 0.6);
+    color: #c084fc;
+}
+
+.library-document-status {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.library-document-status.failed {
+    color: var(--danger);
+}
+
+.library-document-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.library-document .progress-bar {
+    margin: 8px 0 0;
+}
+
+.library-preview,
+.library-search-results {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.library-passage {
+    border-left: 2px solid var(--border-hover);
+    padding: 4px 0 4px 10px;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.library-passage-source {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--primary);
+    margin-bottom: 2px;
+    white-space: normal;
+}
+
+/* Library searches and sources in coach answers */
+.coach-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 8px;
+}
+
+.coach-step {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    padding-left: 18px;
+    position: relative;
+}
+
+.coach-step::before {
+    content: '⌕';
+    position: absolute;
+    left: 0;
+    color: var(--primary);
+}
+
+.coach-step.active {
+    color: var(--text-main);
+}
+
+.coach-cite {
+    color: var(--primary);
+    font-size: 0.7em;
+    cursor: help;
+    margin-left: 1px;
+}
+
+.coach-sources {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+}
+
+.coach-sources-heading {
+    color: var(--primary);
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.coach-source summary {
+    cursor: pointer;
+    color: var(--text-main);
+    padding: 2px 0;
+}
+
+.coach-source-text {
+    white-space: pre-wrap;
+    color: var(--text-muted);
+    margin: 4px 0 6px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border-hover);
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.coach-sources-more {
+    margin-top: 4px;
+    color: var(--text-muted);
+}
+
+.coach-sources-more > summary {
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+.coach-sources-more .coach-source {
+    margin-left: 10px;
 }

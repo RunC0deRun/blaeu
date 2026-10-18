@@ -7,7 +7,8 @@ native /api/chat, which accepts num_ctx. Everything else goes through /chat/comp
 
 stream_chat() yields ('content', text) and ('reasoning', text) events. Reasoning from
 "thinking" models arrives either as a separate field or inline in <think> tags; both end up
-as 'reasoning' so the UI can fold it away.
+as 'reasoning' so the UI can fold it away. A final ('truncated', '') event means the model hit
+its output limit, which reasoning models can reach before they write any answer.
 """
 import json
 import logging
@@ -176,6 +177,8 @@ def _stream_ollama(config, messages, max_tokens, temperature):
             if message.get('content'):
                 yield ('content', message['content'])
             if chunk.get('done'):
+                if chunk.get('done_reason') == 'length':
+                    yield ('truncated', '')
                 return
 
 
@@ -206,6 +209,8 @@ def _stream_openai(config, messages, max_tokens, temperature):
                 detail = error.get('message') if isinstance(error, dict) else error
                 raise LLMError(f"The LLM returned an error: {str(detail)[:200]}")
             for choice in chunk.get('choices') or []:
+                if choice.get('finish_reason') == 'length':
+                    yield ('truncated', '')
                 delta = choice.get('delta') or {}
                 reasoning = delta.get('reasoning_content') or delta.get('reasoning')
                 if reasoning:
@@ -224,18 +229,13 @@ def stream_chat(config, messages, max_tokens=None, temperature=None, is_ollama=N
     splitter = ThinkSplitter()
     try:
         for kind, text in source:
-            if kind == 'reasoning':
+            if kind in ('reasoning', 'truncated'):
                 yield (kind, text)
             else:
                 yield from splitter.feed(text)
         yield from splitter.flush()
     except requests.exceptions.RequestException:
         raise LLMError('The connection to the LLM endpoint was interrupted.')
-
-
-def complete(config, messages, max_tokens=None, temperature=None, is_ollama=None):
-    return ''.join(text for kind, text in stream_chat(config, messages, max_tokens, temperature, is_ollama)
-                   if kind == 'content')
 
 
 def test_connection(config):
@@ -258,8 +258,12 @@ def test_connection(config):
             result['error'] = 'Choose a model to finish the test.'
             return result
         started = time.monotonic()
-        reply = complete(config, [{'role': 'user', 'content': 'Reply with only the word OK.'}],
-                         max_tokens=200, temperature=0, is_ollama=result['is_ollama'])
+        # Generous output room: a reasoning model thinks before it answers
+        events = list(stream_chat(config, [{'role': 'user', 'content': 'Reply with only the word OK.'}],
+                                  max_tokens=2048, temperature=0, is_ollama=result['is_ollama']))
+        reply = ''.join(text for kind, text in events if kind == 'content')
+        if not reply.strip() and any(kind == 'truncated' for kind, _ in events):
+            raise LLMError('The model used its whole output limit on reasoning without answering.')
         result['seconds'] = round(time.monotonic() - started, 1)
         result['reply'] = reply.strip()[:200]
         result['ok'] = True

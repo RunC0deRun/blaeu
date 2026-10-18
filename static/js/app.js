@@ -5241,7 +5241,9 @@ async function checkCoachAvailability() {
         const data = await res.json();
         coachAvailable = data.available;
         document.getElementById('coach-open-btn').classList.toggle('hidden', !coachAvailable);
-        document.getElementById('coach-panel-model').textContent = data.model || '';
+        const modelLabel = document.getElementById('coach-panel-model');
+        modelLabel.textContent = data.model || '';
+        modelLabel.title = data.model || '';
         document.getElementById('coach-disclaimer').textContent = data.is_external
             ? 'Answers come from an external AI provider that receives your training data. The coach can make mistakes and is no substitute for medical advice.'
             : 'The coach can make mistakes and is no substitute for medical advice.';
@@ -5402,10 +5404,12 @@ function appendCoachMessage(role, content, reasoning, status) {
     const el = document.createElement('div');
     el.className = `coach-message ${role}`;
     let reasoningText = null;
+    let reasoningSummary = null;
     if (role === 'assistant') {
         const details = document.createElement('details');
         details.className = 'coach-reasoning';
         details.innerHTML = '<summary>Reasoning</summary>';
+        reasoningSummary = details.querySelector('summary');
         reasoningText = document.createElement('div');
         reasoningText.className = 'coach-reasoning-text';
         reasoningText.textContent = reasoning || '';
@@ -5429,7 +5433,7 @@ function appendCoachMessage(role, content, reasoning, status) {
     }
     container.appendChild(el);
     container.scrollTop = container.scrollHeight;
-    return { el, body, reasoningText };
+    return { el, body, reasoningText, reasoningSummary };
 }
 
 function appendCoachError(message, canRetry) {
@@ -5470,8 +5474,22 @@ function submitCoachInput() {
     sendCoachMessage(text);
 }
 
+function formatThinkingTime(seconds) {
+    return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+}
+
 async function sendCoachMessage(text, retry = false) {
     if (coachAbortController) return;
+    let thinkingStarted = null;
+    let thinkingTimer = null;
+    const stopThinkingTimer = () => {
+        if (thinkingTimer) clearInterval(thinkingTimer);
+        thinkingTimer = null;
+        if (thinkingStarted !== null && view) {
+            const seconds = Math.round((Date.now() - thinkingStarted) / 1000);
+            view.reasoningSummary.textContent = `Reasoning (${formatThinkingTime(seconds)})`;
+        }
+    };
     coachAbortController = new AbortController();
     setCoachBusy(true);
     let answer = '';
@@ -5505,6 +5523,7 @@ async function sendCoachMessage(text, retry = false) {
         const container = document.getElementById('coach-messages');
         let buffer = '';
         let errorMessage = null;
+        let doneStatus = null;
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -5518,9 +5537,19 @@ async function sendCoachMessage(text, retry = false) {
                 const data = dataLine ? JSON.parse(dataLine) : {};
                 const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
                 if (event === 'content') {
+                    if (thinkingTimer) stopThinkingTimer();
                     answer += data.text;
                     view.body.innerHTML = renderCoachMarkdown(answer);
                 } else if (event === 'reasoning') {
+                    if (thinkingStarted === null && !answer) {
+                        thinkingStarted = Date.now();
+                        const tick = () => {
+                            const seconds = Math.round((Date.now() - thinkingStarted) / 1000);
+                            view.reasoningSummary.textContent = `Thinking... ${formatThinkingTime(seconds)}`;
+                        };
+                        tick();
+                        thinkingTimer = setInterval(tick, 1000);
+                    }
                     reasoning += data.text;
                     view.reasoningText.textContent = reasoning;
                     view.reasoningText.parentElement.hidden = false;
@@ -5528,6 +5557,7 @@ async function sendCoachMessage(text, retry = false) {
                     errorMessage = data.message;
                 } else if (event === 'done') {
                     finished = true;
+                    doneStatus = data.status;
                 }
                 if (nearBottom) container.scrollTop = container.scrollHeight;
             }
@@ -5538,6 +5568,11 @@ async function sendCoachMessage(text, retry = false) {
             appendCoachError(errorMessage, !answer);
         } else if (!finished) {
             appendCoachError('The connection to the coach was interrupted.', !answer);
+        } else if (doneStatus === 'interrupted') {
+            const note = document.createElement('span');
+            note.className = 'coach-message-note';
+            note.textContent = 'This answer was cut short.';
+            view.el.appendChild(note);
         }
     } catch (err) {
         if (view) view.body.classList.remove('coach-typing');
@@ -5553,6 +5588,7 @@ async function sendCoachMessage(text, retry = false) {
             appendCoachError(err.message, coachConversationId !== null && !answer);
         }
     } finally {
+        if (thinkingTimer) stopThinkingTimer();
         coachAbortController = null;
         setCoachBusy(false);
         document.getElementById('coach-input').focus();

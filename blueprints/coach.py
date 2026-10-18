@@ -10,7 +10,7 @@ from db import (
 )
 from utils import get_current_user_id, rate_limit
 from coach import llm
-from coach.context import build_messages, ContextTooSmall
+from coach.context import build_messages, output_budget, ContextTooSmall
 from coach.settings import (
     get_llm_config, public_llm_config, is_configured, save_llm_settings, preview_llm_config,
     SettingsError,
@@ -245,16 +245,28 @@ def send_message(conversation_id):
         add_chat_message(conversation_id, 'user', content)
         _set_title_if_missing(conversation, content)
 
+    max_tokens = output_budget(messages, config)
+
     def generate():
         parts, reasoning = [], []
+        truncated = False
         status = 'interrupted'
         error_message = None
         try:
             yield _sse('start', {'model': config['model']})
-            for kind, text in llm.stream_chat(config, messages):
+            for kind, text in llm.stream_chat(config, messages, max_tokens=max_tokens):
+                if kind == 'truncated':
+                    truncated = True
+                    continue
                 (parts if kind == 'content' else reasoning).append(text)
                 yield _sse(kind, {'text': text})
-            status = 'complete'
+            if truncated and not parts:
+                status, error_message = 'error', (
+                    'The model used its whole output limit on reasoning before answering. '
+                    'An administrator can raise the context window in the AI coach settings.'
+                )
+            else:
+                status = 'interrupted' if truncated else 'complete'
         except llm.LLMError as e:
             status, error_message = 'error', str(e)
         except GeneratorExit:

@@ -236,12 +236,27 @@ class ContextTooSmall(Exception):
     """Even the shortest prompt and the latest message don't fit the context window."""
 
 
+def answer_reserve(config):
+    """
+    Tokens kept free for the model's output. Reasoning models think before answering and
+    that counts towards the output, so reserve a quarter of the window, never less than
+    max_answer_tokens.
+    """
+    return max(config['max_answer_tokens'], config['context_window'] // 4)
+
+
+def output_budget(messages, config):
+    """How many tokens the model may generate: everything the prompt leaves free."""
+    prompt = sum(estimate_tokens(m['content']) + MESSAGE_OVERHEAD_TOKENS for m in messages)
+    return max(answer_reserve(config), config['context_window'] - prompt - SAFETY_MARGIN_TOKENS)
+
+
 def build_messages(user_id, history, config, today=None):
     """
     Returns the messages to send: the system prompt, then as many recent history messages
     as fit. history is a list of {'role', 'content'} ending with the user's new message.
     """
-    budget = config['context_window'] - config['max_answer_tokens'] - SAFETY_MARGIN_TOKENS
+    budget = config['context_window'] - answer_reserve(config) - SAFETY_MARGIN_TOKENS
     for level in range(len(DETAIL_LEVELS)):
         system = build_system_prompt(user_id, today, level)
         system_tokens = estimate_tokens(system) + MESSAGE_OVERHEAD_TOKENS

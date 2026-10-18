@@ -2027,6 +2027,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .coach-panel-model {
     display: block;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-family: var(--font-mono);
     font-size: 0.7rem;
     color: var(--text-muted);
@@ -2273,6 +2277,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
     border: 1px solid var(--border);
     padding: 4px 8px;
     text-align: left;
+}
+
+.coach-message.assistant th:first-child,
+.coach-message.assistant td:first-child {
+    white-space: nowrap;
 }
 
 .coach-composer {

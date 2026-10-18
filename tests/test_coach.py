@@ -7,7 +7,9 @@ import requests
 
 import db
 from coach import llm, settings as coach_settings
-from coach.context import build_messages, build_system_prompt, ContextTooSmall, estimate_tokens
+from coach.context import (
+    build_messages, build_system_prompt, ContextTooSmall, estimate_tokens, answer_reserve, output_budget,
+)
 
 TODAY = date(2026, 10, 18)
 
@@ -141,6 +143,34 @@ def test_ollama_native_stream_sets_context_size():
     assert kwargs['json']['options']['num_ctx'] == 4096
 
 
+def test_output_limit_is_reported_as_truncated():
+    ollama_lines = [
+        json.dumps({'message': {'thinking': 'long thoughts'}, 'done': False}),
+        json.dumps({'message': {'content': ''}, 'done': True, 'done_reason': 'length'}),
+    ]
+    with patch('requests.request', return_value=_stream_response(ollama_lines)):
+        events = list(llm.stream_chat(CONFIG, [], is_ollama=True))
+    assert events == [('reasoning', 'long thoughts'), ('truncated', '')]
+
+    openai_lines = [
+        'data: ' + json.dumps({'choices': [{'delta': {'content': 'Half an'}}]}),
+        'data: ' + json.dumps({'choices': [{'delta': {}, 'finish_reason': 'length'}]}),
+        'data: [DONE]',
+    ]
+    with patch('requests.request', return_value=_stream_response(openai_lines)):
+        events = list(llm.stream_chat(CONFIG, [], is_ollama=False))
+    assert events == [('content', 'Half an'), ('truncated', '')]
+
+
+def test_connection_test_explains_reasoning_without_answer():
+    lines = [json.dumps({'message': {'thinking': 'hmm'}, 'done': True, 'done_reason': 'length'})]
+    with patch('coach.llm.detect_ollama', return_value=True), \
+            patch('coach.llm.list_models', return_value=['m']), \
+            patch('requests.request', return_value=_stream_response(lines)):
+        result = llm.test_connection(dict(CONFIG, model='m'))
+    assert not result['ok'] and 'reasoning' in result['error']
+
+
 @pytest.mark.parametrize('status,fragment', [
     (401, 'API key'), (404, 'not found'), (429, 'rate limiting'), (500, 'HTTP 500'),
 ])
@@ -246,6 +276,16 @@ def test_build_messages_reduces_detail_for_small_windows(admin_id):
                               {'context_window': 2048, 'max_answer_tokens': 1024}, TODAY)
     assert len(messages[0]['content']) < len(full)
     assert 'Sub 1:45 half marathon' in messages[0]['content']  # the profile always stays
+
+
+def test_output_room_for_reasoning_models(admin_id):
+    config = {'context_window': 8192, 'max_answer_tokens': 1024}
+    assert answer_reserve(config) == 2048  # a quarter of the window, for thinking plus answer
+    messages = build_messages(admin_id, [{'role': 'user', 'content': 'Hi'}], config, TODAY)
+    prompt_tokens = sum(estimate_tokens(m['content']) for m in messages)
+    budget = output_budget(messages, config)
+    assert budget >= 2048
+    assert prompt_tokens + budget <= 8192
 
 
 def test_build_messages_rejects_message_that_cannot_fit(admin_id):
@@ -375,6 +415,29 @@ def test_partial_answer_is_kept_on_error(authed_client, configured):
     messages = authed_client.get(f"/api/coach/conversations/{conversation['id']}").get_json()['messages']
     assert messages[-1]['content'] == 'Start of an answer'
     assert messages[-1]['status'] == 'interrupted'
+
+
+def test_reasoning_without_answer_is_an_error(authed_client, configured):
+    conversation = authed_client.post('/api/coach/conversations').get_json()
+    url = f"/api/coach/conversations/{conversation['id']}/messages"
+    with patch('coach.llm.stream_chat', return_value=iter([('reasoning', 'thinking...'), ('truncated', '')])) as chat:
+        events = _sse_events(authed_client.post(url, json={'content': 'Plan my week'}))
+    assert chat.call_args.kwargs['max_tokens'] >= 2048
+    error = next(data for event, data in events if event == 'error')
+    assert 'output limit' in error['message']
+    assert events[-1][1]['status'] == 'error'
+    messages = authed_client.get(f"/api/coach/conversations/{conversation['id']}").get_json()['messages']
+    assert [m['role'] for m in messages] == ['user']  # can be retried
+
+
+def test_cut_off_answer_is_kept_as_interrupted(authed_client, configured):
+    conversation = authed_client.post('/api/coach/conversations').get_json()
+    url = f"/api/coach/conversations/{conversation['id']}/messages"
+    with patch('coach.llm.stream_chat', return_value=iter([('content', 'Start of a plan'), ('truncated', '')])):
+        events = _sse_events(authed_client.post(url, json={'content': 'Plan my week'}))
+    assert events[-1][1]['status'] == 'interrupted'
+    messages = authed_client.get(f"/api/coach/conversations/{conversation['id']}").get_json()['messages']
+    assert messages[-1]['status'] == 'interrupted' and messages[-1]['content'] == 'Start of a plan'
 
 
 def test_chat_requires_configuration_and_valid_input(authed_client, admin_id):

@@ -79,7 +79,10 @@ def test_llm_settings():
         return jsonify({'error': str(e)}), 400
     if not config['base_url']:
         return jsonify({'error': 'Enter the endpoint URL first.'}), 400
-    return jsonify(llm.test_connection(config))
+    from coach.embeddings import test_embeddings
+    result = llm.test_connection(config)
+    result['embeddings'] = test_embeddings(config)
+    return jsonify(result)
 
 
 # --- Coach status and profile --------------------------------------------------------

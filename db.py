@@ -418,6 +418,55 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_user ON chat_conversations(user_id, updated_at);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id);")
 
+    # Create Library Tables: training literature for the AI coach. A document without an
+    # owner belongs to the shared library; otherwise only its owner can see and search it.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS library_documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_user_id INTEGER,
+        uploaded_by INTEGER,
+        title TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_hash TEXT NOT NULL,
+        file_size INTEGER,
+        file_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        error TEXT,
+        pages INTEGER,
+        chunk_count INTEGER DEFAULT 0,
+        embedded_count INTEGER DEFAULT 0,
+        attempts INTEGER DEFAULT 0,
+        next_attempt_at TEXT,
+        locked_until TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS library_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL,
+        seq INTEGER NOT NULL,
+        page INTEGER,
+        section TEXT,
+        text TEXT NOT NULL,
+        embedding BLOB,
+        embedding_model TEXT,
+        FOREIGN KEY (document_id) REFERENCES library_documents(id) ON DELETE CASCADE
+    );
+    """)
+    # Keyword index over the chunk texts; rowid is the chunk id
+    cursor.execute("""
+    CREATE VIRTUAL TABLE IF NOT EXISTS library_chunks_fts USING fts5(
+        text, tokenize = 'unicode61 remove_diacritics 2'
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_library_documents_owner ON library_documents(owner_user_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_library_chunks_document ON library_chunks(document_id, seq);")
+
     # Create Athlete Thresholds Table: per sport and source (e.g. Run/Ride from Intervals.icu)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS athlete_thresholds (
@@ -1219,6 +1268,19 @@ def delete_user(user_id):
                 except Exception:
                     pass
                     
+        # Delete the user's personal library: files, keyword index and (by cascade) chunks
+        cursor.execute("SELECT id, file_path FROM library_documents WHERE owner_user_id = ?", (user_id,))
+        for row in cursor.fetchall():
+            cursor.execute(
+                "DELETE FROM library_chunks_fts WHERE rowid IN (SELECT id FROM library_chunks WHERE document_id = ?)",
+                (row['id'],)
+            )
+            if row['file_path'] and os.path.exists(row['file_path']):
+                try:
+                    os.remove(row['file_path'])
+                except Exception:
+                    pass
+
         # Delete from DB
         cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
         cursor.execute("DELETE FROM garmin_connections WHERE user_id = ?", (user_id,))

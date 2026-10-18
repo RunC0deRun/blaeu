@@ -99,6 +99,7 @@ from blueprints.garmin import garmin_bp, run_auto_sync_for_all_users as run_garm
 from blueprints.intervals import intervals_bp, run_auto_sync_for_all_users as run_intervals_auto_sync
 from blueprints.media import media_bp
 from blueprints.coach import coach_bp
+from blueprints.library import library_bp
 from blueprints.activities import activities_bp
 
 # Register Blueprints
@@ -109,6 +110,7 @@ app.register_blueprint(garmin_bp)
 app.register_blueprint(intervals_bp)
 app.register_blueprint(media_bp)
 app.register_blueprint(coach_bp)
+app.register_blueprint(library_bp)
 app.register_blueprint(activities_bp)
 
 # Background worker: Garmin & Intervals.icu auto-sync plus resumable history backfills
@@ -117,6 +119,7 @@ AUTO_SYNC_DISABLED = os.getenv('BLAEU_DISABLE_AUTO_SYNC', 'false').lower() == 't
 def auto_sync_worker_loop():
     import time
     from blueprints.intervals_backfill import run_pending_backfills
+    from coach.library import run_pending_indexing
     while True:
         try:
             time.sleep(60)
@@ -140,6 +143,12 @@ def auto_sync_worker_loop():
                     run_pending_backfills()
                 except Exception as e:
                     logger.error(f"[Auto-Sync Worker] Backfill error: {e}", exc_info=True)
+
+                # Training literature uploaded for the AI coach
+                try:
+                    run_pending_indexing()
+                except Exception as e:
+                    logger.error(f"[Auto-Sync Worker] Library indexing error: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"[Auto-Sync Worker] Error in loop: {e}", exc_info=True)
 

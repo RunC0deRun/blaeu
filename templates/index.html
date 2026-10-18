@@ -17,7 +17,7 @@
     <script src="/static/vendor/leaflet/leaflet.js"></script>
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/styles.css?v=5">
+    <link rel="stylesheet" href="/static/css/styles.css?v=7">
 </head>
 <body>
     <div class="app-container">
@@ -442,11 +442,12 @@
             <div class="modal-body">
                 <form id="settings-form">
                     <!-- Tabs Navigation -->
-                    <div class="settings-tabs" style="display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">
+                    <div class="settings-tabs" style="display: flex; flex-wrap: wrap; gap: 4px 6px; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 8px;">
                         <button type="button" class="tab-btn active" data-tab="settings-tab-general" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.95; border-bottom: 2px solid var(--primary); transition: all 0.2s;">General</button>
                         <button type="button" class="tab-btn" data-tab="settings-tab-video" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Video</button>
                         <button type="button" class="tab-btn" data-tab="settings-tab-integrations" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Integrations</button>
                         <button type="button" class="tab-btn" data-tab="settings-tab-coach" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Coach</button>
+                        <button type="button" class="tab-btn" data-tab="settings-tab-library" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Library</button>
                         <button type="button" class="tab-btn hidden" id="settings-admin-tab-btn" data-tab="settings-tab-admin" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Admin</button>
                     </div>
 
@@ -689,6 +690,44 @@
                         </div>
                     </div>
 
+                    <!-- Training Literature Library Tab -->
+                    <div id="settings-tab-library" class="settings-tab-pane hidden">
+                        <p class="data-choice-help" style="margin: 0 0 12px;">Add training books and articles for the AI coach to consult. Personal documents are only visible to you; documents in the shared library are available to everyone on this server.</p>
+                        <div id="library-disabled-note" class="coach-notice hidden" role="note">Library search isn't set up yet: an administrator needs to choose an embedding model in Settings &gt; Admin &gt; AI Coach. You can already upload documents; they're indexed once it's set up.</div>
+
+                        <div class="library-upload">
+                            <div class="form-group">
+                                <label for="library-file">Document (PDF, EPUB, Markdown or text)</label>
+                                <input type="file" id="library-file" class="coach-input" accept=".pdf,.epub,.md,.markdown,.txt">
+                            </div>
+                            <div class="form-group">
+                                <label for="library-title">Title (optional)</label>
+                                <input type="text" id="library-title" class="coach-input" maxlength="200" placeholder="Defaults to the title in the file, or the file name">
+                            </div>
+                            <label class="data-choice-label hidden" for="library-shared" id="library-shared-label" style="margin-bottom: 10px;">
+                                <input type="checkbox" id="library-shared">
+                                <span><strong>Share with all users</strong><span class="data-choice-help">Adds the document to the shared library. Only share material you're allowed to share.</span></span>
+                            </label>
+                            <div class="history-actions">
+                                <button type="button" class="btn btn-sm btn-primary" id="library-upload-btn">Upload</button>
+                                <span class="data-choice-help" id="library-upload-status" aria-live="polite" style="margin: 0;"></span>
+                            </div>
+                        </div>
+
+                        <h4 class="library-heading">Documents</h4>
+                        <div id="library-documents" class="library-documents" aria-live="polite"></div>
+
+                        <h4 class="library-heading">Try a search</h4>
+                        <p class="data-choice-help" style="margin: 0 0 8px;">See which passages the coach would find for a question.</p>
+                        <!-- Not a <form>: the settings panel is already one, and forms can't be nested -->
+                        <div class="history-actions" id="library-search-form" role="search">
+                            <label for="library-search-input" class="visually-hidden">Search the library</label>
+                            <input type="search" id="library-search-input" class="coach-input" style="flex: 1; min-width: 180px;" maxlength="500" placeholder="e.g. recovery after a marathon">
+                            <button type="button" class="btn btn-sm btn-outline" id="library-search-btn">Search</button>
+                        </div>
+                        <div id="library-search-results" class="library-search-results" aria-live="polite"></div>
+                    </div>
+
                     <!-- Admin Settings Tab -->
                     <div id="settings-tab-admin" class="settings-tab-pane hidden">
                         <!-- AI Coach Endpoint (admins only) -->
@@ -734,6 +773,16 @@
                                     <option value="high">High (slowest)</option>
                                 </select>
                                 <span class="data-choice-help">How long a reasoning model may think before it answers. Some models ignore it; use Test connection to check that the endpoint accepts it.</span>
+                            </div>
+                            <div class="form-group">
+                                <label for="admin-llm-embedding-model">Embedding Model (for the library)</label>
+                                <input type="text" id="admin-llm-embedding-model" class="coach-input" list="admin-llm-model-options" placeholder="e.g. bge-m3" autocomplete="off">
+                                <span class="data-choice-help">Turns library passages into vectors for search. Use a multilingual model such as <code>bge-m3</code> so questions in your language find passages in English books. Changing it re-indexes the library.</span>
+                            </div>
+                            <div class="form-group">
+                                <label for="admin-llm-embedding-base-url">Embedding Endpoint URL (optional)</label>
+                                <input type="url" id="admin-llm-embedding-base-url" class="coach-input" placeholder="Same as the endpoint above" autocomplete="off">
+                                <span class="data-choice-help">Only needed when embeddings come from another server, e.g. a local Ollama next to a hosted chat model. It never receives the API key above.</span>
                             </div>
                             <p class="data-choice-help" style="margin: 0 0 12px;">The context window must match what the model is given: for Ollama, Blaeu sets it per request; for other providers, use the model's limit.</p>
                             <div class="history-actions">
@@ -993,6 +1042,6 @@
     </div>
 
     <!-- Main Frontend Script -->
-    <script src="/static/js/app.js?v=8"></script>
+    <script src="/static/js/app.js?v=10"></script>
 </body>
 </html>

@@ -279,6 +279,7 @@ function initAppEvents() {
     initGarminIntegration();
     initIntervalsIntegration();
     initCoach();
+    initLibrary();
 
     // Delegated click listeners to prevent XSS in inline event handlers
     document.addEventListener('click', (e) => {
@@ -2730,6 +2731,7 @@ function openSettingsModal() {
     checkGarminStatus();
     checkIntervalsStatus();
     refreshTrainingDataSettings();
+    loadLibrary();
     if (currentUser && currentUser.is_admin) {
         const adminSec = document.getElementById('admin-user-section');
         if (adminSec) adminSec.classList.remove('hidden');
@@ -5232,6 +5234,7 @@ function initCoach() {
     document.getElementById('admin-llm-test-btn').addEventListener('click', testLlmSettings);
     document.getElementById('admin-llm-save-btn').addEventListener('click', saveLlmSettings);
     document.getElementById('admin-llm-base-url').addEventListener('input', updateLlmExternalWarning);
+    document.getElementById('admin-llm-embedding-base-url').addEventListener('input', updateLlmExternalWarning);
 }
 
 async function checkCoachAvailability() {
@@ -5651,8 +5654,9 @@ function isExternalLlmUrl(url) {
 }
 
 function updateLlmExternalWarning() {
-    const url = document.getElementById('admin-llm-base-url').value.trim();
-    document.getElementById('admin-llm-external-warning').classList.toggle('hidden', !url || !isExternalLlmUrl(url));
+    const urls = ['admin-llm-base-url', 'admin-llm-embedding-base-url']
+        .map(id => document.getElementById(id).value.trim()).filter(Boolean);
+    document.getElementById('admin-llm-external-warning').classList.toggle('hidden', !urls.some(isExternalLlmUrl));
 }
 
 async function loadLlmSettings() {
@@ -5672,6 +5676,8 @@ function renderLlmSettings(config) {
     document.getElementById('admin-llm-context-window').value = config.context_window;
     document.getElementById('admin-llm-temperature').value = config.temperature;
     document.getElementById('admin-llm-reasoning').value = config.reasoning || '';
+    document.getElementById('admin-llm-embedding-model').value = config.embedding_model || '';
+    document.getElementById('admin-llm-embedding-base-url').value = config.embedding_base_url || '';
     const keyInput = document.getElementById('admin-llm-api-key');
     keyInput.value = '';
     keyInput.disabled = config.api_key_from_env;
@@ -5688,7 +5694,9 @@ function readLlmForm() {
         model: document.getElementById('admin-llm-model').value.trim(),
         context_window: parseInt(document.getElementById('admin-llm-context-window').value, 10),
         temperature: parseFloat(document.getElementById('admin-llm-temperature').value),
-        reasoning: document.getElementById('admin-llm-reasoning').value
+        reasoning: document.getElementById('admin-llm-reasoning').value,
+        embedding_model: document.getElementById('admin-llm-embedding-model').value.trim(),
+        embedding_base_url: document.getElementById('admin-llm-embedding-base-url').value.trim()
     };
     const key = document.getElementById('admin-llm-api-key').value.trim();
     if (key) payload.api_key = key;
@@ -5728,7 +5736,13 @@ async function testLlmSettings() {
         lines.push(data.ok
             ? `The model answered in ${data.seconds} s: "${escapeHTML(data.reply)}"`
             : `<strong>Problem:</strong> ${escapeHTML(data.error)}`);
-        showLlmTestResult(lines.join('<br>'), data.ok);
+        if (data.embeddings) {
+            lines.push(data.embeddings.ok
+                ? `Embeddings work (${data.embeddings.dimensions} dimensions).`
+                : `<strong>Embedding problem:</strong> ${escapeHTML(data.embeddings.error)}`);
+        }
+        const ok = data.ok && (!data.embeddings || data.embeddings.ok);
+        showLlmTestResult(lines.join('<br>'), ok);
     } catch (err) {
         showLlmTestResult(`<strong>Problem:</strong> ${escapeHTML(err.message)}`, false);
     } finally {
@@ -5754,6 +5768,260 @@ async function saveLlmSettings() {
         showLlmTestResult(`<strong>Problem:</strong> ${escapeHTML(err.message)}`, false);
     } finally {
         btn.disabled = false;
+    }
+}
+
+// ----------------------------------------------------
+// Training literature library (Settings > Library)
+// ----------------------------------------------------
+let libraryPollTimer = null;
+const LIBRARY_POLL_MS = 5000;
+
+function initLibrary() {
+    document.getElementById('library-upload-btn').addEventListener('click', uploadLibraryDocument);
+    document.getElementById('library-search-btn').addEventListener('click', searchLibrary);
+    document.getElementById('library-search-input').addEventListener('keydown', e => {
+        // Enter searches instead of submitting the surrounding settings form
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            searchLibrary();
+        }
+    });
+}
+
+function formatFileSize(bytes) {
+    if (!bytes) return '';
+    return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} kB`;
+}
+
+function libraryStatusText(doc, enabled) {
+    if (doc.status === 'failed') return `Failed: ${doc.error || 'unknown error'}`;
+    if (doc.status === 'pending') {
+        return enabled ? 'Waiting to be indexed...' : 'Waiting for an administrator to set up library search.';
+    }
+    if (doc.status === 'indexing') {
+        let text = doc.chunk_count
+            ? `Indexing: ${doc.embedded_count} of ${doc.chunk_count} passages`
+            : 'Reading the document...';
+        if (doc.error) text += ` (${doc.error})`;
+        return text;
+    }
+    const parts = [`Ready: ${doc.chunk_count} passages`];
+    if (doc.pages) parts.push(`${doc.pages} pages`);
+    parts.push(formatFileSize(doc.file_size));
+    return parts.filter(Boolean).join(' · ');
+}
+
+async function loadLibrary() {
+    const container = document.getElementById('library-documents');
+    try {
+        const res = await fetch('/api/library');
+        if (!res.ok) throw new Error('Failed to load the library.');
+        renderLibrary(await res.json());
+    } catch (err) {
+        container.innerHTML = `<p class="data-choice-help">${escapeHTML(err.message)}</p>`;
+    }
+}
+
+function renderLibrary(data) {
+    document.getElementById('library-disabled-note').classList.toggle('hidden', data.enabled);
+    document.getElementById('library-shared-label').classList.toggle('hidden', !data.can_share);
+    const container = document.getElementById('library-documents');
+    container.innerHTML = '';
+    if (!data.documents.length) {
+        container.innerHTML = '<p class="data-choice-help">No documents yet.</p>';
+    }
+    data.documents.forEach(doc => {
+        const item = document.createElement('div');
+        item.className = 'library-document';
+
+        const header = document.createElement('div');
+        header.className = 'library-document-header';
+        const info = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'library-document-title';
+        title.textContent = doc.title;
+        const badge = document.createElement('span');
+        badge.className = 'library-badge' + (doc.shared ? '' : ' personal');
+        badge.textContent = doc.shared ? 'Shared' : 'Personal';
+        title.appendChild(badge);
+        const status = document.createElement('div');
+        status.className = 'library-document-status' + (doc.status === 'failed' ? ' failed' : '');
+        status.textContent = libraryStatusText(doc, data.enabled);
+        info.append(title, status);
+
+        const actions = document.createElement('div');
+        actions.className = 'library-document-actions';
+        const addAction = (label, handler, aria) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-sm btn-outline';
+            btn.textContent = label;
+            btn.setAttribute('aria-label', `${aria}: ${doc.title}`);
+            btn.addEventListener('click', handler);
+            actions.appendChild(btn);
+            return btn;
+        };
+        let previewBox = null;
+        if (doc.chunk_count) {
+            addAction('Preview', async () => {
+                if (previewBox) {
+                    previewBox.remove();
+                    previewBox = null;
+                    return;
+                }
+                previewBox = document.createElement('div');
+                previewBox.className = 'library-preview';
+                previewBox.textContent = 'Loading...';
+                item.appendChild(previewBox);
+                await loadLibraryPreview(doc.id, previewBox);
+            }, 'Preview the extracted text');
+        }
+        if (doc.can_manage) {
+            if (doc.status === 'failed' || doc.status === 'ready') {
+                addAction('Re-index', () => reindexLibraryDocument(doc.id), 'Index again');
+            }
+            addAction('Delete', () => deleteLibraryDocument(doc), 'Delete');
+        }
+        header.append(info, actions);
+        item.appendChild(header);
+
+        if (doc.status === 'indexing' && doc.chunk_count) {
+            const percent = Math.round(100 * doc.embedded_count / doc.chunk_count);
+            const bar = document.createElement('div');
+            bar.className = 'progress-bar';
+            bar.setAttribute('role', 'progressbar');
+            bar.setAttribute('aria-label', `Indexing ${doc.title}`);
+            bar.setAttribute('aria-valuemin', '0');
+            bar.setAttribute('aria-valuemax', '100');
+            bar.setAttribute('aria-valuenow', String(percent));
+            bar.innerHTML = `<div class="progress-fill" style="width: ${percent}%"></div>`;
+            item.appendChild(bar);
+        }
+        container.appendChild(item);
+    });
+
+    // Keep the list fresh while documents are being indexed and the settings are open
+    clearTimeout(libraryPollTimer);
+    const busy = data.enabled && data.documents.some(d => d.status === 'pending' || d.status === 'indexing');
+    const settingsModal = document.getElementById('settings-modal');
+    if (busy && !settingsModal.classList.contains('hidden')) {
+        libraryPollTimer = setTimeout(loadLibrary, LIBRARY_POLL_MS);
+    }
+}
+
+async function loadLibraryPreview(documentId, box) {
+    try {
+        const res = await fetch(`/api/library/${documentId}/preview`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to load the preview.');
+        box.innerHTML = '';
+        const note = document.createElement('p');
+        note.className = 'data-choice-help';
+        note.textContent = 'The first passages as the coach will read them. Garbled text here means the file could not be read well.';
+        box.appendChild(note);
+        data.chunks.forEach(c => box.appendChild(renderLibraryPassage(c.text, sourceLabel(null, c.page, c.section))));
+    } catch (err) {
+        box.textContent = err.message;
+    }
+}
+
+function sourceLabel(title, page, section) {
+    return [title, section, page ? `p. ${page}` : null].filter(Boolean).join(' · ');
+}
+
+function renderLibraryPassage(text, source) {
+    const passage = document.createElement('div');
+    passage.className = 'library-passage';
+    if (source) {
+        const label = document.createElement('span');
+        label.className = 'library-passage-source';
+        label.textContent = source;
+        passage.appendChild(label);
+    }
+    passage.appendChild(document.createTextNode(text));
+    return passage;
+}
+
+async function uploadLibraryDocument() {
+    const fileInput = document.getElementById('library-file');
+    const status = document.getElementById('library-upload-status');
+    const btn = document.getElementById('library-upload-btn');
+    const file = fileInput.files[0];
+    if (!file) {
+        status.textContent = 'Choose a file first.';
+        return;
+    }
+    const form = new FormData();
+    form.append('file', file);
+    form.append('title', document.getElementById('library-title').value.trim());
+    form.append('shared', document.getElementById('library-shared').checked ? 'true' : 'false');
+    btn.disabled = true;
+    status.textContent = `Uploading ${file.name}...`;
+    try {
+        const res = await fetch('/api/library', { method: 'POST', body: form });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || (res.status === 413 ? 'The file is too large.' : 'The upload failed.'));
+        status.textContent = `Added "${data.title}". It's indexed in the background.`;
+        fileInput.value = '';
+        document.getElementById('library-title').value = '';
+        document.getElementById('library-shared').checked = false;
+        loadLibrary();
+    } catch (err) {
+        status.textContent = err.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function deleteLibraryDocument(doc) {
+    const where = doc.shared ? 'the shared library (for all users)' : 'your library';
+    if (!confirm(`Delete "${doc.title}" from ${where}? The coach can no longer use it.`)) return;
+    try {
+        const res = await fetch(`/api/library/${doc.id}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Failed to delete the document.');
+        loadLibrary();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function reindexLibraryDocument(documentId) {
+    try {
+        const res = await fetch(`/api/library/${documentId}/reindex`, { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Failed to start indexing.');
+        loadLibrary();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function searchLibrary() {
+    const query = document.getElementById('library-search-input').value.trim();
+    const box = document.getElementById('library-search-results');
+    if (!query) return;
+    box.innerHTML = '<p class="data-choice-help">Searching...</p>';
+    try {
+        const res = await fetch('/api/library/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'The search failed.');
+        box.innerHTML = '';
+        if (!data.results.length) {
+            box.innerHTML = '<p class="data-choice-help">Nothing relevant found.</p>';
+            return;
+        }
+        data.results.forEach(r => {
+            const source = `${sourceLabel(r.title, r.page, r.section)} · relevance ${Math.round(r.similarity * 100)}%`;
+            box.appendChild(renderLibraryPassage(r.text, source));
+        });
+    } catch (err) {
+        box.innerHTML = `<p class="data-choice-help">${escapeHTML(err.message)}</p>`;
     }
 }
 

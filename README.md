@@ -92,6 +92,8 @@ The following environment variables can be configured when running the Docker co
 | `BLAEU_OVERPASS_URL` | `https://overpass-api.de/api` | Overpass API endpoint used by OSMnx to fetch poster map data. Point it at another Overpass instance if the public one is overloaded. |
 | `BLAEU_OVERPASS_TIMEOUT` | `180` | Timeout in seconds for Overpass queries when generating poster maps. |
 | `BLAEU_WORKER_TIMEOUT` | `300` | Gunicorn worker timeout in seconds. Keep it above `BLAEU_OVERPASS_TIMEOUT`, since poster maps are generated within the request. |
+| `BLAEU_OVERPASS_MIN_INTERVAL` | `5` | Minimum seconds between background poster generations, which are processed one at a time per worker process. |
+| `BLAEU_POSTER_MAX_ATTEMPTS` | `5` | Attempts for a background poster before it is marked failed. When Overpass is unreachable, the queue backs off exponentially (30s, 60s, … up to 15 min) before retrying. |
 | `BLAEU_DISABLE_AUTO_SYNC` | `false` | Set to `true` to stop the background Garmin/Intervals.icu auto-sync, regardless of user settings. Used by the test instance; manual syncs and imports still work. |
 | `BLAEU_INTERVALS_REQUEST_DELAY` | `1.0` | Seconds to wait between Intervals.icu requests during syncs, to stay well clear of API throttling. |
 

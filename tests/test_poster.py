@@ -378,3 +378,53 @@ def test_generate_poster_background_safe_zone(client, mock_gis):
 
 
 
+
+
+def test_poster_queue_backs_off_and_retries(monkeypatch):
+    import utils
+    from app import app as flask_app
+    from poster_map import OSMNetworkError
+
+    calls = []
+    def fake_generate(route_id, user_id, theme_name):
+        calls.append(route_id)
+        if len(calls) <= 2:
+            raise OSMNetworkError("Overpass refused the connection.")
+
+    sleeps = []
+    statuses = []
+    monkeypatch.setattr(utils, '_generate_route_poster', fake_generate)
+    monkeypatch.setattr(utils, 'update_route_poster_status', lambda rid, st: statuses.append((rid, st['status'])))
+    monkeypatch.setattr(utils.time, 'sleep', lambda s: sleeps.append(s))
+
+    with flask_app.app_context():
+        utils.run_async_poster_generation(42, 1, 'noir')
+    utils._poster_queue.join()
+
+    # Two failures, then success on the third attempt
+    assert calls == [42, 42, 42]
+    # The wait before the second retry is double the wait before the first
+    assert len(sleeps) >= 2
+    assert sleeps[-1] == pytest.approx(2 * sleeps[-2], rel=0.01)
+    assert (42, 'failed') not in statuses
+
+
+def test_poster_queue_gives_up_after_max_attempts(monkeypatch):
+    import utils
+    from app import app as flask_app
+    from poster_map import OSMNetworkError
+
+    def always_fail(route_id, user_id, theme_name):
+        raise OSMNetworkError("Overpass refused the connection.")
+
+    statuses = []
+    monkeypatch.setattr(utils, '_generate_route_poster', always_fail)
+    monkeypatch.setattr(utils, 'update_route_poster_status', lambda rid, st: statuses.append((rid, st['status'])))
+    monkeypatch.setattr(utils.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(utils, 'POSTER_MAX_ATTEMPTS', 3)
+
+    with flask_app.app_context():
+        utils.run_async_poster_generation(43, 1, 'noir')
+    utils._poster_queue.join()
+
+    assert statuses[-1] == (43, 'failed')

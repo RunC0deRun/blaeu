@@ -20,6 +20,8 @@ REASONING_LEVELS = ('', 'off', 'low', 'medium', 'high')
 # How the coach uses the library: 'auto' lets the model search with a tool when it supports
 # tools and otherwise searches once with the question; 'tools' and 'always' force one way
 LIBRARY_SEARCH_MODES = ('auto', 'tools', 'always', 'off')
+# Whether the coach may look up training data with tools ('auto': when the model supports tools)
+DATA_TOOLS_MODES = ('auto', 'off')
 
 # Host names that stay on this machine or local network
 LOCAL_SUFFIXES = ('.local', '.lan', '.home', '.internal', '.home.arpa', '.localhost')
@@ -67,6 +69,7 @@ def get_llm_config():
         'temperature': temperature,
         'reasoning': reasoning if reasoning in REASONING_LEVELS else '',
         'max_answer_tokens': DEFAULT_MAX_ANSWER_TOKENS,
+        'data_tools': _valid(pick('data_tools', 'BLAEU_LLM_DATA_TOOLS', 'auto'), DATA_TOOLS_MODES, 'auto'),
         'library_search': _valid(pick('library_search', 'BLAEU_LLM_LIBRARY_SEARCH', 'auto'), LIBRARY_SEARCH_MODES, 'auto'),
         # Embeddings for the training literature library; empty means no library search
         'embedding_model': pick('embedding_model', 'BLAEU_LLM_EMBEDDING_MODEL', '') or '',
@@ -161,6 +164,10 @@ def parse_llm_settings(data):
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 2:
             raise SettingsError('The temperature must be a number between 0 and 2.')
         changes['temperature'] = float(value)
+    if 'data_tools' in data:
+        if data['data_tools'] not in DATA_TOOLS_MODES:
+            raise SettingsError('Data lookups must be auto or off.')
+        changes['data_tools'] = data['data_tools']
     if 'library_search' in data:
         if data['library_search'] not in LIBRARY_SEARCH_MODES:
             raise SettingsError('Library search must be one of: auto, tools, always or off.')

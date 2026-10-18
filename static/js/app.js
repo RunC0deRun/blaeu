@@ -5417,30 +5417,27 @@ async function deleteCoachConversation(id) {
     }
 }
 
+function coachStepText(step) {
+    if (step.label) {
+        // Running steps end with "..."; finished ones show their result
+        return step.summary === undefined ? `${step.label}...` : `${step.label} · ${step.summary}`;
+    }
+    // Steps stored before steps had labels (library searches only)
+    const label = step.automatic ? 'Searched the library for your question' : `Searched the library: "${step.query}"`;
+    if (step.found === undefined) return `${label}...`;
+    return `${label} · ${step.found ? `${step.found} passage${step.found === 1 ? '' : 's'} from ${step.titles.join(', ')}` : 'nothing relevant found'}`;
+}
+
 function renderCoachSteps(stepsEl, steps) {
     stepsEl.innerHTML = '';
     stepsEl.hidden = !steps.length;
     steps.forEach(step => {
         const item = document.createElement('div');
-        item.className = 'coach-step' + (step.found === undefined ? ' active' : '');
-        const label = step.automatic ? 'Searched the library for your question' : `Searching the library: "${step.query}"`;
-        let result = '';
-        if (step.found !== undefined) {
-            result = step.found
-                ? ` · ${step.found} passage${step.found === 1 ? '' : 's'} from ${step.titles.join(', ')}`
-                : ' · nothing relevant found';
-        }
-        item.textContent = (step.found === undefined ? label + '...' : label.replace('Searching', 'Searched')) + result;
+        const running = step.label ? step.summary === undefined : step.found === undefined;
+        item.className = `coach-step ${step.kind === 'data' ? 'data' : 'search'}` + (running ? ' active' : '');
+        item.textContent = coachStepText(step);
         stepsEl.appendChild(item);
     });
-}
-
-function citedNumbers(answer) {
-    const cited = new Set();
-    for (const match of (answer || '').matchAll(/\[(\d+(?:\s*,\s*\d+)*)\]/g)) {
-        match[1].split(',').forEach(n => cited.add(parseInt(n, 10)));
-    }
-    return cited;
 }
 
 // Lists the cited sources; passages the coach read but didn't cite are folded away
@@ -5652,10 +5649,10 @@ async function sendCoachMessage(text, retry = false) {
                     reasoning += data.text;
                     view.reasoningText.textContent = reasoning;
                     view.reasoningText.parentElement.hidden = false;
-                } else if (event === 'search') {
+                } else if (event === 'step') {
                     steps.push(data);
                     renderCoachSteps(view.stepsEl, steps);
-                } else if (event === 'search_result') {
+                } else if (event === 'step_result') {
                     steps[steps.length - 1] = data;
                     renderCoachSteps(view.stepsEl, steps);
                 } else if (event === 'sources') {
@@ -5784,6 +5781,7 @@ function renderLlmSettings(config) {
     document.getElementById('admin-llm-reasoning').value = config.reasoning || '';
     document.getElementById('admin-llm-embedding-model').value = config.embedding_model || '';
     document.getElementById('admin-llm-library-search').value = config.library_search || 'auto';
+    document.getElementById('admin-llm-data-tools').value = config.data_tools || 'auto';
     document.getElementById('admin-llm-embedding-base-url').value = config.embedding_base_url || '';
     const keyInput = document.getElementById('admin-llm-api-key');
     keyInput.value = '';
@@ -5804,6 +5802,7 @@ function readLlmForm() {
         reasoning: document.getElementById('admin-llm-reasoning').value,
         embedding_model: document.getElementById('admin-llm-embedding-model').value.trim(),
         library_search: document.getElementById('admin-llm-library-search').value,
+        data_tools: document.getElementById('admin-llm-data-tools').value,
         embedding_base_url: document.getElementById('admin-llm-embedding-base-url').value.trim()
     };
     const key = document.getElementById('admin-llm-api-key').value.trim();

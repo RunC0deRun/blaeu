@@ -73,8 +73,9 @@ def test_model_tool_support_from_ollama_capabilities():
 
 # --- The agent loop ------------------------------------------------------------------
 
+# Data tools off: these tests are about the library search (see test_data_tools.py)
 AGENT_CONFIG = dict(CONFIG, context_window=16384, embedding_model='fake', embedding_base_url='',
-                    library_search='auto')
+                    library_search='auto', data_tools='off')
 
 
 def passage(chunk_id, title='Guide', page=1, text=None):
@@ -126,8 +127,10 @@ def test_model_searches_then_answers_with_citations(library_available, monkeypat
     events, done = _run(_messages())
     assert searches == ['recovery after a race']
     kinds = [k for k, _ in events]
-    assert kinds == ['reasoning', 'search', 'search_result', 'content', 'done']
-    assert events[2][1] == {'query': 'recovery after a race', 'found': 2, 'titles': ['Guide'], 'automatic': False}
+    assert kinds == ['reasoning', 'step', 'step_result', 'content', 'done']
+    assert events[2][1] == {'kind': 'search', 'query': 'recovery after a race', 'automatic': False,
+                            'label': 'Searched the library: "recovery after a race"',
+                            'found': 2, 'titles': ['Guide'], 'summary': '2 passages from Guide'}
     assert [s['n'] for s in done['sources']] == [1, 2]
 
     # The first round offered the tool and explained it; the second got the passages back
@@ -227,7 +230,7 @@ def test_search_mode_setting_validation(authed_client):
 
 def test_chat_streams_searches_and_stores_sources(authed_client, library_available, monkeypatch):
     coach_settings.save_llm_settings({'enabled': True, 'base_url': 'http://ollama:11434/v1', 'model': 'm',
-                                      'embedding_model': 'fake', 'context_window': 16384})
+                                      'embedding_model': 'fake', 'context_window': 16384, 'data_tools': 'off'})
     monkeypatch.setattr(library, 'search', lambda u, q, c, limit: [passage(7, title='Daniels', page=45)])
     fake = ScriptedLLM([[tool_call('long run pace')], [('content', 'Run it easier [1].')]])
     conversation = authed_client.post('/api/coach/conversations').get_json()
@@ -235,11 +238,13 @@ def test_chat_streams_searches_and_stores_sources(authed_client, library_availab
     with patch('coach.llm.stream_chat', side_effect=fake):
         events = _sse_events(authed_client.post(url, json={'content': 'Is my long run too fast?'}))
     names = [e for e, _ in events]
-    assert names == ['start', 'search', 'search_result', 'content', 'sources', 'done']
+    assert names == ['start', 'step', 'step_result', 'content', 'sources', 'done']
     sources = dict(events)['sources']['sources']
     assert sources[0]['title'] == 'Daniels' and sources[0]['page'] == 45
 
     stored = authed_client.get(f"/api/coach/conversations/{conversation['id']}").get_json()['messages'][-1]
     assert stored['content'] == 'Run it easier [1].'
     assert stored['sources'][0]['n'] == 1 and stored['sources'][0]['title'] == 'Daniels'
-    assert stored['steps'] == [{'query': 'long run pace', 'found': 1, 'titles': ['Daniels'], 'automatic': False}]
+    assert stored['steps'] == [{'kind': 'search', 'query': 'long run pace', 'automatic': False,
+                                'label': 'Searched the library: "long run pace"', 'found': 1,
+                                'titles': ['Daniels'], 'summary': '1 passage from Daniels'}]

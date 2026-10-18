@@ -26,6 +26,12 @@ DETAIL_LEVELS = (
     {'weeks': 4, 'recent_days': 7, 'recent_max': 8, 'wellness_days': 3},
     {'weeks': 0, 'recent_days': 0, 'recent_max': 0, 'wellness_days': 0},
 )
+# With data tools the coach can look up anything older or more detailed itself, so the
+# prompt only carries a compact overview of the recent past
+COMPACT_DETAIL_LEVELS = (
+    {'weeks': 4, 'recent_days': 7, 'recent_max': 10, 'wellness_days': 3},
+    {'weeks': 0, 'recent_days': 0, 'recent_max': 0, 'wellness_days': 0},
+)
 WEEKDAYS = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')
 
 INSTRUCTIONS = """You are the training coach in Blaeu, a self-hosted app where the athlete keeps their training log.
@@ -192,10 +198,10 @@ def _recent_section(activities, today, days, limit):
     recent = [a for a in activities if (d := _activity_day(a)) and d >= since][:limit]
     if not recent:
         return f"No workouts in the last {days} days."
-    lines = ['date | sport | name | time | distance | avg HR | power | load | intensity | RPE']
+    lines = ['id | date | sport | name | time | distance | avg HR | power | load | intensity | RPE']
     for a in recent:
         lines.append(' | '.join([
-            str(_activity_day(a)), a.get('sport_type') or 'Unknown', (a.get('name') or '')[:40],
+            str(a['id']), str(_activity_day(a)), a.get('sport_type') or 'Unknown', (a.get('name') or '')[:40],
             _fmt_duration(a.get('moving_time') or a.get('duration')), _fmt_km(a.get('distance')),
             _num(a.get('avg_hr')), f"{a['avg_power']:.0f} W" if a.get('avg_power') else '-',
             _num(a.get('training_load')), _num(a.get('intensity'), 2), _num(a.get('rpe')),
@@ -203,10 +209,13 @@ def _recent_section(activities, today, days, limit):
     return '\n'.join(lines)
 
 
-def build_system_prompt(user_id, today=None, level=0):
-    """The coach's instructions plus the athlete's data, at a given detail level."""
+def build_system_prompt(user_id, today=None, level=0, compact=False):
+    """
+    The coach's instructions plus the athlete's data, at a given detail level. compact is for
+    coaches with data tools: a short overview, the rest can be looked up.
+    """
     today = today or datetime.now(timezone.utc).date()
-    detail = DETAIL_LEVELS[level]
+    detail = (COMPACT_DETAIL_LEVELS if compact else DETAIL_LEVELS)[level]
     user = get_user_by_id(user_id) or {}
     week_start = user.get('week_start_day') if user.get('week_start_day') in WEEKDAYS else 'Monday'
 
@@ -252,17 +261,18 @@ def output_budget(messages, config):
     return max(answer_reserve(config), config['context_window'] - prompt - SAFETY_MARGIN_TOKENS)
 
 
-def build_messages(user_id, history, config, today=None):
+def build_messages(user_id, history, config, today=None, compact=False):
     """
     Returns the messages to send: the system prompt, then as many recent history messages
     as fit. history is a list of {'role', 'content'} ending with the user's new message.
     """
     budget = config['context_window'] - answer_reserve(config) - SAFETY_MARGIN_TOKENS
-    for level in range(len(DETAIL_LEVELS)):
-        system = build_system_prompt(user_id, today, level)
+    levels = COMPACT_DETAIL_LEVELS if compact else DETAIL_LEVELS
+    for level in range(len(levels)):
+        system = build_system_prompt(user_id, today, level, compact)
         system_tokens = estimate_tokens(system) + MESSAGE_OVERHEAD_TOKENS
         # Leave at least a third of the budget for the conversation, unless at minimal detail
-        if system_tokens <= budget * 2 / 3 or level == len(DETAIL_LEVELS) - 1:
+        if system_tokens <= budget * 2 / 3 or level == len(levels) - 1:
             break
 
     remaining = budget - system_tokens

@@ -7,20 +7,27 @@ more than once, before it answers. Models without tool support get one automatic
 the question instead. Passages are numbered across searches ([1], [2], ...) so the answer can
 cite them, and the same passage keeps its number.
 
-run() yields ('reasoning' | 'content', text), ('search', step), ('search_result', step) and
-finally ('done', {'sources', 'steps', 'truncated'}).
+With data tools, the model can also look up the athlete's own training data (workouts in a
+period, one workout in detail, totals per week or month, trends); see coach/data_tools.py.
+
+run() yields ('reasoning' | 'content', text), ('step', step) when a tool starts,
+('step_result', step) when it finished, and finally ('done', {'sources', 'steps', 'truncated'}).
+A step is {'kind': 'search' | 'data', 'label', 'summary'} plus details.
 """
 import logging
 
-from coach import library, llm
+from coach import data_tools, library, llm
 from coach.context import (
     estimate_tokens, answer_reserve, output_budget, MESSAGE_OVERHEAD_TOKENS, SAFETY_MARGIN_TOKENS,
 )
 from coach.settings import is_library_configured
+from db import get_user_by_id
 
 logger = logging.getLogger('blaeu.coach.agent')
 
 MAX_SEARCHES = 3
+# All tool calls per answer together (library searches and data lookups)
+MAX_TOOL_CALLS = 6
 PASSAGES_PER_SEARCH = 4
 MAX_QUERY_CHARS = 300
 
@@ -72,6 +79,17 @@ def search_mode(config, user_id):
     if config.get('library_search') in ('tools', 'always'):
         return config['library_search']
     return 'tools' if llm.model_supports_tools(config) else 'always'
+
+
+def plan(config, user_id):
+    """
+    How this answer can use tools: 'library' is 'tools', 'always' or None; 'data_tools' says
+    whether the model can look up training data (then the prompt only needs a compact overview).
+    """
+    data = config.get('data_tools', 'auto') != 'off' and llm.model_supports_tools(config)
+    user = get_user_by_id(user_id) or {}
+    return {'library': search_mode(config, user_id), 'data_tools': data,
+            'wellness': user.get('wellness_opt_in') == 1}
 
 
 class Sources:
@@ -127,14 +145,36 @@ def fit_passages(items, messages, config, sources):
     return '\n\n'.join(parts), kept
 
 
-def _step(query, kept, automatic=False):
-    titles = sorted({item['title'] for item in kept})
-    return {'query': query, 'found': len(kept), 'titles': titles, 'automatic': automatic}
+def _search_step(query, kept=None, automatic=False):
+    step = {'kind': 'search', 'query': query, 'automatic': automatic,
+            'label': 'Searched the library for your question' if automatic else f'Searched the library: "{query}"'}
+    if kept is not None:
+        titles = sorted({item['title'] for item in kept})
+        step.update(found=len(kept), titles=titles, summary=(
+            f"{len(kept)} passage{'s' if len(kept) != 1 else ''} from {', '.join(titles)}" if kept
+            else 'nothing relevant found'))
+    return step
 
 
-def run(user_id, config, messages, question):
+def fit_text(text, messages, config):
+    """Cuts a tool result down, line by line, to what still fits next to the answer budget."""
+    used = sum(estimate_tokens(m['content'] or '') + MESSAGE_OVERHEAD_TOKENS for m in messages)
+    room = config['context_window'] - answer_reserve(config) - SAFETY_MARGIN_TOKENS - used - MESSAGE_OVERHEAD_TOKENS
+    if estimate_tokens(text) <= room:
+        return text
+    lines, kept = text.split('\n'), []
+    note = '(The rest was cut off to fit the conversation; ask for a shorter period.)'
+    for line in lines:
+        if estimate_tokens('\n'.join(kept + [line, note])) > room:
+            break
+        kept.append(line)
+    return '\n'.join(kept + [note]) if kept else NO_ROOM
+
+
+def run(user_id, config, messages, question, tool_plan=None):
     """Generates one answer; see the module docstring for the events."""
-    mode = search_mode(config, user_id)
+    tool_plan = tool_plan or plan(config, user_id)
+    mode = tool_plan['library']
     is_ollama = llm.detect_ollama(config)
     sources, steps = Sources(), []
     truncated = False
@@ -142,25 +182,33 @@ def run(user_id, config, messages, question):
 
     if mode == 'always':
         query = question[:MAX_QUERY_CHARS]
-        step = {'query': query, 'automatic': True}
-        yield ('search', step)
+        yield ('step', _search_step(query, automatic=True))
         results = library.search(user_id, query, config, limit=PASSAGES_PER_SEARCH)
         text, kept = fit_passages(sources.number(results), messages, config, sources)
         if kept:
             messages[0]['content'] += '\n\n' + AUTO_INSTRUCTIONS + text
-        steps.append(_step(query, kept, automatic=True))
-        yield ('search_result', steps[-1])
-    elif mode == 'tools':
-        messages[0]['content'] += '\n\n' + TOOL_INSTRUCTIONS
+        steps.append(_search_step(query, kept, automatic=True))
+        yield ('step_result', steps[-1])
 
-    searches = 0
+    tools = []
+    if tool_plan['data_tools']:
+        tools += data_tools.tool_definitions(tool_plan['wellness'])
+        messages[0]['content'] += '\n\n' + data_tools.INSTRUCTIONS
+    if mode == 'tools':
+        tools.append(SEARCH_TOOL)
+        messages[0]['content'] += '\n\n' + TOOL_INSTRUCTIONS
+    allowed = {t['function']['name'] for t in tools}
+
+    searches = tool_calls = 0
     while True:
         prompt_tokens = sum(estimate_tokens(m['content'] or '') + MESSAGE_OVERHEAD_TOKENS for m in messages)
         room_for_more = prompt_tokens + answer_reserve(config) * 2 < config['context_window']
-        offer = mode == 'tools' and searches < MAX_SEARCHES and room_for_more
+        # Tools whose limit is reached are no longer offered
+        available = [t for t in tools if not (t is SEARCH_TOOL and searches >= MAX_SEARCHES)]
+        offer = bool(available) and tool_calls < MAX_TOOL_CALLS and room_for_more
         calls, round_content = [], []
         for kind, value in llm.stream_chat(config, messages, max_tokens=output_budget(messages, config),
-                                           is_ollama=is_ollama, tools=[SEARCH_TOOL] if offer else None):
+                                           is_ollama=is_ollama, tools=available if offer else None):
             if kind == 'tool_call':
                 calls.append(value)
             elif kind == 'truncated':
@@ -174,22 +222,37 @@ def run(user_id, config, messages, question):
 
         messages.append(llm.assistant_tool_call_message(calls, ''.join(round_content), is_ollama))
         for call in calls:
-            query = str(call['arguments'].get('query') or '').strip()[:MAX_QUERY_CHARS]
-            if call['name'] != SEARCH_TOOL['function']['name'] or not query:
-                result = 'Unknown tool or empty query. Use search_literature with a query.'
-            elif searches >= MAX_SEARCHES:
-                result = f'The search limit of {MAX_SEARCHES} is reached. Answer with what you have.'
+            name, arguments = call['name'], call['arguments']
+            if name not in allowed:
+                result = f'Unknown tool {name}. Use one of: {", ".join(sorted(allowed))}.'
+            elif tool_calls >= MAX_TOOL_CALLS:
+                result = f'The limit of {MAX_TOOL_CALLS} lookups is reached. Answer with what you have.'
+            elif name == SEARCH_TOOL['function']['name']:
+                query = str(arguments.get('query') or '').strip()[:MAX_QUERY_CHARS]
+                if not query:
+                    result = 'Empty query. Use search_literature with a query.'
+                elif searches >= MAX_SEARCHES:
+                    result = f'The search limit of {MAX_SEARCHES} is reached. Answer with what you have.'
+                else:
+                    searches += 1
+                    tool_calls += 1
+                    yield ('step', _search_step(query))
+                    found = library.search(user_id, query, config, limit=PASSAGES_PER_SEARCH)
+                    result, kept = fit_passages(sources.number(found), messages, config, sources)
+                    if not found:
+                        result = 'No relevant passages found in the library for this query.'
+                    elif not kept:
+                        result = NO_ROOM
+                    steps.append(_search_step(query, kept))
+                    yield ('step_result', steps[-1])
             else:
-                searches += 1
-                yield ('search', {'query': query, 'automatic': False})
-                found = library.search(user_id, query, config, limit=PASSAGES_PER_SEARCH)
-                result, kept = fit_passages(sources.number(found), messages, config, sources)
-                if not found:
-                    result = 'No relevant passages found in the library for this query.'
-                elif not kept:
-                    result = NO_ROOM
-                steps.append(_step(query, kept))
-                yield ('search_result', steps[-1])
+                tool_calls += 1
+                label = data_tools.describe(name, arguments)
+                yield ('step', {'kind': 'data', 'tool': name, 'label': label})
+                text, summary = data_tools.run_tool(user_id, name, arguments)
+                result = fit_text(text, messages, config)
+                steps.append({'kind': 'data', 'tool': name, 'label': label, 'summary': summary})
+                yield ('step_result', steps[-1])
             messages.append(llm.tool_result_message(call, result, is_ollama))
 
     yield ('done', {

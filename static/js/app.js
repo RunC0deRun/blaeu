@@ -278,6 +278,7 @@ function initAppEvents() {
     initSettingsTabs();
     initGarminIntegration();
     initIntervalsIntegration();
+    initCoach();
 
     // Delegated click listeners to prevent XSS in inline event handlers
     document.addEventListener('click', (e) => {
@@ -2735,12 +2736,16 @@ function openSettingsModal() {
         const adminTab = document.getElementById('settings-admin-tab-btn');
         if (adminTab) adminTab.classList.remove('hidden');
         loadAdminUserList();
+        document.getElementById('admin-llm-section').classList.remove('hidden');
+        loadLlmSettings();
     } else {
         const adminSec = document.getElementById('admin-user-section');
         if (adminSec) adminSec.classList.add('hidden');
         const adminTab = document.getElementById('settings-admin-tab-btn');
         if (adminTab) adminTab.classList.add('hidden');
+        document.getElementById('admin-llm-section').classList.add('hidden');
     }
+    loadCoachProfile();
 }
 
 function loadSettingsIntoModal() {
@@ -2800,6 +2805,7 @@ function loadSettingsIntoModal() {
 
 async function saveSettingsModal() {
     await saveWellnessSetting();
+    await saveCoachProfileIfChanged();
 
     const modeSelect = document.getElementById('mode-select');
     const oldMode = localStorage.getItem('blaeu_animation_mode') || 'realtime';
@@ -4312,6 +4318,7 @@ async function checkAuthStatus() {
             await loadMapThemes();
             checkGarminStatus();
             checkDataPrompt();
+            checkCoachAvailability();
         } else {
             currentUser = null;
             csrfToken = data.csrf_token;
@@ -4426,6 +4433,7 @@ async function handleAuthSubmit(e) {
         await loadMapThemes();
         checkGarminStatus();
         checkDataPrompt();
+        checkCoachAvailability();
     } catch (err) {
         if (errorMsg) {
             errorMsg.textContent = err.message;
@@ -4445,6 +4453,7 @@ async function handleLogout() {
         routesList = [];
         foldersList = [];
         deselectRoute();
+        resetCoach();
         const adminSec = document.getElementById('admin-user-section');
         if (adminSec) adminSec.classList.add('hidden');
         await checkAuthStatus();
@@ -5110,6 +5119,641 @@ async function saveWellnessSetting() {
     } catch (err) {
         console.error('Error updating wellness setting', err);
         alert(err.message);
+    }
+}
+
+// ----------------------------------------------------
+// AI Coach
+// ----------------------------------------------------
+let coachAvailable = false;
+let coachConversationId = null;
+let coachAbortController = null;
+let coachProfileLoaded = null;
+
+const COACH_PROFILE_INPUTS = {
+    goals: 'coach-profile-goals',
+    target_events: 'coach-profile-target-events',
+    availability: 'coach-profile-availability',
+    injuries: 'coach-profile-injuries',
+    notes: 'coach-profile-notes'
+};
+
+const COACH_SUGGESTIONS = [
+    'How did my training go this week?',
+    'Plan my training for next week.',
+    'Am I recovering well, or should I take it easy?'
+];
+
+// Renders the coach's Markdown answer. All text is HTML-escaped first and only fixed tags
+// without attributes are added, so model output can never inject markup or scripts.
+function renderCoachMarkdown(markdown) {
+    const lines = escapeHTML(markdown || '').split('\n');
+    const inline = text => text
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+        .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<em>$2</em>');
+    const isTableRow = line => /^\s*\|.*\|\s*$/.test(line);
+    const isTableSeparator = line => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+    const isBlockStart = line => /^```/.test(line) || /^#{1,6}\s/.test(line)
+        || /^\s*[-*+]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line) || isTableRow(line);
+    const cells = line => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => inline(c.trim()));
+
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i];
+        if (/^```/.test(line)) {
+            const code = [];
+            i++;
+            while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
+            i++;
+            out.push(`<pre><code>${code.join('\n')}</code></pre>`);
+        } else if (/^#{1,6}\s/.test(line)) {
+            const level = line.match(/^#+/)[0].length;
+            const tag = level <= 2 ? 'h3' : level === 3 ? 'h4' : 'h5';
+            out.push(`<${tag}>${inline(line.replace(/^#+\s+/, ''))}</${tag}>`);
+            i++;
+        } else if (/^\s*[-*+]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line)) {
+            const ordered = /^\s*\d+[.)]\s+/.test(line);
+            const pattern = ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*+]\s+/;
+            const items = [];
+            while (i < lines.length && pattern.test(lines[i])) {
+                items.push(`<li>${inline(lines[i].replace(pattern, ''))}</li>`);
+                i++;
+            }
+            const tag = ordered ? 'ol' : 'ul';
+            out.push(`<${tag}>${items.join('')}</${tag}>`);
+        } else if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+            const head = cells(line).map(c => `<th>${c}</th>`).join('');
+            const rows = [];
+            i += 2;
+            while (i < lines.length && isTableRow(lines[i])) {
+                rows.push(`<tr>${cells(lines[i]).map(c => `<td>${c}</td>`).join('')}</tr>`);
+                i++;
+            }
+            out.push(`<table><thead><tr>${head}</tr></thead><tbody>${rows.join('')}</tbody></table>`);
+        } else if (!line.trim()) {
+            i++;
+        } else {
+            const para = [];
+            while (i < lines.length && lines[i].trim() && !(para.length && isBlockStart(lines[i]))) {
+                para.push(inline(lines[i]));
+                i++;
+            }
+            out.push(`<p>${para.join('<br>')}</p>`);
+        }
+    }
+    return out.join('');
+}
+
+function initCoach() {
+    document.getElementById('coach-open-btn').addEventListener('click', openCoachPanel);
+    document.getElementById('coach-close-btn').addEventListener('click', closeCoachPanel);
+    document.getElementById('coach-new-btn').addEventListener('click', startNewCoachConversation);
+    document.getElementById('coach-history-btn').addEventListener('click', toggleCoachHistory);
+    document.getElementById('coach-stop-btn').addEventListener('click', () => {
+        if (coachAbortController) coachAbortController.abort();
+    });
+    document.getElementById('coach-composer').addEventListener('submit', e => {
+        e.preventDefault();
+        submitCoachInput();
+    });
+    document.getElementById('coach-input').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+            e.preventDefault();
+            submitCoachInput();
+        }
+    });
+    document.getElementById('coach-panel').addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeCoachPanel();
+    });
+
+    document.getElementById('admin-llm-test-btn').addEventListener('click', testLlmSettings);
+    document.getElementById('admin-llm-save-btn').addEventListener('click', saveLlmSettings);
+    document.getElementById('admin-llm-base-url').addEventListener('input', updateLlmExternalWarning);
+}
+
+async function checkCoachAvailability() {
+    try {
+        const res = await fetch('/api/coach/status');
+        if (!res.ok) throw new Error('Status unavailable');
+        const data = await res.json();
+        coachAvailable = data.available;
+        document.getElementById('coach-open-btn').classList.toggle('hidden', !coachAvailable);
+        const modelLabel = document.getElementById('coach-panel-model');
+        modelLabel.textContent = data.model || '';
+        modelLabel.title = data.model || '';
+        document.getElementById('coach-disclaimer').textContent = data.is_external
+            ? 'Answers come from an external AI provider that receives your training data. The coach can make mistakes and is no substitute for medical advice.'
+            : 'The coach can make mistakes and is no substitute for medical advice.';
+        if (!coachAvailable) closeCoachPanel();
+    } catch (err) {
+        console.error('Error checking AI coach status', err);
+    }
+}
+
+function resetCoach() {
+    if (coachAbortController) coachAbortController.abort();
+    closeCoachPanel();
+    coachConversationId = null;
+    coachAvailable = false;
+    document.getElementById('coach-open-btn').classList.add('hidden');
+    document.getElementById('coach-messages').innerHTML = '';
+    document.getElementById('coach-conversation-list').innerHTML = '';
+}
+
+async function openCoachPanel() {
+    document.getElementById('coach-panel').classList.remove('hidden');
+    document.getElementById('coach-open-btn').setAttribute('aria-expanded', 'true');
+    if (coachConversationId === null) renderCoachEmptyState();
+    document.getElementById('coach-input').focus();
+}
+
+function closeCoachPanel() {
+    const panel = document.getElementById('coach-panel');
+    const wasOpen = !panel.classList.contains('hidden');
+    panel.classList.add('hidden');
+    const openBtn = document.getElementById('coach-open-btn');
+    openBtn.setAttribute('aria-expanded', 'false');
+    if (wasOpen && !openBtn.classList.contains('hidden')) openBtn.focus();
+}
+
+function toggleCoachHistory() {
+    const list = document.getElementById('coach-conversation-list');
+    const btn = document.getElementById('coach-history-btn');
+    const show = list.classList.contains('hidden');
+    list.classList.toggle('hidden', !show);
+    btn.setAttribute('aria-expanded', String(show));
+    if (show) loadCoachConversations();
+}
+
+function hideCoachHistory() {
+    document.getElementById('coach-conversation-list').classList.add('hidden');
+    document.getElementById('coach-history-btn').setAttribute('aria-expanded', 'false');
+}
+
+function formatCoachDate(stamp) {
+    if (!stamp) return '';
+    const d = new Date(stamp.replace(' ', 'T') + 'Z');
+    return d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadCoachConversations() {
+    const list = document.getElementById('coach-conversation-list');
+    try {
+        const res = await fetch('/api/coach/conversations');
+        if (!res.ok) throw new Error('Failed to load conversations.');
+        const conversations = await res.json();
+        list.innerHTML = '';
+        if (!conversations.length) {
+            list.innerHTML = '<p class="coach-empty" style="padding: 8px;">No conversations yet.</p>';
+            return;
+        }
+        conversations.forEach(c => {
+            const title = c.title || 'New conversation';
+            const item = document.createElement('div');
+            item.className = 'coach-conversation-item' + (c.id === coachConversationId ? ' active' : '');
+            item.setAttribute('role', 'listitem');
+            const open = document.createElement('button');
+            open.type = 'button';
+            open.className = 'coach-conversation-open';
+            open.innerHTML = `${escapeHTML(title)}<small>${escapeHTML(formatCoachDate(c.updated_at))}</small>`;
+            open.addEventListener('click', () => openCoachConversation(c.id));
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'coach-conversation-delete';
+            del.textContent = 'Delete';
+            del.setAttribute('aria-label', `Delete conversation: ${title}`);
+            del.addEventListener('click', () => deleteCoachConversation(c.id));
+            item.append(open, del);
+            list.appendChild(item);
+        });
+    } catch (err) {
+        list.innerHTML = `<p class="coach-empty" style="padding: 8px;">${escapeHTML(err.message)}</p>`;
+    }
+}
+
+function renderCoachEmptyState() {
+    const container = document.getElementById('coach-messages');
+    container.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'coach-empty';
+    empty.innerHTML = '<p>Ask about your training, recovery or plans. The coach knows your recent workouts, thresholds and the goals in your coach profile (Settings &gt; Coach).</p>';
+    const suggestions = document.createElement('div');
+    suggestions.className = 'coach-suggestions';
+    COACH_SUGGESTIONS.forEach(text => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'coach-suggestion';
+        btn.textContent = text;
+        btn.addEventListener('click', () => sendCoachMessage(text));
+        suggestions.appendChild(btn);
+    });
+    empty.appendChild(suggestions);
+    container.appendChild(empty);
+}
+
+function startNewCoachConversation() {
+    if (coachAbortController) return;
+    coachConversationId = null;
+    renderCoachEmptyState();
+    hideCoachHistory();
+    document.getElementById('coach-input').focus();
+}
+
+async function openCoachConversation(id) {
+    if (coachAbortController) return;
+    try {
+        const res = await fetch(`/api/coach/conversations/${id}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to load the conversation.');
+        coachConversationId = data.id;
+        const container = document.getElementById('coach-messages');
+        container.innerHTML = '';
+        if (!data.messages.length) renderCoachEmptyState();
+        data.messages.forEach(m => appendCoachMessage(m.role, m.content, m.reasoning, m.status));
+        const last = data.messages[data.messages.length - 1];
+        if (last && last.role === 'user') appendCoachError('This message has no answer yet.', true);
+        hideCoachHistory();
+        container.scrollTop = container.scrollHeight;
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function deleteCoachConversation(id) {
+    if (!confirm('Delete this conversation? This cannot be undone.')) return;
+    try {
+        const res = await fetch(`/api/coach/conversations/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete the conversation.');
+        if (id === coachConversationId) {
+            coachConversationId = null;
+            renderCoachEmptyState();
+        }
+        loadCoachConversations();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function appendCoachMessage(role, content, reasoning, status) {
+    const container = document.getElementById('coach-messages');
+    const empty = container.querySelector('.coach-empty');
+    if (empty) empty.remove();
+    const el = document.createElement('div');
+    el.className = `coach-message ${role}`;
+    let reasoningText = null;
+    let reasoningSummary = null;
+    if (role === 'assistant') {
+        const details = document.createElement('details');
+        details.className = 'coach-reasoning';
+        details.innerHTML = '<summary>Reasoning</summary>';
+        reasoningSummary = details.querySelector('summary');
+        reasoningText = document.createElement('div');
+        reasoningText.className = 'coach-reasoning-text';
+        reasoningText.textContent = reasoning || '';
+        details.appendChild(reasoningText);
+        details.hidden = !reasoning;
+        el.appendChild(details);
+    }
+    const body = document.createElement('div');
+    body.className = 'coach-message-body';
+    if (role === 'assistant') {
+        body.innerHTML = renderCoachMarkdown(content);
+    } else {
+        body.textContent = content;
+    }
+    el.appendChild(body);
+    if (status === 'interrupted') {
+        const note = document.createElement('span');
+        note.className = 'coach-message-note';
+        note.textContent = 'This answer was cut short.';
+        el.appendChild(note);
+    }
+    container.appendChild(el);
+    container.scrollTop = container.scrollHeight;
+    return { el, body, reasoningText, reasoningSummary };
+}
+
+function appendCoachError(message, canRetry) {
+    const container = document.getElementById('coach-messages');
+    const el = document.createElement('div');
+    el.className = 'coach-message error';
+    el.setAttribute('role', 'alert');
+    el.textContent = message;
+    if (canRetry) {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn btn-sm btn-outline coach-retry-btn';
+        retry.textContent = 'Try again';
+        retry.addEventListener('click', () => {
+            el.remove();
+            sendCoachMessage(null, true);
+        });
+        el.appendChild(document.createElement('br'));
+        el.appendChild(retry);
+    }
+    container.appendChild(el);
+    container.scrollTop = container.scrollHeight;
+}
+
+function setCoachBusy(busy) {
+    document.getElementById('coach-send-btn').classList.toggle('hidden', busy);
+    document.getElementById('coach-stop-btn').classList.toggle('hidden', !busy);
+    document.getElementById('coach-input').disabled = busy;
+    document.getElementById('coach-new-btn').disabled = busy;
+    document.getElementById('coach-messages').setAttribute('aria-busy', String(busy));
+}
+
+function submitCoachInput() {
+    const input = document.getElementById('coach-input');
+    const text = input.value.trim();
+    if (!text || coachAbortController) return;
+    input.value = '';
+    sendCoachMessage(text);
+}
+
+function formatThinkingTime(seconds) {
+    return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+}
+
+async function sendCoachMessage(text, retry = false) {
+    if (coachAbortController) return;
+    let thinkingStarted = null;
+    let thinkingTimer = null;
+    const stopThinkingTimer = () => {
+        if (thinkingTimer) clearInterval(thinkingTimer);
+        thinkingTimer = null;
+        if (thinkingStarted !== null && view) {
+            const seconds = Math.round((Date.now() - thinkingStarted) / 1000);
+            view.reasoningSummary.textContent = `Reasoning (${formatThinkingTime(seconds)})`;
+        }
+    };
+    coachAbortController = new AbortController();
+    setCoachBusy(true);
+    let answer = '';
+    let reasoning = '';
+    let view = null;
+    let finished = false;
+    try {
+        if (coachConversationId === null) {
+            const res = await fetch('/api/coach/conversations', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to start a conversation.');
+            coachConversationId = data.id;
+        }
+        if (!retry) appendCoachMessage('user', text);
+        view = appendCoachMessage('assistant', '');
+        view.body.classList.add('coach-typing');
+
+        const res = await fetch(`/api/coach/conversations/${coachConversationId}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(retry ? { retry: true } : { content: text }),
+            signal: coachAbortController.signal
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || 'The coach could not answer.');
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        const container = document.getElementById('coach-messages');
+        let buffer = '';
+        let errorMessage = null;
+        let doneStatus = null;
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let boundary;
+            while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+                const raw = buffer.slice(0, boundary);
+                buffer = buffer.slice(boundary + 2);
+                const event = (raw.match(/^event: (.*)$/m) || [])[1];
+                const dataLine = (raw.match(/^data: (.*)$/m) || [])[1];
+                const data = dataLine ? JSON.parse(dataLine) : {};
+                const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+                if (event === 'content') {
+                    if (thinkingTimer) stopThinkingTimer();
+                    answer += data.text;
+                    view.body.innerHTML = renderCoachMarkdown(answer);
+                } else if (event === 'reasoning') {
+                    if (thinkingStarted === null && !answer) {
+                        thinkingStarted = Date.now();
+                        const tick = () => {
+                            const seconds = Math.round((Date.now() - thinkingStarted) / 1000);
+                            view.reasoningSummary.textContent = `Thinking... ${formatThinkingTime(seconds)}`;
+                        };
+                        tick();
+                        thinkingTimer = setInterval(tick, 1000);
+                    }
+                    reasoning += data.text;
+                    view.reasoningText.textContent = reasoning;
+                    view.reasoningText.parentElement.hidden = false;
+                } else if (event === 'error') {
+                    errorMessage = data.message;
+                } else if (event === 'done') {
+                    finished = true;
+                    doneStatus = data.status;
+                }
+                if (nearBottom) container.scrollTop = container.scrollHeight;
+            }
+        }
+        view.body.classList.remove('coach-typing');
+        if (errorMessage) {
+            if (!answer) view.el.remove();
+            appendCoachError(errorMessage, !answer);
+        } else if (!finished) {
+            appendCoachError('The connection to the coach was interrupted.', !answer);
+        } else if (doneStatus === 'interrupted') {
+            const note = document.createElement('span');
+            note.className = 'coach-message-note';
+            note.textContent = 'This answer was cut short.';
+            view.el.appendChild(note);
+        }
+    } catch (err) {
+        if (view) view.body.classList.remove('coach-typing');
+        if (view && !answer) view.el.remove();
+        if (err.name === 'AbortError') {
+            if (view && answer) {
+                const note = document.createElement('span');
+                note.className = 'coach-message-note';
+                note.textContent = 'Stopped.';
+                view.el.appendChild(note);
+            }
+        } else {
+            appendCoachError(err.message, coachConversationId !== null && !answer);
+        }
+    } finally {
+        if (thinkingTimer) stopThinkingTimer();
+        coachAbortController = null;
+        setCoachBusy(false);
+        document.getElementById('coach-input').focus();
+    }
+}
+
+// Settings > Coach: the athlete's profile
+async function loadCoachProfile() {
+    try {
+        const res = await fetch('/api/coach/profile');
+        if (!res.ok) throw new Error('Failed to load the coach profile.');
+        const profile = await res.json();
+        coachProfileLoaded = {};
+        Object.entries(COACH_PROFILE_INPUTS).forEach(([key, id]) => {
+            coachProfileLoaded[key] = profile[key] || '';
+            document.getElementById(id).value = coachProfileLoaded[key];
+        });
+    } catch (err) {
+        console.error('Error loading coach profile', err);
+        coachProfileLoaded = null;
+    }
+}
+
+async function saveCoachProfileIfChanged() {
+    if (!coachProfileLoaded) return;
+    const values = {};
+    let changed = false;
+    Object.entries(COACH_PROFILE_INPUTS).forEach(([key, id]) => {
+        values[key] = document.getElementById(id).value.trim();
+        if (values[key] !== coachProfileLoaded[key]) changed = true;
+    });
+    if (!changed) return;
+    try {
+        const res = await fetch('/api/coach/profile', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(values)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to save the coach profile.');
+        coachProfileLoaded = values;
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+// Settings > Admin: the LLM endpoint
+function isExternalLlmUrl(url) {
+    let host;
+    try {
+        host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    } catch (e) {
+        return false;
+    }
+    if (!host) return false;
+    if (host === 'localhost' || host === '::1' || (!host.includes('.') && !host.includes(':'))) return false;
+    if (/^(127\.|10\.|192\.168\.|169\.254\.)/.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) return false;
+    if (host.includes(':') && /^(fc|fd|fe80)/.test(host)) return false;
+    return !/\.(local|lan|home|internal|home\.arpa|localhost)$/.test(host);
+}
+
+function updateLlmExternalWarning() {
+    const url = document.getElementById('admin-llm-base-url').value.trim();
+    document.getElementById('admin-llm-external-warning').classList.toggle('hidden', !url || !isExternalLlmUrl(url));
+}
+
+async function loadLlmSettings() {
+    try {
+        const res = await fetch('/api/admin/llm');
+        if (!res.ok) throw new Error('Failed to load the AI coach settings.');
+        renderLlmSettings(await res.json());
+    } catch (err) {
+        console.error('Error loading LLM settings', err);
+    }
+}
+
+function renderLlmSettings(config) {
+    document.getElementById('admin-llm-enabled').checked = config.enabled;
+    document.getElementById('admin-llm-base-url').value = config.base_url || '';
+    document.getElementById('admin-llm-model').value = config.model || '';
+    document.getElementById('admin-llm-context-window').value = config.context_window;
+    document.getElementById('admin-llm-temperature').value = config.temperature;
+    document.getElementById('admin-llm-reasoning').value = config.reasoning || '';
+    const keyInput = document.getElementById('admin-llm-api-key');
+    keyInput.value = '';
+    keyInput.disabled = config.api_key_from_env;
+    document.getElementById('admin-llm-api-key-status').textContent = config.api_key_from_env
+        ? 'Set through the BLAEU_LLM_API_KEY environment variable.'
+        : config.api_key_set ? 'A key is stored. Leave empty to keep it.' : 'No key stored.';
+    updateLlmExternalWarning();
+}
+
+function readLlmForm() {
+    const payload = {
+        enabled: document.getElementById('admin-llm-enabled').checked,
+        base_url: document.getElementById('admin-llm-base-url').value.trim(),
+        model: document.getElementById('admin-llm-model').value.trim(),
+        context_window: parseInt(document.getElementById('admin-llm-context-window').value, 10),
+        temperature: parseFloat(document.getElementById('admin-llm-temperature').value),
+        reasoning: document.getElementById('admin-llm-reasoning').value
+    };
+    const key = document.getElementById('admin-llm-api-key').value.trim();
+    if (key) payload.api_key = key;
+    return payload;
+}
+
+function showLlmTestResult(html, ok) {
+    const box = document.getElementById('admin-llm-test-result');
+    box.innerHTML = html;
+    box.classList.remove('hidden', 'ok', 'failed');
+    if (ok !== null) box.classList.add(ok ? 'ok' : 'failed');
+}
+
+async function testLlmSettings() {
+    const btn = document.getElementById('admin-llm-test-btn');
+    btn.disabled = true;
+    showLlmTestResult('Testing the connection. A local model may need a minute to load...', null);
+    try {
+        const res = await fetch('/api/admin/llm/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(readLlmForm())
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'The test failed.');
+
+        const options = document.getElementById('admin-llm-model-options');
+        options.innerHTML = '';
+        data.models.forEach(name => {
+            const option = document.createElement('option');
+            option.value = name;
+            options.appendChild(option);
+        });
+        const lines = [data.is_ollama ? 'Ollama server detected.' : 'OpenAI-compatible endpoint.'];
+        if (data.models.length) lines.push(`${data.models.length} model(s) available; pick one in the Model field.`);
+        if (data.model_found === false) lines.push('The chosen model is not in the list of available models.');
+        lines.push(data.ok
+            ? `The model answered in ${data.seconds} s: "${escapeHTML(data.reply)}"`
+            : `<strong>Problem:</strong> ${escapeHTML(data.error)}`);
+        showLlmTestResult(lines.join('<br>'), data.ok);
+    } catch (err) {
+        showLlmTestResult(`<strong>Problem:</strong> ${escapeHTML(err.message)}`, false);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function saveLlmSettings() {
+    const btn = document.getElementById('admin-llm-save-btn');
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/admin/llm', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(readLlmForm())
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to save the AI coach settings.');
+        renderLlmSettings(data);
+        showLlmTestResult('Settings saved.', true);
+        checkCoachAvailability();
+    } catch (err) {
+        showLlmTestResult(`<strong>Problem:</strong> ${escapeHTML(err.message)}`, false);
+    } finally {
+        btn.disabled = false;
     }
 }
 

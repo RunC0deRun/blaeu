@@ -1900,3 +1900,435 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .history-actions select {
     width: auto;
 }
+
+/* ----------------------------------------------------
+   AI Coach
+   ---------------------------------------------------- */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.coach-open-btn {
+    margin-top: 12px;
+}
+
+.coach-input,
+.coach-textarea {
+    width: 100%;
+    padding: 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.2);
+    color: var(--text-main);
+    font-family: var(--font-main);
+    font-size: 0.9em;
+}
+
+.coach-textarea {
+    resize: vertical;
+    line-height: 1.45;
+}
+
+.coach-input:focus,
+.coach-textarea:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+.coach-form-row {
+    display: flex;
+    gap: 12px;
+}
+
+.coach-form-row .form-group {
+    flex: 1;
+    min-width: 0;
+}
+
+.admin-llm-section {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.coach-notice {
+    background: rgba(244, 63, 94, 0.08);
+    border: 1px solid var(--danger);
+    color: var(--text-main);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 0.85em;
+    margin-bottom: 12px;
+}
+
+.coach-test-result {
+    margin-top: 12px;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.2);
+    font-size: 0.85em;
+    line-height: 1.5;
+}
+
+.coach-test-result.ok {
+    border-color: rgba(16, 185, 129, 0.6);
+}
+
+.coach-test-result.failed {
+    border-color: var(--danger);
+}
+
+/* Chat panel: a drawer on the right, full screen on phones */
+.coach-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(460px, 100vw);
+    z-index: 1500;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border-hover);
+    box-shadow: -10px 0 40px rgba(0, 0, 0, 0.5);
+}
+
+.coach-panel.hidden {
+    display: none;
+}
+
+.coach-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.coach-panel-title {
+    font-family: var(--font-main);
+    color: var(--primary);
+    font-size: 1.05rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.coach-panel-model {
+    display: block;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.coach-panel-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.coach-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.6rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+.coach-close-btn:hover,
+.coach-close-btn:focus-visible {
+    color: var(--text-main);
+}
+
+.coach-conversation-list {
+    max-height: 40%;
+    overflow-y: auto;
+    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+}
+
+.coach-conversation-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 6px;
+}
+
+.coach-conversation-item.active {
+    background: rgba(0, 240, 255, 0.08);
+}
+
+.coach-conversation-open {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text-main);
+    font-family: var(--font-main);
+    font-size: 0.85rem;
+    padding: 8px;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.coach-conversation-open small {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+}
+
+.coach-conversation-delete {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 6px 8px;
+    font-size: 0.8rem;
+}
+
+.coach-conversation-delete:hover,
+.coach-conversation-delete:focus-visible {
+    color: var(--danger);
+}
+
+.coach-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.coach-empty {
+    margin: auto 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.coach-suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.coach-suggestion {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-main);
+    padding: 10px 12px;
+    font-family: var(--font-main);
+    font-size: 0.85rem;
+    cursor: pointer;
+    text-align: left;
+}
+
+.coach-suggestion:hover,
+.coach-suggestion:focus-visible {
+    border-color: var(--border-hover);
+}
+
+.coach-message {
+    max-width: 92%;
+    padding: 10px 13px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+
+.coach-message.user {
+    align-self: flex-end;
+    background: rgba(0, 240, 255, 0.1);
+    border: 1px solid rgba(0, 240, 255, 0.25);
+    white-space: pre-wrap;
+}
+
+.coach-message.assistant {
+    align-self: flex-start;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+}
+
+.coach-message.error {
+    align-self: stretch;
+    background: rgba(244, 63, 94, 0.08);
+    border: 1px solid var(--danger);
+}
+
+.coach-message-note {
+    display: block;
+    margin-top: 6px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.coach-message .coach-retry-btn {
+    margin-top: 8px;
+}
+
+.coach-reasoning {
+    margin-bottom: 8px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.coach-reasoning summary {
+    cursor: pointer;
+}
+
+.coach-reasoning-text {
+    white-space: pre-wrap;
+    margin-top: 6px;
+    padding-left: 8px;
+    border-left: 2px solid var(--border);
+}
+
+.coach-typing::after {
+    content: '▍';
+    animation: coachBlink 1s steps(1) infinite;
+    color: var(--primary);
+}
+
+@keyframes coachBlink {
+    50% { opacity: 0; }
+}
+
+/* Markdown inside answers */
+.coach-message.assistant p,
+.coach-message.assistant ul,
+.coach-message.assistant ol,
+.coach-message.assistant pre,
+.coach-message.assistant table {
+    margin: 0 0 8px;
+}
+
+.coach-message.assistant > :last-child {
+    margin-bottom: 0;
+}
+
+.coach-message.assistant ul,
+.coach-message.assistant ol {
+    padding-left: 20px;
+}
+
+.coach-message.assistant h3,
+.coach-message.assistant h4,
+.coach-message.assistant h5 {
+    font-size: 0.95rem;
+    color: var(--primary);
+    margin: 10px 0 6px;
+}
+
+.coach-message.assistant code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.coach-message.assistant pre {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 8px;
+    border-radius: 6px;
+    overflow-x: auto;
+}
+
+.coach-message.assistant pre code {
+    background: none;
+    padding: 0;
+}
+
+.coach-message.assistant table {
+    border-collapse: collapse;
+    font-size: 0.85em;
+    display: block;
+    overflow-x: auto;
+}
+
+.coach-message.assistant th,
+.coach-message.assistant td {
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+    text-align: left;
+}
+
+.coach-message.assistant th:first-child,
+.coach-message.assistant td:first-child {
+    white-space: nowrap;
+}
+
+.coach-composer {
+    border-top: 1px solid var(--border);
+    padding: 12px 16px 16px;
+}
+
+.coach-composer textarea {
+    width: 100%;
+    resize: none;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--text-main);
+    font-family: var(--font-main);
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.coach-composer textarea:focus {
+    outline: none;
+    border-color: var(--border-focus);
+}
+
+.coach-composer-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.coach-disclaimer {
+    flex: 1;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    line-height: 1.35;
+}
+
+@media (max-width: 768px) {
+    .coach-panel {
+        width: 100vw;
+        border-left: none;
+    }
+
+    .coach-form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+}

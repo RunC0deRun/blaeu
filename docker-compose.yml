@@ -15,6 +15,17 @@ services:
       - BLAEU_WORKER_TIMEOUT=${BLAEU_WORKER_TIMEOUT:-300}
       - BLAEU_OVERPASS_MIN_INTERVAL=${BLAEU_OVERPASS_MIN_INTERVAL:-5}
       - BLAEU_POSTER_MAX_ATTEMPTS=${BLAEU_POSTER_MAX_ATTEMPTS:-5}
+      - BLAEU_THREADS=${BLAEU_THREADS:-8}
+      # AI coach defaults; admins can also configure the endpoint in Settings > Admin
+      - BLAEU_LLM_BASE_URL=${BLAEU_LLM_BASE_URL:-}
+      - BLAEU_LLM_MODEL=${BLAEU_LLM_MODEL:-}
+      - BLAEU_LLM_API_KEY=${BLAEU_LLM_API_KEY:-}
+      - BLAEU_LLM_ENABLED=${BLAEU_LLM_ENABLED:-false}
+      - BLAEU_LLM_CONTEXT_WINDOW=${BLAEU_LLM_CONTEXT_WINDOW:-8192}
+      - BLAEU_LLM_REASONING=${BLAEU_LLM_REASONING:-}
+    # Lets the container reach an LLM (e.g. Ollama) on the host at host.docker.internal, also on Linux
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true

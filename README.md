@@ -96,6 +96,54 @@ The following environment variables can be configured when running the Docker co
 | `BLAEU_POSTER_MAX_ATTEMPTS` | `5` | Attempts for a background poster before it is marked failed. When Overpass is unreachable, the queue backs off exponentially (30s, 60s, … up to 15 min) before retrying. |
 | `BLAEU_DISABLE_AUTO_SYNC` | `false` | Set to `true` to stop the background Garmin/Intervals.icu auto-sync, regardless of user settings. Used by the test instance; manual syncs and imports still work. |
 | `BLAEU_INTERVALS_REQUEST_DELAY` | `1.0` | Seconds to wait between Intervals.icu requests during syncs, to stay well clear of API throttling. |
+| `BLAEU_THREADS` | `8` | Threads per Gunicorn worker. AI coach answers stream for a while; threads keep the app responsive meanwhile. |
+| `BLAEU_LLM_BASE_URL` | *None* | Default OpenAI-compatible endpoint for the AI coach, e.g. `http://host.docker.internal:11434/v1` for Ollama on the host. Admins can also set it in Settings > Admin. |
+| `BLAEU_LLM_MODEL` | *None* | Default model for the AI coach, e.g. `qwen3:8b`. |
+| `BLAEU_LLM_API_KEY` | *None* | API key for a hosted LLM provider. When set, it overrides a key stored through the admin page, so the secret stays out of the database. |
+| `BLAEU_LLM_ENABLED` | `false` | Enables the AI coach when it's configured only through environment variables. |
+| `BLAEU_LLM_CONTEXT_WINDOW` | `8192` | Context window of the model, in tokens. Blaeu fits the training summary and conversation into it. |
+| `BLAEU_LLM_REASONING` | *Model default* | How long a reasoning model thinks: `off`, `low`, `medium` or `high`. See [Choosing a model](#choosing-a-model). |
+
+---
+
+## 🤖 AI Coach
+
+Blaeu can coach athletes through a chat panel on the dashboard. The coach sees the athlete's goals (Settings > Coach), recent training, thresholds, fitness and, with their opt-in, wellness data.
+
+1. Run an LLM. For privacy, run it locally with [Ollama](https://ollama.com), for example `ollama pull qwen3:8b` (see [Choosing a model](#choosing-a-model)). Any OpenAI-compatible endpoint (OpenAI, OpenRouter, vLLM, LM Studio, llama.cpp) works too.
+2. As an admin, open Settings > Admin > AI Coach, enter the endpoint URL (`http://host.docker.internal:11434/v1` reaches Ollama on the Docker host) and the model, click **Test connection**, enable the coach and save.
+3. Users then see an **AI Coach** button on the dashboard.
+
+With Ollama, Blaeu sets the context window per request, so long prompts aren't silently cut off. When the endpoint is outside the local network, admins and users are told that training data is sent to that provider.
+
+### Choosing a model
+
+The coach needs a model that follows instructions, reasons correctly with numbers and answers in the athlete's language. It doesn't need a huge context: Blaeu's training summary is about 2,000 tokens, and the default 8,192-token window leaves room for a conversation.
+
+**Reasoning** (Settings > Admin > AI Coach) decides how long a reasoning model such as Qwen3 thinks before answering. For Ollama it is sent as `think`, for other endpoints as `reasoning_effort`; *Model default* sends nothing. Reasoning makes answers noticeably more accurate, but at the highest levels it takes minutes. Start with **Low**.
+
+What we measured, with the same question about a real training week (Qwen3.8 27B, Q4_K_M, on a GPU server generating about 35 tokens per second):
+
+| Reasoning | Answer starts after | Complete after | Quality |
+|---|---|---|---|
+| Model default (highest) | 146 s | 167 s | Accurate and thorough |
+| Medium | 36 s | 67 s | Good, with a small factual slip |
+| **Low** | **29 s** | **47 s** | **Accurate, with the most useful insight: the best balance** |
+| Off | 5 s | 36 s | Fluent, but with factual mistakes (a race placed in the wrong week, wrong pace arithmetic) |
+
+Suggested starting points, by the memory available for the model (download sizes of the 4-bit versions in the [Ollama library](https://ollama.com/library)):
+
+| Memory for the model | Model | Download | Notes |
+|---|---|---|---|
+| About 8 GB | `qwen3:8b` | 5.2 GB | Reasoning model; set Reasoning to Low |
+| About 12 GB | `qwen3:14b` | 9.3 GB | Reasoning model; set Reasoning to Low |
+| About 12 GB | `gemma3:12b` | 8.2 GB | No reasoning, so quick; check its numbers |
+| 16 GB or more | `gpt-oss:20b` | 14 GB | Reasoning levels low, medium or high |
+| 20–24 GB | Qwen3.8 27B (`hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M`) | 17 GB | The model measured above |
+
+Only Qwen3.8 27B has been tested with Blaeu so far; the others are suggestions based on their size and features, and newer model families appear all the time. To evaluate a model, use **Test connection**, then ask the coach about your own last week and check the numbers it quotes against your training log. On a CPU without a GPU, expect answers several times slower than in the table.
+
+A larger context window (for example 16,384) allows longer conversations but needs more memory on the Ollama server.
 
 ---
 

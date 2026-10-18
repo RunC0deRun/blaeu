@@ -368,6 +368,56 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sync_jobs_status ON sync_jobs(status);")
 
+    # Create App Settings Table: instance-wide key/value settings managed by admins (e.g. the LLM endpoint)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    # Create Coach Profiles Table: the athlete's goals and context for the AI coach
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS coach_profiles (
+        user_id INTEGER PRIMARY KEY,
+        goals TEXT,
+        target_events TEXT,
+        availability TEXT,
+        injuries TEXT,
+        notes TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    """)
+
+    # Create Chat Tables: coach conversations and their messages
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS chat_conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        title TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS chat_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        reasoning TEXT,
+        model TEXT,
+        status TEXT DEFAULT 'complete',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_user ON chat_conversations(user_id, updated_at);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id);")
+
     # Create Athlete Thresholds Table: per sport and source (e.g. Run/Ride from Intervals.icu)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS athlete_thresholds (
@@ -1529,6 +1579,141 @@ def update_sync_job(job_id, **fields):
     try:
         cursor.execute(f"UPDATE sync_jobs SET {assignments} WHERE id = ?", (*fields.values(), job_id))
         conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+
+# Helper Functions for App Settings
+def get_app_settings(prefix=''):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT key, value FROM app_settings WHERE key LIKE ?", (f"{prefix}%",))
+    rows = {row['key']: row['value'] for row in cursor.fetchall()}
+    conn.close()
+    return rows
+
+def set_app_settings(values):
+    """Stores settings; a value of None removes the key."""
+    now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        for key, value in values.items():
+            if value is None:
+                cursor.execute("DELETE FROM app_settings WHERE key = ?", (key,))
+            else:
+                cursor.execute(
+                    "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+                    (key, str(value), now)
+                )
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# Helper Functions for the Coach Profile
+COACH_PROFILE_FIELDS = ('goals', 'target_events', 'availability', 'injuries', 'notes')
+
+def get_coach_profile(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM coach_profiles WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return {'user_id': user_id, **dict.fromkeys(COACH_PROFILE_FIELDS), 'updated_at': None}
+
+def save_coach_profile(user_id, fields):
+    now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    values = [fields.get(k) for k in COACH_PROFILE_FIELDS]
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"""
+            INSERT OR REPLACE INTO coach_profiles (user_id, {', '.join(COACH_PROFILE_FIELDS)}, updated_at)
+            VALUES (?, {', '.join('?' for _ in COACH_PROFILE_FIELDS)}, ?)
+        """, (user_id, *values, now))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# Helper Functions for Coach Conversations
+def create_conversation(user_id, title):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO chat_conversations (user_id, title) VALUES (?, ?)", (user_id, title))
+        conversation_id = cursor.lastrowid
+        conn.commit()
+        return conversation_id
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_conversation(conversation_id, user_id):
+    """Returns the conversation only if it belongs to user_id."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM chat_conversations WHERE id = ? AND user_id = ?", (conversation_id, user_id))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_conversations(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM chat_conversations WHERE user_id = ? ORDER BY updated_at DESC, id DESC", (user_id,)
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def delete_conversation(conversation_id, user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM chat_conversations WHERE id = ? AND user_id = ?", (conversation_id, user_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_chat_messages(conversation_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY id", (conversation_id,))
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def add_chat_message(conversation_id, role, content, reasoning=None, model=None, status='complete'):
+    now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO chat_messages (conversation_id, role, content, reasoning, model, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (conversation_id, role, content, reasoning, model, status, now))
+        message_id = cursor.lastrowid
+        cursor.execute("UPDATE chat_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+        conn.commit()
+        return message_id
     except sqlite3.Error as e:
         conn.rollback()
         raise e

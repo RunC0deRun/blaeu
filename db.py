@@ -245,6 +245,8 @@ def init_db():
 
     # Wellness import is opt-in: NULL = not asked yet, 0 = declined, 1 = accepted
     add_column_if_missing(cursor, 'users', 'wellness_opt_in', "INTEGER")
+    # When the user answered the training-data prompt (history import / wellness)
+    add_column_if_missing(cursor, 'users', 'data_prompt_answered_at', "TEXT")
 
     # Create Activities Table: the training log. Every workout gets a row, with or
     # without GPS; workouts with a map link to their route via route_id.
@@ -588,6 +590,21 @@ def get_activities(user_id, start=None, end=None, include_hidden=False):
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
+
+def mark_user_data_prompt_answered(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE users SET data_prompt_answered_at = ? WHERE id = ?",
+            (datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S'), user_id)
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def get_user_wellness_opt_in(user_id):
     user = get_user_by_id(user_id)

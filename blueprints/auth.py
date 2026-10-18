@@ -98,7 +98,8 @@ def login():
             'is_admin': user['is_admin'],
             'default_map_style': user.get('default_map_style', 'dark'),
             'week_start_day': user.get('week_start_day', 'Monday'),
-            'default_aspect_ratio': user.get('default_aspect_ratio', '16:9')
+            'default_aspect_ratio': user.get('default_aspect_ratio', '16:9'),
+            'wellness_opt_in': user.get('wellness_opt_in')
         },
         'csrf_token': csrf_token
     })
@@ -145,7 +146,8 @@ def auth_status():
             'is_admin': user['is_admin'],
             'default_map_style': user.get('default_map_style', 'dark'),
             'week_start_day': user.get('week_start_day', 'Monday'),
-            'default_aspect_ratio': user.get('default_aspect_ratio', '16:9')
+            'default_aspect_ratio': user.get('default_aspect_ratio', '16:9'),
+            'wellness_opt_in': user.get('wellness_opt_in')
         },
         'csrf_token': csrf_token
     })
@@ -259,3 +261,83 @@ def remove_user(delete_user_id):
     except Exception as e:
         logger.exception("Unexpected error deleting user")
         return jsonify({'error': 'Failed to delete user: An unexpected server error occurred.'}), 500
+
+
+
+def _data_preferences(user_id):
+    from db import get_intervals_connection, get_latest_sync_job
+    from blueprints.intervals_backfill import job_progress, SOURCE, KIND, DEFAULT_MONTHS, MAX_MONTHS
+
+    user = get_user_by_id(user_id)
+    intervals_connected = get_intervals_connection(user_id) is not None
+    job = get_latest_sync_job(user_id, SOURCE, KIND) if intervals_connected else None
+    wellness_opt_in = user.get('wellness_opt_in')
+
+    # Wellness only arrives through Intervals.icu for now, so only ask when it's connected.
+    # The history offer is for connections made before the backfill existed: connecting
+    # now starts one automatically.
+    ask_wellness = intervals_connected and wellness_opt_in is None
+    offer_history = intervals_connected and job is None and not user.get('data_prompt_answered_at')
+    return {
+        'wellness_opt_in': None if wellness_opt_in is None else bool(wellness_opt_in),
+        'intervals_connected': intervals_connected,
+        'history': job_progress(job),
+        'history_default_months': DEFAULT_MONTHS,
+        'history_max_months': MAX_MONTHS,
+        'prompt': {
+            'show': ask_wellness or offer_history,
+            'ask_wellness': ask_wellness,
+            'offer_history': offer_history,
+        },
+    }
+
+
+@auth_bp.route('/api/auth/data-preferences', methods=['GET'])
+def get_data_preferences():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+    return jsonify(_data_preferences(user_id))
+
+
+@auth_bp.route('/api/auth/data-preferences', methods=['PUT'])
+def update_data_preferences():
+    """
+    Saves training-data choices: {wellness_opt_in?: bool, import_history?: bool,
+    history_months?: int, prompt_answered?: bool}.
+    """
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+
+    from db import update_user_wellness_opt_in, mark_user_data_prompt_answered, get_intervals_connection
+    from blueprints.intervals_backfill import start_backfill, DEFAULT_MONTHS, MAX_MONTHS
+
+    data = request.json or {}
+    wellness = data.get('wellness_opt_in')
+    import_history = data.get('import_history', False)
+    months = data.get('history_months', DEFAULT_MONTHS)
+    if wellness is not None and not isinstance(wellness, bool):
+        return jsonify({'error': 'wellness_opt_in must be true or false'}), 400
+    if not isinstance(import_history, bool):
+        return jsonify({'error': 'import_history must be true or false'}), 400
+    if not isinstance(months, int) or isinstance(months, bool) or not 1 <= months <= MAX_MONTHS:
+        return jsonify({'error': f'history_months must be a whole number between 1 and {MAX_MONTHS}'}), 400
+
+    try:
+        user = get_user_by_id(user_id)
+        newly_opted_in = wellness is True and user.get('wellness_opt_in') != 1
+        if wellness is not None:
+            update_user_wellness_opt_in(user_id, wellness)
+
+        # Opting in later also fetches the wellness history, through the same slow backfill
+        if get_intervals_connection(user_id) and (import_history or newly_opted_in):
+            start_backfill(user_id, months)
+
+        if data.get('prompt_answered'):
+            mark_user_data_prompt_answered(user_id)
+    except Exception:
+        logger.exception("Unexpected error saving training data preferences")
+        return jsonify({'error': 'Failed to save your choices: An unexpected server error occurred.'}), 500
+
+    return jsonify(_data_preferences(user_id))

@@ -2385,6 +2385,7 @@ function openSettingsModal() {
     document.getElementById('settings-modal').classList.remove('hidden');
     checkGarminStatus();
     checkIntervalsStatus();
+    refreshTrainingDataSettings();
     if (currentUser && currentUser.is_admin) {
         const adminSec = document.getElementById('admin-user-section');
         if (adminSec) adminSec.classList.remove('hidden');
@@ -2455,6 +2456,8 @@ function loadSettingsIntoModal() {
 }
 
 async function saveSettingsModal() {
+    await saveWellnessSetting();
+
     const modeSelect = document.getElementById('mode-select');
     const oldMode = localStorage.getItem('blaeu_animation_mode') || 'realtime';
     const newMode = modeSelect ? modeSelect.value : oldMode;
@@ -3964,6 +3967,7 @@ async function checkAuthStatus() {
             await loadRoutes();
             await loadMapThemes();
             checkGarminStatus();
+            checkDataPrompt();
         } else {
             currentUser = null;
             csrfToken = data.csrf_token;
@@ -4077,6 +4081,7 @@ async function handleAuthSubmit(e) {
         await loadRoutes();
         await loadMapThemes();
         checkGarminStatus();
+        checkDataPrompt();
     } catch (err) {
         if (errorMsg) {
             errorMsg.textContent = err.message;
@@ -4237,6 +4242,19 @@ function initIntervalsIntegration() {
     if (importSelectedBtn) {
         importSelectedBtn.addEventListener('click', importSelectedIntervalsActivities);
     }
+
+    const historyStartBtn = document.getElementById('intervals-history-start-btn');
+    if (historyStartBtn) historyStartBtn.addEventListener('click', startHistoryImport);
+    const historyCancelBtn = document.getElementById('intervals-history-cancel-btn');
+    if (historyCancelBtn) historyCancelBtn.addEventListener('click', cancelHistoryImport);
+    const promptSaveBtn = document.getElementById('data-prompt-save-btn');
+    if (promptSaveBtn) promptSaveBtn.addEventListener('click', saveDataPrompt);
+    const promptLaterBtn = document.getElementById('data-prompt-later-btn');
+    if (promptLaterBtn) {
+        promptLaterBtn.addEventListener('click', () => {
+            document.getElementById('data-prompt-modal').classList.add('hidden');
+        });
+    }
 }
 
 async function checkIntervalsStatus() {
@@ -4302,8 +4320,10 @@ async function connectIntervals() {
         });
         const data = await res.json();
         if (res.ok) {
-            alert('Intervals.icu connected successfully!');
+            alert('Intervals.icu connected successfully! Your training history is now imported in the background.');
             checkIntervalsStatus();
+            refreshTrainingDataSettings();
+            checkDataPrompt();
         } else {
             alert(data.error || 'Failed to connect to Intervals.icu.');
             if (connectBtn) {
@@ -4542,7 +4562,211 @@ function initSettingsTabs() {
     });
 }
 
+
+
+
+
+
+// ----------------------------------------------------
+// Training Data Preferences (history import & wellness opt-in)
+// ----------------------------------------------------
+let dataPreferences = null;
+let historyPollTimer = null;
+const HISTORY_POLL_MS = 15000;
+
+async function fetchDataPreferences() {
+    const res = await fetch('/api/auth/data-preferences');
+    if (!res.ok) throw new Error('Failed to load training data preferences.');
+    dataPreferences = await res.json();
+    return dataPreferences;
+}
+
+async function putDataPreferences(payload) {
+    const res = await fetch('/api/auth/data-preferences', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to save your choices.');
+    dataPreferences = data;
+    return data;
+}
+
+// One-time prompt: history import for existing connections, and the wellness opt-in
+async function checkDataPrompt() {
+    try {
+        const prefs = await fetchDataPreferences();
+        if (prefs.prompt && prefs.prompt.show) showDataPrompt(prefs);
+    } catch (err) {
+        console.error('Error checking training data preferences', err);
+    }
+}
+
+function showDataPrompt(prefs) {
+    const modal = document.getElementById('data-prompt-modal');
+    if (!modal) return;
+    document.getElementById('data-prompt-history-section').classList.toggle('hidden', !prefs.prompt.offer_history);
+    document.getElementById('data-prompt-wellness-section').classList.toggle('hidden', !prefs.prompt.ask_wellness);
+    document.getElementById('data-prompt-history').checked = true;
+    document.getElementById('data-prompt-history-months').value = String(prefs.history_default_months || 12);
+    document.getElementById('data-prompt-wellness').checked = false;  // opt-in: never pre-checked
+    document.getElementById('data-prompt-error').classList.add('hidden');
+    modal.classList.remove('hidden');
+}
+
+async function saveDataPrompt() {
+    const prompt = (dataPreferences && dataPreferences.prompt) || {};
+    const saveBtn = document.getElementById('data-prompt-save-btn');
+    const errorEl = document.getElementById('data-prompt-error');
+    const payload = { prompt_answered: true };
+    if (prompt.offer_history) {
+        payload.import_history = document.getElementById('data-prompt-history').checked;
+        payload.history_months = parseInt(document.getElementById('data-prompt-history-months').value, 10);
+    }
+    if (prompt.ask_wellness) {
+        payload.wellness_opt_in = document.getElementById('data-prompt-wellness').checked;
+    }
+
+    if (saveBtn) saveBtn.disabled = true;
+    errorEl.classList.add('hidden');
+    try {
+        const prefs = await putDataPreferences(payload);
+        if (currentUser) currentUser.wellness_opt_in = prefs.wellness_opt_in;
+        document.getElementById('data-prompt-modal').classList.add('hidden');
+        renderTrainingDataSettings(prefs);
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.classList.remove('hidden');
+    } finally {
+        if (saveBtn) saveBtn.disabled = false;
+    }
+}
+
+// Settings > Integrations: wellness toggle and the history import panel
+async function refreshTrainingDataSettings() {
+    try {
+        renderTrainingDataSettings(await fetchDataPreferences());
+    } catch (err) {
+        console.error('Error loading training data settings', err);
+        const statusEl = document.getElementById('intervals-history-status');
+        if (statusEl) statusEl.textContent = 'Could not load the history import status.';
+    }
+}
+
+function renderTrainingDataSettings(prefs) {
+    const wellnessCheckbox = document.getElementById('settings-wellness-opt-in');
+    if (wellnessCheckbox) wellnessCheckbox.checked = prefs.wellness_opt_in === true;
+    renderHistoryJob(prefs.history);
+}
+
+function formatHistoryDate(isoDate) {
+    if (!isoDate) return '';
+    const d = new Date(`${isoDate}T00:00:00`);
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function renderHistoryJob(job) {
+    const statusEl = document.getElementById('intervals-history-status');
+    const progressEl = document.getElementById('intervals-history-progress');
+    const fillEl = document.getElementById('intervals-history-progress-fill');
+    const startBtn = document.getElementById('intervals-history-start-btn');
+    const cancelBtn = document.getElementById('intervals-history-cancel-btn');
+    const monthsSelect = document.getElementById('intervals-history-months');
+    if (!statusEl) return;
+
+    const active = job && (job.status === 'pending' || job.status === 'running');
+    const counts = job ? `${job.activities_new} new, ${job.activities_enriched} updated, ${job.wellness_days} days of wellness data.` : '';
+    let text;
+    if (!job) {
+        text = 'Import your past activities and wellness data. It runs slowly in the background (about a minute per month) to stay within Intervals.icu\'s limits.';
+    } else if (active) {
+        text = job.windows_done === 0
+            ? 'Importing history: starting shortly...'
+            : `Importing history: ${job.percent}% done, back to ${formatHistoryDate(job.processed_until)}. ${counts}`;
+        if (job.last_error) text += ` Retrying after a temporary problem: ${job.last_error}`;
+    } else if (job.status === 'completed') {
+        text = `History imported back to ${formatHistoryDate(job.range_start)}. ${counts}`;
+    } else if (job.status === 'paused') {
+        text = job.last_error
+            ? `History import paused: ${job.last_error}`
+            : 'History import paused after repeated errors. Resume it when the problem is solved.';
+    } else if (job.status === 'failed') {
+        text = `History import stopped because of an error: ${job.last_error || 'unknown error.'}`;
+    } else {
+        text = `History import stopped at ${job.percent}%. ${counts}`;
+    }
+    statusEl.textContent = text;
+
+    progressEl.classList.toggle('hidden', !active);
+    if (active) {
+        fillEl.style.width = `${job.percent}%`;
+        progressEl.setAttribute('aria-valuenow', String(job.percent));
+    }
+    cancelBtn.classList.toggle('hidden', !active);
+    startBtn.classList.toggle('hidden', active);
+    monthsSelect.classList.toggle('hidden', active || (job && job.status === 'paused'));
+    startBtn.textContent = !job ? 'Import history'
+        : job.status === 'paused' ? 'Resume import'
+        : job.status === 'failed' ? 'Try again'
+        : 'Import again';
+
+    scheduleHistoryPoll(active);
+}
+
+function scheduleHistoryPoll(active) {
+    clearTimeout(historyPollTimer);
+    const settingsModal = document.getElementById('settings-modal');
+    if (active && settingsModal && !settingsModal.classList.contains('hidden')) {
+        historyPollTimer = setTimeout(refreshTrainingDataSettings, HISTORY_POLL_MS);
+    }
+}
+
+async function startHistoryImport() {
+    const startBtn = document.getElementById('intervals-history-start-btn');
+    const months = parseInt(document.getElementById('intervals-history-months').value, 10);
+    if (startBtn) startBtn.disabled = true;
+    try {
+        const res = await fetch('/api/intervals/backfill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ months })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to start the history import.');
+        renderHistoryJob(data.job);
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        if (startBtn) startBtn.disabled = false;
+    }
+}
+
+async function cancelHistoryImport() {
+    if (!confirm('Stop the history import? Activities imported so far are kept, and you can start it again later.')) return;
+    try {
+        const res = await fetch('/api/intervals/backfill/cancel', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to stop the history import.');
+        renderHistoryJob(data.job);
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function saveWellnessSetting() {
+    const checkbox = document.getElementById('settings-wellness-opt-in');
+    if (!checkbox || !dataPreferences) return;
+    const current = dataPreferences.wellness_opt_in === true;
+    // Leaving an unanswered choice unchecked keeps it unanswered, so the prompt can still ask
+    if (checkbox.checked === current || (dataPreferences.wellness_opt_in === null && !checkbox.checked)) return;
+    try {
+        const prefs = await putDataPreferences({ wellness_opt_in: checkbox.checked });
+        if (currentUser) currentUser.wellness_opt_in = prefs.wellness_opt_in;
+    } catch (err) {
+        console.error('Error updating wellness setting', err);
+        alert(err.message);
+    }
+}
+
 })();
-
-
-

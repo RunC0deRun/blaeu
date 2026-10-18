@@ -1745,3 +1745,66 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 
 
+
+/* Training data choices (history import, wellness opt-in) */
+.data-choice {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.data-choice-label {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    cursor: pointer;
+    margin: 0;
+}
+
+.data-choice-label input[type="checkbox"] {
+    margin-top: 3px;
+    flex-shrink: 0;
+    accent-color: var(--primary);
+}
+
+.data-choice-help {
+    display: block;
+    font-size: 0.85em;
+    opacity: 0.75;
+    line-height: 1.45;
+    margin: 4px 0 0;
+}
+
+.data-choice-select {
+    display: block;
+    width: auto;
+    margin-top: 8px;
+}
+
+.history-panel {
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    margin-bottom: 15px;
+}
+
+.history-panel .progress-bar {
+    margin: 10px 0;
+}
+
+.history-panel .progress-fill {
+    transition: width 0.4s;
+}
+
+.history-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+
+.history-actions select {
+    width: auto;
+}

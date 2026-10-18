@@ -243,6 +243,152 @@ def init_db():
     );
     """)
 
+    # Wellness import is opt-in: NULL = not asked yet, 0 = declined, 1 = accepted
+    add_column_if_missing(cursor, 'users', 'wellness_opt_in', "INTEGER")
+    # When the user answered the training-data prompt (history import / wellness)
+    add_column_if_missing(cursor, 'users', 'data_prompt_answered_at', "TEXT")
+
+    # Create Activities Table: the training log. Every workout gets a row, with or
+    # without GPS; workouts with a map link to their route via route_id.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS activities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        route_id INTEGER,
+        source TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        name TEXT,
+        sport_type TEXT,
+        start_time TEXT,
+        start_time_local TEXT,
+        timezone TEXT,
+        duration REAL,
+        moving_time REAL,
+        distance REAL,
+        elevation_gain REAL,
+        avg_hr REAL,
+        max_hr REAL,
+        avg_power REAL,
+        normalized_power REAL,
+        avg_cadence REAL,
+        calories REAL,
+        training_load REAL,
+        intensity REAL,
+        trimp REAL,
+        aerobic_te REAL,
+        anaerobic_te REAL,
+        rpe REAL,
+        feel INTEGER,
+        hr_zone_times TEXT,
+        power_zone_times TEXT,
+        pace_zone_times TEXT,
+        has_gps INTEGER DEFAULT 0,
+        is_indoor INTEGER DEFAULT 0,
+        hidden INTEGER DEFAULT 0,
+        merged_into INTEGER,
+        raw_summary TEXT,
+        enriched_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE SET NULL,
+        UNIQUE(user_id, source, source_id)
+    );
+    """)
+
+    # Create Daily Wellness Table: one row per user, date and source; merged on read
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS daily_wellness (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        source TEXT NOT NULL,
+        resting_hr REAL,
+        hrv REAL,
+        hrv_sdnn REAL,
+        sleep_secs REAL,
+        sleep_score REAL,
+        sleep_quality REAL,
+        weight REAL,
+        body_fat REAL,
+        readiness REAL,
+        body_battery_high REAL,
+        body_battery_low REAL,
+        stress_avg REAL,
+        spo2 REAL,
+        respiration REAL,
+        steps INTEGER,
+        vo2max REAL,
+        ctl REAL,
+        atl REAL,
+        ramp_rate REAL,
+        soreness REAL,
+        fatigue REAL,
+        mood REAL,
+        motivation REAL,
+        raw TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(user_id, date, source)
+    );
+    """)
+
+    add_column_if_missing(cursor, 'daily_wellness', 'vo2max', "REAL")
+    # The same workout imported from two sources: the less complete row points at the other
+    add_column_if_missing(cursor, 'activities', 'merged_into', "INTEGER")
+
+    # Create Sync Jobs Table: long-running, resumable imports such as the history backfill.
+    # Work is done in small steps; cursor marks how far the job got, so a restart resumes.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sync_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        range_start TEXT NOT NULL,
+        range_end TEXT NOT NULL,
+        cursor TEXT,
+        windows_total INTEGER DEFAULT 0,
+        windows_done INTEGER DEFAULT 0,
+        activities_new INTEGER DEFAULT 0,
+        activities_enriched INTEGER DEFAULT 0,
+        activities_skipped INTEGER DEFAULT 0,
+        duplicates_merged INTEGER DEFAULT 0,
+        wellness_days INTEGER DEFAULT 0,
+        attempts INTEGER DEFAULT 0,
+        last_error TEXT,
+        next_attempt_at TEXT,
+        locked_until TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        completed_at TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_sync_jobs_status ON sync_jobs(status);")
+
+    # Create Athlete Thresholds Table: per sport and source (e.g. Run/Ride from Intervals.icu)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS athlete_thresholds (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        sport TEXT NOT NULL,
+        source TEXT NOT NULL,
+        ftp REAL,
+        lthr REAL,
+        max_hr REAL,
+        resting_hr REAL,
+        threshold_pace REAL,
+        hr_zones TEXT,
+        power_zones TEXT,
+        pace_zones TEXT,
+        raw TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(user_id, sport, source)
+    );
+    """)
 
     # Create Indexes for Query Optimization
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_routes_user_id ON routes(user_id);")
@@ -250,7 +396,10 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_routes_created_at ON routes(created_at);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_folders_user_id ON folders(user_id);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_route_tags_tag_id ON route_tags(tag_id);")
-    
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_user_start ON activities(user_id, start_time);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_activities_route_id ON activities(route_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_daily_wellness_user_date ON daily_wellness(user_id, date);")
+
     # Backfill timezone, start_time, and simplified_path for existing routes where they are NULL
     cursor.execute("SELECT id, file_path, created_at, timezone, simplified_path FROM routes WHERE timezone IS NULL OR simplified_path IS NULL;")
     routes_to_backfill = [dict(row) for row in cursor.fetchall()]
@@ -276,9 +425,286 @@ def init_db():
                     """, (timezone, start_time, simplified_path, route_id))
                 except Exception as e:
                     logger.error(f"Error backfilling route {route_id}: {e}", exc_info=True)
-                    
+
+    # Give every existing route a training-log entry. Rows created here have no
+    # raw_summary yet; the enrichment job fills in source metrics later.
+    cursor.execute("""
+        SELECT r.* FROM routes r
+        LEFT JOIN activities a ON a.route_id = r.id
+        WHERE a.id IS NULL AND r.user_id IS NOT NULL
+    """)
+    for route in [dict(row) for row in cursor.fetchall()]:
+        try:
+            _insert_route_activity(cursor, route)
+        except sqlite3.Error as e:
+            logger.error(f"Error creating activity for route {route['id']}: {e}", exc_info=True)
+
     conn.commit()
     conn.close()
+
+# Helper Functions for Activities
+def route_activity_identity(filename, file_hash):
+    """Derives (source, source_id) for a route from its stored filename."""
+    filename = filename or ''
+    for source in ('garmin', 'intervals'):
+        prefix = f"{source}_"
+        if filename.startswith(prefix):
+            source_id = filename[len(prefix):].split('_')[0].split('.')[0]
+            if source_id:
+                return source, source_id
+    return 'upload', file_hash
+
+def _insert_route_activity(cursor, route):
+    """Creates a minimal activity row for a route (no-op if one already exists)."""
+    source, source_id = route_activity_identity(route.get('filename'), route.get('file_hash'))
+    cursor.execute("""
+        INSERT INTO activities (
+            user_id, route_id, source, source_id, name, start_time, timezone,
+            duration, distance, elevation_gain, has_gps
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(user_id, source, source_id) DO UPDATE SET
+            route_id = COALESCE(activities.route_id, excluded.route_id),
+            has_gps = 1
+    """, (
+        route['user_id'], route['id'], source, source_id, route.get('name'),
+        route.get('created_at'), route.get('timezone'), route.get('duration'),
+        route.get('total_distance'), route.get('elevation_gain')
+    ))
+
+ACTIVITY_FIELDS = (
+    'name', 'sport_type', 'start_time', 'start_time_local', 'timezone',
+    'duration', 'moving_time', 'distance', 'elevation_gain',
+    'avg_hr', 'max_hr', 'avg_power', 'normalized_power', 'avg_cadence', 'calories',
+    'training_load', 'intensity', 'trimp', 'aerobic_te', 'anaerobic_te', 'rpe', 'feel',
+    'hr_zone_times', 'power_zone_times', 'pace_zone_times', 'is_indoor', 'raw_summary'
+)
+
+def upsert_activity(user_id, source, source_id, fields, route_id=None):
+    """
+    Inserts or updates an activity by (user_id, source, source_id) and returns its id.
+    Fields that are None never overwrite stored values, so a partial summary cannot
+    erase data from an earlier, richer one. Zone lists are stored as JSON.
+    """
+    values = {k: fields.get(k) for k in ACTIVITY_FIELDS}
+    for key in ('hr_zone_times', 'power_zone_times', 'pace_zone_times', 'raw_summary'):
+        if values[key] is not None and not isinstance(values[key], str):
+            values[key] = json.dumps(values[key])
+    if values['is_indoor'] is not None:
+        values['is_indoor'] = 1 if values['is_indoor'] else 0
+    now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    enriched_at = now if values['raw_summary'] is not None else None
+
+    columns = ', '.join(ACTIVITY_FIELDS)
+    placeholders = ', '.join('?' for _ in ACTIVITY_FIELDS)
+    updates = ',\n'.join(f"{k} = COALESCE(excluded.{k}, activities.{k})" for k in ACTIVITY_FIELDS)
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"""
+            INSERT INTO activities (
+                user_id, source, source_id, route_id, has_gps, enriched_at, updated_at, {columns}
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, {placeholders})
+            ON CONFLICT(user_id, source, source_id) DO UPDATE SET
+                route_id = COALESCE(excluded.route_id, activities.route_id),
+                has_gps = MAX(excluded.has_gps, activities.has_gps),
+                enriched_at = COALESCE(excluded.enriched_at, activities.enriched_at),
+                updated_at = excluded.updated_at,
+                {updates}
+        """, (
+            user_id, source, str(source_id), route_id, 1 if route_id else 0, enriched_at, now,
+            *[values[k] for k in ACTIVITY_FIELDS]
+        ))
+        cursor.execute(
+            "SELECT id FROM activities WHERE user_id = ? AND source = ? AND source_id = ?",
+            (user_id, source, str(source_id))
+        )
+        activity_id = cursor.fetchone()['id']
+        conn.commit()
+        return activity_id
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_activity_by_source(user_id, source, source_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM activities WHERE user_id = ? AND source = ? AND source_id = ?",
+        (user_id, source, str(source_id))
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_activity_source_ids(user_id, source):
+    """Returns the source ids already stored for a user, including hidden ones."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT source_id FROM activities WHERE user_id = ? AND source = ?", (user_id, source))
+    ids = {row['source_id'] for row in cursor.fetchall()}
+    conn.close()
+    return ids
+
+def set_activity_hidden(activity_id, hidden):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE activities SET hidden = ? WHERE id = ?", (1 if hidden else 0, activity_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_latest_activity_start(user_id, source):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT MAX(start_time) AS latest FROM activities WHERE user_id = ? AND source = ?",
+        (user_id, source)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row['latest'] if row else None
+
+def get_activities(user_id, start=None, end=None, include_hidden=False):
+    """Returns a user's activities ordered by start time (newest first)."""
+    query = "SELECT * FROM activities WHERE user_id = ?"
+    params = [user_id]
+    if not include_hidden:
+        query += " AND hidden = 0 AND merged_into IS NULL"
+    if start:
+        query += " AND start_time >= ?"
+        params.append(start)
+    if end:
+        query += " AND start_time < ?"
+        params.append(end)
+    query += " ORDER BY start_time DESC"
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def mark_user_data_prompt_answered(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "UPDATE users SET data_prompt_answered_at = ? WHERE id = ?",
+            (datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S'), user_id)
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_user_wellness_opt_in(user_id):
+    user = get_user_by_id(user_id)
+    return user.get('wellness_opt_in') if user else None
+
+def update_user_wellness_opt_in(user_id, opt_in):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET wellness_opt_in = ? WHERE id = ?", (1 if opt_in else 0, user_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+WELLNESS_FIELDS = (
+    'resting_hr', 'hrv', 'hrv_sdnn', 'sleep_secs', 'sleep_score', 'sleep_quality',
+    'weight', 'body_fat', 'readiness', 'body_battery_high', 'body_battery_low',
+    'stress_avg', 'spo2', 'respiration', 'steps', 'vo2max', 'ctl', 'atl', 'ramp_rate',
+    'soreness', 'fatigue', 'mood', 'motivation'
+)
+
+def upsert_daily_wellness(user_id, date, source, fields, raw=None):
+    columns = ', '.join(WELLNESS_FIELDS)
+    placeholders = ', '.join('?' for _ in WELLNESS_FIELDS)
+    updates = ',\n'.join(f"{k} = COALESCE(excluded.{k}, daily_wellness.{k})" for k in WELLNESS_FIELDS)
+    now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"""
+            INSERT INTO daily_wellness (user_id, date, source, raw, updated_at, {columns})
+            VALUES (?, ?, ?, ?, ?, {placeholders})
+            ON CONFLICT(user_id, date, source) DO UPDATE SET
+                raw = COALESCE(excluded.raw, daily_wellness.raw),
+                updated_at = excluded.updated_at,
+                {updates}
+        """, (
+            user_id, date, source, json.dumps(raw) if raw is not None else None, now,
+            *[fields.get(k) for k in WELLNESS_FIELDS]
+        ))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_daily_wellness(user_id, start=None, end=None):
+    query = "SELECT * FROM daily_wellness WHERE user_id = ?"
+    params = [user_id]
+    if start:
+        query += " AND date >= ?"
+        params.append(start)
+    if end:
+        query += " AND date <= ?"
+        params.append(end)
+    query += " ORDER BY date DESC, source"
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+THRESHOLD_FIELDS = ('ftp', 'lthr', 'max_hr', 'resting_hr', 'threshold_pace', 'hr_zones', 'power_zones', 'pace_zones')
+
+def upsert_athlete_thresholds(user_id, sport, source, fields, raw=None):
+    values = {k: fields.get(k) for k in THRESHOLD_FIELDS}
+    for key in ('hr_zones', 'power_zones', 'pace_zones'):
+        if values[key] is not None and not isinstance(values[key], str):
+            values[key] = json.dumps(values[key])
+    now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        # Thresholds are a snapshot: the latest values replace the old ones entirely
+        cursor.execute(f"""
+            INSERT OR REPLACE INTO athlete_thresholds (user_id, sport, source, raw, updated_at, {', '.join(THRESHOLD_FIELDS)})
+            VALUES (?, ?, ?, ?, ?, {', '.join('?' for _ in THRESHOLD_FIELDS)})
+        """, (
+            user_id, sport, source, json.dumps(raw) if raw is not None else None, now,
+            *[values[k] for k in THRESHOLD_FIELDS]
+        ))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_athlete_thresholds(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM athlete_thresholds WHERE user_id = ? ORDER BY sport, source", (user_id,))
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
 
 # Helper Functions for Routes
 def add_route(route_metadata, stats):
@@ -325,6 +751,19 @@ def add_route(route_metadata, stats):
             route_metadata.get('simplified_path')
         ))
         route_id = cursor.lastrowid
+        if route_metadata.get('user_id') is not None:
+            _insert_route_activity(cursor, {
+                'id': route_id,
+                'user_id': route_metadata['user_id'],
+                'filename': route_metadata['filename'],
+                'file_hash': route_metadata['file_hash'],
+                'name': route_metadata['name'],
+                'created_at': created_at,
+                'timezone': timezone,
+                'duration': stats['duration'],
+                'total_distance': stats['total_distance'],
+                'elevation_gain': stats['elevation_gain'],
+            })
         conn.commit()
         return route_id
     except sqlite3.IntegrityError as e:
@@ -508,7 +947,11 @@ def delete_route(route_id):
         cursor.execute("SELECT file_path FROM routes WHERE id = ?", (route_id,))
         row = cursor.fetchone()
         file_path = row['file_path'] if row else None
-        
+
+        # Uploaded activities go with their route. Synced ones are kept as hidden
+        # tombstones so the next sync or backfill does not import them again.
+        cursor.execute("DELETE FROM activities WHERE route_id = ? AND source = 'upload'", (route_id,))
+        cursor.execute("UPDATE activities SET hidden = 1, has_gps = 0 WHERE route_id = ?", (route_id,))
         cursor.execute("DELETE FROM routes WHERE id = ?", (route_id,))
         conn.commit()
         
@@ -925,3 +1368,142 @@ def attempt_intervals_sync_lock(user_id, now_str, last_sync_str, seconds):
     finally:
         conn.close()
 
+
+
+def find_duplicate_activities(user_id, source, start_time, duration=None, tolerance_secs=120):
+    """
+    Finds visible activities from other sources that are the same workout: started within
+    tolerance_secs and, when both durations are known, lasting within 10% of each other.
+    """
+    if not start_time:
+        return []
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM activities
+        WHERE user_id = ? AND source != ? AND hidden = 0 AND merged_into IS NULL
+          AND start_time IS NOT NULL
+          AND ABS(strftime('%s', start_time) - strftime('%s', ?)) <= ?
+    """, (user_id, source, start_time, tolerance_secs))
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    matches = []
+    for row in rows:
+        if duration and row.get('duration'):
+            longest = max(duration, row['duration'])
+            if abs(duration - row['duration']) > max(0.1 * longest, tolerance_secs):
+                continue
+        matches.append(row)
+    return matches
+
+def merge_activities(duplicate_ids, primary_id):
+    """Marks activities as duplicates of primary_id; they stay stored but are not shown."""
+    if not duplicate_ids:
+        return
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.executemany(
+            "UPDATE activities SET merged_into = ? WHERE id = ? AND id != ?",
+            [(primary_id, dup_id, primary_id) for dup_id in duplicate_ids]
+        )
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# Helper Functions for Sync Jobs
+SYNC_JOB_ACTIVE_STATUSES = ('pending', 'running', 'paused')
+SYNC_JOB_UPDATABLE = {
+    'status', 'cursor', 'windows_done', 'activities_new', 'activities_enriched', 'activities_skipped',
+    'duplicates_merged', 'wellness_days', 'attempts', 'last_error', 'next_attempt_at',
+    'locked_until', 'completed_at',
+}
+
+def create_sync_job(user_id, source, kind, range_start, range_end, windows_total):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO sync_jobs (user_id, source, kind, status, range_start, range_end, cursor, windows_total)
+            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)
+        """, (user_id, source, kind, range_start, range_end, range_end, windows_total))
+        job_id = cursor.lastrowid
+        conn.commit()
+        return job_id
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_sync_job(job_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM sync_jobs WHERE id = ?", (job_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_latest_sync_job(user_id, source, kind):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM sync_jobs WHERE user_id = ? AND source = ? AND kind = ? ORDER BY id DESC LIMIT 1",
+        (user_id, source, kind)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_runnable_sync_jobs(now_str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM sync_jobs
+        WHERE status IN ('pending', 'running')
+          AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+          AND (locked_until IS NULL OR locked_until <= ?)
+        ORDER BY id
+    """, (now_str, now_str))
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def claim_sync_job(job_id, now_str, lease_until_str):
+    """Atomically leases a job so only one process (gunicorn worker) works on it."""
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE sync_jobs SET locked_until = ?, status = 'running', updated_at = ?
+            WHERE id = ? AND status IN ('pending', 'running')
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+              AND (locked_until IS NULL OR locked_until <= ?)
+        """, (lease_until_str, now_str, job_id, now_str, now_str))
+        conn.commit()
+        return cursor.rowcount == 1
+    except sqlite3.Error:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def update_sync_job(job_id, **fields):
+    unknown = set(fields) - SYNC_JOB_UPDATABLE
+    if unknown:
+        raise ValueError(f"Unknown sync job fields: {sorted(unknown)}")
+    fields['updated_at'] = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    assignments = ', '.join(f"{k} = ?" for k in fields)
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"UPDATE sync_jobs SET {assignments} WHERE id = ?", (*fields.values(), job_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()

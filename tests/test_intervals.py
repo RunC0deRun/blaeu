@@ -145,7 +145,13 @@ def test_intervals_import(mock_get, authed):
             'data': [34.0, 36.0]
         }
     ]
-    mock_get.return_value = mock_resp_streams
+    mock_resp_summary = MagicMock()
+    mock_resp_summary.status_code = 200
+    mock_resp_summary.json.return_value = {
+        'id': '9999', 'name': 'Imported Run', 'type': 'Run',
+        'start_date': '2026-06-03T18:00:00Z', 'moving_time': 10, 'average_heartrate': 140
+    }
+    mock_get.side_effect = lambda url, **kwargs: mock_resp_streams if 'streams' in url else mock_resp_summary
 
     resp = authed.post('/api/intervals/import', json={
         'activityId': '9999',

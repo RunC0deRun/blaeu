@@ -107,27 +107,41 @@ app.register_blueprint(garmin_bp)
 app.register_blueprint(intervals_bp)
 app.register_blueprint(media_bp)
 
-# Garmin & Intervals.icu Auto-Sync Background Scheduler Thread
+# Background worker: Garmin & Intervals.icu auto-sync plus resumable history backfills
+AUTO_SYNC_DISABLED = os.getenv('BLAEU_DISABLE_AUTO_SYNC', 'false').lower() == 'true'
+
 def auto_sync_worker_loop():
     import time
+    from blueprints.intervals_backfill import run_pending_backfills
     while True:
         try:
             time.sleep(60)
+            if app.config.get('TESTING'):
+                continue  # tests drive syncs and backfills themselves
             with app.app_context():
+                if not AUTO_SYNC_DISABLED:
+                    try:
+                        run_garmin_auto_sync()
+                    except Exception as e:
+                        logger.error(f"[Auto-Sync Worker] Garmin error: {e}", exc_info=True)
+
+                    try:
+                        run_intervals_auto_sync()
+                    except Exception as e:
+                        logger.error(f"[Auto-Sync Worker] Intervals error: {e}", exc_info=True)
+
+                # Backfills only run when a user started one, so they also run on a test
+                # instance where auto-sync is disabled
                 try:
-                    run_garmin_auto_sync()
+                    run_pending_backfills()
                 except Exception as e:
-                    logger.error(f"[Auto-Sync Worker] Garmin error: {e}", exc_info=True)
-                
-                try:
-                    run_intervals_auto_sync()
-                except Exception as e:
-                    logger.error(f"[Auto-Sync Worker] Intervals error: {e}", exc_info=True)
+                    logger.error(f"[Auto-Sync Worker] Backfill error: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"[Auto-Sync Worker] Error in loop: {e}", exc_info=True)
 
 
-# Start the background daemon thread for periodic auto-sync
+if AUTO_SYNC_DISABLED:
+    logger.info("[Auto-Sync Worker] Auto-sync disabled via BLAEU_DISABLE_AUTO_SYNC; backfills still run")
 auto_sync_thread = threading.Thread(target=auto_sync_worker_loop)
 auto_sync_thread.daemon = True
 auto_sync_thread.start()

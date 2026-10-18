@@ -98,6 +98,7 @@ from blueprints.folders import folders_bp
 from blueprints.garmin import garmin_bp, run_auto_sync_for_all_users as run_garmin_auto_sync, MfaRequiredException
 from blueprints.intervals import intervals_bp, run_auto_sync_for_all_users as run_intervals_auto_sync
 from blueprints.media import media_bp
+from blueprints.activities import activities_bp
 
 # Register Blueprints
 app.register_blueprint(auth_bp)
@@ -106,6 +107,7 @@ app.register_blueprint(folders_bp)
 app.register_blueprint(garmin_bp)
 app.register_blueprint(intervals_bp)
 app.register_blueprint(media_bp)
+app.register_blueprint(activities_bp)
 
 # Background worker: Garmin & Intervals.icu auto-sync plus resumable history backfills
 AUTO_SYNC_DISABLED = os.getenv('BLAEU_DISABLE_AUTO_SYNC', 'false').lower() == 'true'

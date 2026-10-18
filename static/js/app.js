@@ -15,6 +15,9 @@ let currentRoute = null;
 let originalStartPoint = null;
 let originalFinishPoint = null;
 let routesList = [];
+let activitiesList = []; // Workouts without GPS: no route, no coordinates, no map
+let currentActivity = null;
+let selectionSeq = 0; // Bumped on every selection change, so a stale route fetch cannot reopen the map
 let foldersList = [];
 let activeFolderFilter = '';
 let activeTagFilter = '';
@@ -267,6 +270,10 @@ function initAppEvents() {
 
     // Back to Dashboard
     document.getElementById('back-to-dashboard-btn').addEventListener('click', deselectRoute);
+    document.getElementById('activity-back-btn').addEventListener('click', deselectRoute);
+    document.getElementById('delete-activity-btn').addEventListener('click', () => {
+        if (currentActivity) deleteActivity(currentActivity.id);
+    });
 
     initSettingsTabs();
     initGarminIntegration();
@@ -294,6 +301,17 @@ function initAppEvents() {
             const routeId = parseInt(deleteRouteBtn.getAttribute('data-route-id'), 10);
             const routeName = deleteRouteBtn.getAttribute('data-route-name');
             deleteRouteFromDashboard(routeId, routeName, e);
+            return;
+        }
+
+        // Delete map-less activity from dashboard
+        const deleteActivityBtn = e.target.closest('.btn-delete-activity');
+        if (deleteActivityBtn) {
+            e.stopPropagation();
+            const activityId = parseInt(deleteActivityBtn.getAttribute('data-activity-id'), 10);
+            if (activityId) {
+                deleteActivity(activityId);
+            }
             return;
         }
 
@@ -348,6 +366,11 @@ function initAppEvents() {
         // Select route from timeline-item
         const timelineItem = e.target.closest('.timeline-item');
         if (timelineItem) {
+            const activityId = parseInt(timelineItem.getAttribute('data-activity-id'), 10);
+            if (activityId) {
+                selectActivity(activityId);
+                return;
+            }
             const routeId = parseInt(timelineItem.getAttribute('data-route-id'), 10);
             if (routeId) {
                 selectRoute(routeId);
@@ -359,6 +382,11 @@ function initAppEvents() {
         const activityCard = e.target.closest('.activity-card');
         if (activityCard) {
             if (e.target.closest('.activity-card-actions') || e.target.closest('.tag-badge')) {
+                return;
+            }
+            const activityId = parseInt(activityCard.getAttribute('data-activity-id'), 10);
+            if (activityId) {
+                selectActivity(activityId);
                 return;
             }
             const routeId = parseInt(activityCard.getAttribute('data-route-id'), 10);
@@ -426,13 +454,18 @@ function toggleTagFilter(tagName) {
 
 async function loadRoutes() {
     try {
-        const res = await fetch('/api/routes');
+        const [res] = await Promise.all([fetch('/api/routes'), loadActivities()]);
         routesList = await res.json();
+        if (currentActivity && !activitiesList.some(a => a.id === currentActivity.id)) {
+            currentActivity = null;
+        }
         renderRoutesLedger();
         renderDashboardGrid();
         
         if (currentRoute) {
             showDashboardView(false);
+        } else if (currentActivity) {
+            showActivityView();
         } else {
             showDashboardView(true);
         }
@@ -474,22 +507,18 @@ function checkAndStartPolling() {
 
 function renderRoutesLedger() {
     const listContainer = document.getElementById('routes-timeline');
-    
-    // Apply client-side filters
-    let filtered = routesList;
-    if (activeFolderFilter) {
-        filtered = filtered.filter(r => r.folder_id == activeFolderFilter);
-    }
-    if (activeTagFilter) {
-        filtered = filtered.filter(r => r.tags && r.tags.includes(activeTagFilter));
-    }
+    const items = getLedgerItems(getFilteredRoutes());
 
-    if (filtered.length === 0) {
+    if (items.length === 0) {
         listContainer.innerHTML = '<div class="timeline-empty">No routes match the filters.</div>';
         return;
     }
 
-    listContainer.innerHTML = filtered.map(route => {
+    listContainer.innerHTML = items.map(item => {
+        if (item.kind === 'activity') {
+            return renderMaplessTimelineItem(item.data);
+        }
+        const route = item.data;
         const activeClass = currentRoute && currentRoute.id === route.id ? 'active' : '';
         const distanceStr = formatDistance(route.total_distance);
         const durationStr = formatDuration(route.duration);
@@ -528,6 +557,289 @@ function renderRoutesLedger() {
     }).join('');
 }
 
+// ----------------------------------------------------
+// Workouts Without GPS (indoor rides, treadmill runs, strength sessions)
+// They have no route and no coordinates, so they are listed next to routes but
+// never become currentRoute: map, animation, poster and export code only see routes.
+// ----------------------------------------------------
+
+async function loadActivities() {
+    try {
+        const res = await fetch('/api/activities');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        activitiesList = Array.isArray(data) ? data.filter(a => a && parseUtcTimestamp(a.start_time) !== null) : [];
+    } catch (err) {
+        console.warn('Could not load activities without GPS', err);
+        activitiesList = [];
+    }
+}
+
+function getFilteredRoutes() {
+    let filtered = routesList;
+    if (activeFolderFilter) {
+        filtered = filtered.filter(r => r.folder_id == activeFolderFilter);
+    }
+    if (activeTagFilter) {
+        filtered = filtered.filter(r => r.tags && r.tags.includes(activeTagFilter));
+    }
+    return filtered;
+}
+
+function getVisibleActivities() {
+    // Folders and tags only exist for routes
+    if (activeFolderFilter || activeTagFilter) return [];
+    return activitiesList;
+}
+
+// Parses a 'YYYY-MM-DD HH:MM:SS' UTC timestamp; returns milliseconds or null
+function parseUtcTimestamp(value) {
+    if (!value) return null;
+    const ts = Date.parse(String(value).replace(' ', 'T') + 'Z');
+    return Number.isNaN(ts) ? null : ts;
+}
+
+// Routes and map-less activities as one list, newest first
+function getLedgerItems(routes) {
+    const items = routes.map(r => ({ kind: 'route', data: r, time: parseUtcTimestamp(r.created_at) || 0 }));
+    getVisibleActivities().forEach(a => {
+        items.push({ kind: 'activity', data: a, time: parseUtcTimestamp(a.start_time) });
+    });
+    return items.sort((a, b) => b.time - a.time);
+}
+
+const SPORT_ICON_PATHS = {
+    ride: '<circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h2"/>',
+    run: '<circle cx="15" cy="4.5" r="2"/><path d="M5 20l4-5 3 2 1 4"/><path d="M7 11l3-3 4 1 2 3h3"/><path d="M10 8l2 5-3 2"/>',
+    strength: '<path d="M6.5 6.5l11 11"/><path d="M21 21l-1-1"/><path d="M3 3l1 1"/><path d="M18 22l4-4"/><path d="M2 6l4-4"/><path d="M3 10l7-7"/><path d="M14 21l7-7"/>',
+    swim: '<circle cx="12" cy="5" r="2"/><path d="M2 13c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2"/><path d="M2 19c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2"/>',
+    other: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>'
+};
+
+function getSportCategory(sportType) {
+    const t = (sportType || '').toLowerCase();
+    if (t.includes('ride') || t.includes('cycl') || t.includes('bike')) return 'ride';
+    if (t.includes('run')) return 'run';
+    if (t.includes('weight') || t.includes('strength') || t.includes('crossfit')) return 'strength';
+    if (t.includes('swim')) return 'swim';
+    return 'other';
+}
+
+function formatSportLabel(sportType) {
+    if (!sportType) return 'Workout';
+    return String(sportType).replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+function sportIconSvg(sportType, size) {
+    const paths = SPORT_ICON_PATHS[getSportCategory(sportType)];
+    return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+}
+
+function formatActivityDate(activity) {
+    const options = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false };
+    const date = new Date(parseUtcTimestamp(activity.start_time));
+    if (activity.timezone) {
+        try {
+            return date.toLocaleDateString(undefined, { ...options, timeZone: activity.timezone });
+        } catch (e) {
+            // Unknown time zone name: fall through
+        }
+    }
+    // Without a usable time zone, show the workout's own wall-clock time when known
+    const local = parseUtcTimestamp(activity.start_time_local);
+    if (local !== null) {
+        return new Date(local).toLocaleDateString(undefined, { ...options, timeZone: 'UTC' });
+    }
+    return date.toLocaleDateString(undefined, options);
+}
+
+function hasValue(v) {
+    return v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v));
+}
+
+// All stats an activity has, in display order
+function getActivityStats(activity) {
+    const stats = [];
+    const category = getSportCategory(activity.sport_type);
+    if (hasValue(activity.duration)) stats.push({ key: 'duration', label: 'Duration', value: formatDuration(activity.duration) });
+    if (hasValue(activity.moving_time)) stats.push({ key: 'moving_time', label: 'Moving Time', value: formatDuration(activity.moving_time) });
+    if (hasValue(activity.distance) && activity.distance > 0) {
+        stats.push({ key: 'distance', label: 'Distance', value: formatDistance(activity.distance) });
+        const time = activity.moving_time || activity.duration;
+        if (time > 0) {
+            const mps = activity.distance / time;
+            if (category === 'ride') {
+                stats.push({ key: 'speed', label: 'Avg Speed', value: formatSpeed(mps) });
+            } else {
+                stats.push({ key: 'pace', label: 'Avg Pace', value: formatPace(mps) });
+            }
+        }
+    }
+    if (hasValue(activity.avg_hr)) stats.push({ key: 'avg_hr', label: 'Avg HR', value: `${Math.round(activity.avg_hr)} bpm` });
+    if (hasValue(activity.max_hr)) stats.push({ key: 'max_hr', label: 'Max HR', value: `${Math.round(activity.max_hr)} bpm` });
+    if (hasValue(activity.avg_power)) stats.push({ key: 'avg_power', label: 'Avg Power', value: `${Math.round(activity.avg_power)} W` });
+    if (hasValue(activity.normalized_power)) stats.push({ key: 'normalized_power', label: 'Norm Power', value: `${Math.round(activity.normalized_power)} W` });
+    if (hasValue(activity.avg_cadence)) stats.push({ key: 'avg_cadence', label: 'Cadence', value: `${Math.round(activity.avg_cadence)}` });
+    if (hasValue(activity.training_load)) stats.push({ key: 'training_load', label: 'Load', value: `${Math.round(activity.training_load)}` });
+    if (hasValue(activity.calories)) stats.push({ key: 'calories', label: 'Calories', value: `${Math.round(activity.calories)} kcal` });
+    if (hasValue(activity.rpe)) stats.push({ key: 'rpe', label: 'RPE', value: `${Math.round(activity.rpe)}/10` });
+    return stats;
+}
+
+// The four stats shown on a card, preferring the ones most workouts have
+function getActivityCardStats(activity) {
+    const stats = getActivityStats(activity);
+    const order = ['duration', 'distance', 'avg_hr', 'avg_power', 'training_load', 'calories', 'moving_time', 'max_hr'];
+    const picked = [];
+    order.forEach(key => {
+        const stat = stats.find(s => s.key === key);
+        if (stat && picked.length < 4) picked.push(stat);
+    });
+    while (picked.length < 4) picked.push({ label: '—', value: '—' });
+    return picked;
+}
+
+function getActivitySubtitle(activity) {
+    return `${formatSportLabel(activity.sport_type)} · ${activity.is_indoor ? 'Indoor' : 'No GPS'}`;
+}
+
+function renderMaplessTimelineItem(activity) {
+    const activeClass = currentActivity && currentActivity.id === activity.id ? 'active' : '';
+    const distanceBadge = activity.distance > 0 ? `<span class="activity-stat-badge">${formatDistance(activity.distance)}</span>` : '';
+    return `
+        <div class="timeline-item timeline-item-mapless ${activeClass}" data-activity-id="${activity.id}">
+            <div class="timeline-date">${escapeHTML(formatActivityDate(activity))}</div>
+            <h4 class="timeline-title">${escapeHTML(activity.name || formatSportLabel(activity.sport_type))}</h4>
+            <p class="timeline-desc">${escapeHTML(getActivitySubtitle(activity))}</p>
+            <div class="timeline-meta">
+                <span class="sport-badge">${sportIconSvg(activity.sport_type, 11)}${escapeHTML(formatSportLabel(activity.sport_type))}</span>
+                ${distanceBadge}
+                <span class="activity-stat-badge">${formatDuration(activity.duration || activity.moving_time)}</span>
+            </div>
+        </div>
+    `;
+}
+
+function renderMaplessCard(activity) {
+    const name = activity.name || formatSportLabel(activity.sport_type);
+    const statsHtml = getActivityCardStats(activity).map(stat => `
+        <div class="activity-card-stat">
+            <span class="stat-label">${escapeHTML(stat.label)}</span>
+            <span class="stat-value">${escapeHTML(stat.value)}</span>
+        </div>
+    `).join('');
+    const username = (currentUser && currentUser.username) || 'You';
+
+    return `
+        <div class="activity-card activity-card-mapless" data-activity-id="${activity.id}">
+            <div class="activity-card-user-banner" style="background: rgba(255,255,255,0.02); padding: 6px 16px; font-size: 0.78em; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-family: 'Outfit', sans-serif; letter-spacing: 0.5px;">
+                <span>
+                    <svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px; opacity: 0.8;" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                    <span style="opacity: 0.6; margin-right: 2px;">BY</span> <strong style="color: #fff; font-weight: 700;">${escapeHTML(username)}</strong>
+                </span>
+                <span style="color: #94a3b8; font-size: 0.9em; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">${activity.is_indoor ? 'Indoor' : 'No GPS'}</span>
+            </div>
+            <div class="activity-card-preview mapless-preview">
+                <div class="mapless-preview-icon">${sportIconSvg(activity.sport_type, 34)}</div>
+                <span class="mapless-preview-label">${escapeHTML(formatSportLabel(activity.sport_type))}</span>
+                <span class="mapless-preview-note">No map for this workout</span>
+            </div>
+            <div class="activity-card-body">
+                <div class="activity-card-time">
+                    <span>${escapeHTML(formatActivityDate(activity))}</span>
+                </div>
+                <h3 class="activity-card-title" title="${escapeHTML(name)}">${escapeHTML(name)}</h3>
+                <p class="activity-card-desc">${escapeHTML(getActivitySubtitle(activity))}</p>
+                <div class="activity-card-stats-grid">
+                    ${statsHtml}
+                </div>
+            </div>
+            <div class="activity-card-footer">
+                <div class="activity-card-tags">
+                    <span class="sport-badge">${sportIconSvg(activity.sport_type, 11)}${escapeHTML(formatSportLabel(activity.sport_type))}</span>
+                </div>
+                <div class="activity-card-actions">
+                    <button class="btn-icon btn-delete-activity" data-activity-id="${activity.id}" title="Delete activity">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Show the details panel without map, animation controls or map style HUD
+function showActivityView() {
+    document.getElementById('dashboard-view').classList.add('hidden');
+    document.querySelector('.map-viewport').classList.add('hidden');
+    document.getElementById('route-details-panel').classList.add('hidden');
+    document.getElementById('animation-controller-overlay').classList.add('hidden');
+    const hud = document.getElementById('map-style-hud');
+    if (hud) hud.classList.add('hidden');
+    document.getElementById('sidebar-ledger-container').classList.remove('hidden');
+    document.getElementById('activity-details-panel').classList.remove('hidden');
+}
+
+function selectActivity(activityId) {
+    const activity = activitiesList.find(a => a.id === activityId);
+    if (!activity) return;
+
+    selectionSeq++;
+    closeMobileSidebar();
+    // Leave map mode entirely; nothing on the map may refer to this activity
+    clearRouteFromMap();
+    currentRoute = null;
+    currentActivity = activity;
+
+    document.getElementById('activity-title').textContent = activity.name || formatSportLabel(activity.sport_type);
+    document.getElementById('activity-sport-label').innerHTML =
+        `${sportIconSvg(activity.sport_type, 14)}<span>${escapeHTML(formatSportLabel(activity.sport_type))}</span>`;
+    document.getElementById('activity-date').textContent = `${formatActivityDate(activity)} · ${activity.is_indoor ? 'Indoor' : 'No GPS'}`;
+
+    const stats = getActivityStats(activity);
+    document.getElementById('activity-stats-grid').innerHTML = stats.length ? stats.map(stat => `
+        <div class="stat-card">
+            <span class="stat-label">${escapeHTML(stat.label)}</span>
+            <span class="stat-value">${escapeHTML(stat.value)}</span>
+        </div>
+    `).join('') : '<div class="timeline-empty">No statistics recorded for this workout.</div>';
+
+    showActivityView();
+    renderRoutesLedger();
+}
+
+async function deleteActivity(activityId) {
+    const activity = activitiesList.find(a => a.id === activityId);
+    if (!activity) return;
+    const name = activity.name || formatSportLabel(activity.sport_type);
+    if (!confirm(`Are you sure you want to delete "${name}"? Future syncs will not import it again.`)) return;
+
+    try {
+        const res = await fetch(`/api/activities/${activityId}`, { method: 'DELETE' });
+        if (!res.ok) {
+            let message = 'Failed to delete activity';
+            try {
+                message = (await res.json()).error || message;
+            } catch (e) {
+                // Keep the generic message
+            }
+            throw new Error(message);
+        }
+        activitiesList = activitiesList.filter(a => a.id !== activityId);
+        if (currentActivity && currentActivity.id === activityId) {
+            deselectRoute();
+        } else {
+            renderRoutesLedger();
+            renderDashboardGrid();
+        }
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
 // Manage transitions between Dashboard Mode and Map Mode
 function showDashboardView(show) {
     const dashboardView = document.getElementById('dashboard-view');
@@ -535,8 +847,11 @@ function showDashboardView(show) {
     const routeDetailsPanel = document.getElementById('route-details-panel');
     const sidebarLedger = document.getElementById('sidebar-ledger-container');
     const animationHUD = document.getElementById('animation-controller-overlay');
+    const activityPanel = document.getElementById('activity-details-panel');
+    if (activityPanel) activityPanel.classList.add('hidden');
     
     if (show) {
+        currentActivity = null;
         dashboardView.classList.remove('hidden');
         mapViewport.classList.add('hidden');
         routeDetailsPanel.classList.add('hidden');
@@ -560,10 +875,9 @@ function showDashboardView(show) {
     }
 }
 
-// Deselect selected route and return to dashboard
-function deselectRoute() {
+// Remove the selected route's layers, poster overlay and animation from the map
+function clearRouteFromMap() {
     stopAnimation();
-    closeMobileSidebar();
     if (routePolyline) map.removeLayer(routePolyline);
     if (animatedPolyline) map.removeLayer(animatedPolyline);
     if (animationMarker) map.removeLayer(animationMarker);
@@ -592,9 +906,15 @@ function deselectRoute() {
     if (mapElement) {
         mapElement.style.backgroundColor = '';
     }
+}
 
-    
+// Deselect selected route or map-less activity and return to dashboard
+function deselectRoute() {
+    selectionSeq++;
+    closeMobileSidebar();
+    clearRouteFromMap();
     currentRoute = null;
+    currentActivity = null;
     showDashboardView(true);
     renderRoutesLedger();
     renderDashboardGrid();
@@ -628,19 +948,15 @@ function renderDashboardGrid() {
     const activityCountEl = document.getElementById('dashboard-activity-count');
     
     // Apply filters
-    let filtered = routesList;
-    if (activeFolderFilter) {
-        filtered = filtered.filter(r => r.folder_id == activeFolderFilter);
-    }
-    if (activeTagFilter) {
-        filtered = filtered.filter(r => r.tags && r.tags.includes(activeTagFilter));
-    }
+    const filtered = getFilteredRoutes();
+    const mapless = getVisibleActivities();
     
     // Only count active user's own activities for summary counts and statistics
     const ownedFiltered = filtered.filter(r => r.is_owner);
+    const ownedCountTotal = ownedFiltered.length + mapless.length;
     
     // Update count
-    activityCountEl.textContent = ownedFiltered.length === 1 ? '1 Activity Loaded' : `${ownedFiltered.length} Activities Loaded`;
+    activityCountEl.textContent = ownedCountTotal === 1 ? '1 Activity Loaded' : `${ownedCountTotal} Activities Loaded`;
     
     // Calculate aggregate statistics
     let totalDist = 0;
@@ -652,22 +968,28 @@ function renderDashboardGrid() {
         totalGain += r.elevation_gain || 0;
         totalDur += r.duration || 0;
     });
+    // Workouts without GPS add their distance and time; indoor "elevation" is virtual, so it is left out
+    mapless.forEach(a => {
+        totalDist += a.distance || 0;
+        totalDur += a.duration || a.moving_time || 0;
+    });
     
     document.getElementById('summary-total-distance').textContent = formatDistance(totalDist);
     document.getElementById('summary-total-gain').textContent = `${Math.round(totalGain)} m`;
     document.getElementById('summary-total-duration').textContent = formatDuration(totalDur);
     
-    if (filtered.length === 0) {
+    const items = getLedgerItems(filtered);
+    if (items.length === 0) {
         gridContainer.innerHTML = '<div class="timeline-empty">No activities match the current filters. Import a GPX file to get started.</div>';
         return;
     }
     
-    // Group routes by week
+    // Group routes and map-less activities by week
     const weekStartDay = (currentUser && currentUser.week_start_day) || 'Monday';
     const weeksMap = new Map();
     
-    filtered.forEach(route => {
-        const dateObj = new Date(route.created_at + 'Z');
+    items.forEach(item => {
+        const dateObj = new Date(item.time);
         const startOfWeek = getStartOfWeek(dateObj, weekStartDay);
         const year = startOfWeek.getUTCFullYear();
         const month = String(startOfWeek.getUTCMonth() + 1).padStart(2, '0');
@@ -678,10 +1000,10 @@ function renderDashboardGrid() {
             weeksMap.set(key, {
                 startDate: startOfWeek,
                 key: key,
-                routes: []
+                items: []
             });
         }
-        weeksMap.get(key).routes.push(route);
+        weeksMap.get(key).items.push(item);
     });
     
     // Sort weeks by key DESC (newest first)
@@ -693,8 +1015,13 @@ function renderDashboardGrid() {
         let weekDur = 0;
         let ownedCount = 0;
         
-        week.routes.forEach(r => {
-            if (r.is_owner) {
+        week.items.forEach(item => {
+            const r = item.data;
+            if (item.kind === 'activity') {
+                weekDist += r.distance || 0;
+                weekDur += r.duration || r.moving_time || 0;
+                ownedCount++;
+            } else if (r.is_owner) {
                 weekDist += r.total_distance || 0;
                 weekGain += r.elevation_gain || 0;
                 weekDur += r.duration || 0;
@@ -726,7 +1053,11 @@ function renderDashboardGrid() {
             </div>
         `;
         
-        const cardsHtml = week.routes.map(route => {
+        const cardsHtml = week.items.map(item => {
+            if (item.kind === 'activity') {
+                return renderMaplessCard(item.data);
+            }
+            const route = item.data;
             const folderBadge = route.folder_name ? `<span class="folder-badge">${escapeHTML(route.folder_name)}</span>` : '';
             const distanceStr = formatDistance(route.total_distance);
             const durationStr = formatDuration(route.duration);
@@ -1125,7 +1456,9 @@ async function handleUpload() {
 
 // Select a route and load its full details
 async function selectRoute(routeId) {
+    const seq = ++selectionSeq;
     stopAnimation();
+    currentActivity = null;
     showDashboardView(false); // Switch to Map Mode
     closeMobileSidebar();
 
@@ -1133,7 +1466,10 @@ async function selectRoute(routeId) {
         const res = await fetch(`/api/routes/${routeId}`);
         if (!res.ok) throw new Error('Could not load route details');
         
-        currentRoute = await res.json();
+        const route = await res.json();
+        // Another route or a map-less activity was selected while this one loaded
+        if (seq !== selectionSeq) return;
+        currentRoute = route;
         setOriginalStartAndFinishPoints(currentRoute);
         
         // Update sidebar selection styling
@@ -1342,6 +1678,13 @@ function getDistanceMeters(lat1, lon1, lat2, lon2) {
 function getPrivacyDistance() {
     const val = localStorage.getItem('blaeu_privacy_distance');
     return val ? parseInt(val, 10) : 0;
+}
+
+// True when a loaded route has at least one track point; map code requires this
+function routeHasCoordinates(route) {
+    if (!route || !Array.isArray(route.tracks)) return false;
+    return route.tracks.some(track => Array.isArray(track.segments) &&
+        track.segments.some(segment => Array.isArray(segment) && segment.length > 0));
 }
 
 function setOriginalStartAndFinishPoints(route) {
@@ -3397,7 +3740,8 @@ async function loadMapThemes() {
 
 // Apply current map style (Dark Matter vs minimalist poster overlay)
 async function applyMapStyle() {
-    if (!currentRoute) return;
+    // Posters need a track: never request one for a route (or anything else) without coordinates
+    if (!currentRoute || !routeHasCoordinates(currentRoute)) return;
     
     // Remove existing poster overlay if present
     if (posterMapOverlay) {

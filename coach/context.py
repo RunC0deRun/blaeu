@@ -14,8 +14,9 @@ from db import (
     get_user_by_id,
 )
 
-# Characters per token; deliberately low so estimates err on the safe side
-CHARS_PER_TOKEN = 3.5
+# Characters per token. Measured on a real prompt with Ollama (Qwen tokenizer): about 2.1,
+# because the training tables are dense with numbers. 2.0 errs on the safe side.
+CHARS_PER_TOKEN = 2.0
 # Room kept free for formatting overhead per message
 MESSAGE_OVERHEAD_TOKENS = 8
 SAFETY_MARGIN_TOKENS = 256

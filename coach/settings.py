@@ -15,6 +15,8 @@ MIN_CONTEXT_WINDOW = 2048
 MAX_CONTEXT_WINDOW = 1_000_000
 DEFAULT_TEMPERATURE = 0.4
 DEFAULT_MAX_ANSWER_TOKENS = 1024
+# How much a reasoning model thinks before answering. '' keeps the model's default.
+REASONING_LEVELS = ('', 'off', 'low', 'medium', 'high')
 
 # Host names that stay on this machine or local network
 LOCAL_SUFFIXES = ('.local', '.lan', '.home', '.internal', '.home.arpa', '.localhost')
@@ -46,6 +48,7 @@ def get_llm_config():
         temperature = float(pick('temperature', 'BLAEU_LLM_TEMPERATURE', DEFAULT_TEMPERATURE))
     except ValueError:
         temperature = DEFAULT_TEMPERATURE
+    reasoning = pick('reasoning', 'BLAEU_LLM_REASONING', '') or ''
     enabled_value = stored.get(PREFIX + 'enabled')
     return {
         'enabled': enabled_value == 'true' if enabled_value is not None else _env_bool('BLAEU_LLM_ENABLED'),
@@ -55,6 +58,7 @@ def get_llm_config():
         'api_key_from_env': bool(env_key),
         'context_window': context_window,
         'temperature': temperature,
+        'reasoning': reasoning if reasoning in REASONING_LEVELS else '',
         'max_answer_tokens': DEFAULT_MAX_ANSWER_TOKENS,
     }
 
@@ -129,6 +133,11 @@ def parse_llm_settings(data):
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 2:
             raise SettingsError('The temperature must be a number between 0 and 2.')
         changes['temperature'] = float(value)
+    if 'reasoning' in data:
+        value = data['reasoning'] or ''
+        if value not in REASONING_LEVELS:
+            raise SettingsError('Reasoning must be one of: model default, off, low, medium or high.')
+        changes['reasoning'] = value
     if data.get('clear_api_key'):
         changes['api_key'] = None
     elif data.get('api_key'):

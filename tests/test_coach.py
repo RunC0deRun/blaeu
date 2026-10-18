@@ -53,6 +53,14 @@ def test_settings_validation(admin_id):
             coach_settings.save_llm_settings(bad)
 
 
+def test_reasoning_setting(admin_id):
+    assert coach_settings.get_llm_config()['reasoning'] == ''
+    assert coach_settings.save_llm_settings({'reasoning': 'low'})['reasoning'] == 'low'
+    assert coach_settings.save_llm_settings({'reasoning': ''})['reasoning'] == ''
+    with pytest.raises(coach_settings.SettingsError):
+        coach_settings.save_llm_settings({'reasoning': 'extreme'})
+
+
 def test_api_key_is_kept_cleared_and_never_public(admin_id, monkeypatch):
     monkeypatch.delenv('BLAEU_LLM_API_KEY', raising=False)
     coach_settings.save_llm_settings({'api_key': 'sk-secret'})
@@ -169,6 +177,22 @@ def test_connection_test_explains_reasoning_without_answer():
             patch('requests.request', return_value=_stream_response(lines)):
         result = llm.test_connection(dict(CONFIG, model='m'))
     assert not result['ok'] and 'reasoning' in result['error']
+
+
+@pytest.mark.parametrize('reasoning,ollama_think,openai_effort', [
+    ('', None, None),
+    ('off', False, 'none'),
+    ('low', 'low', 'low'),
+    ('high', 'high', 'high'),
+])
+def test_reasoning_level_is_sent_only_when_chosen(reasoning, ollama_think, openai_effort):
+    config = dict(CONFIG, reasoning=reasoning)
+    with patch('requests.request', return_value=_stream_response([json.dumps({'done': True})])) as req:
+        list(llm.stream_chat(config, [], is_ollama=True))
+    assert req.call_args.kwargs['json'].get('think', 'absent') == ('absent' if ollama_think is None else ollama_think)
+    with patch('requests.request', return_value=_stream_response(['data: [DONE]'])) as req:
+        list(llm.stream_chat(config, [], is_ollama=False))
+    assert req.call_args.kwargs['json'].get('reasoning_effort') == openai_effort
 
 
 @pytest.mark.parametrize('status,fragment', [

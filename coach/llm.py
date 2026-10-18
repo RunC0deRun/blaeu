@@ -159,6 +159,9 @@ def _stream_ollama(config, messages, max_tokens, temperature):
             'num_predict': max_tokens,
         },
     }
+    # Only sent when the admin chose a level, so models without reasoning are unaffected
+    if config.get('reasoning'):
+        payload['think'] = False if config['reasoning'] == 'off' else config['reasoning']
     resp = _request('POST', f"{api_root(config['base_url'])}/api/chat", config, 'generating an answer',
                     json=payload, stream=True, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
     with resp:
@@ -190,6 +193,8 @@ def _stream_openai(config, messages, max_tokens, temperature):
         'temperature': temperature,
         'max_tokens': max_tokens,
     }
+    if config.get('reasoning'):
+        payload['reasoning_effort'] = 'none' if config['reasoning'] == 'off' else config['reasoning']
     resp = _request('POST', f"{config['base_url']}/chat/completions", config,
                     'generating an answer', json=payload, stream=True,
                     timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))

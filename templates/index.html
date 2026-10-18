@@ -724,6 +724,17 @@
                                     <input type="number" id="admin-llm-temperature" class="coach-input" min="0" max="2" step="0.1">
                                 </div>
                             </div>
+                            <div class="form-group">
+                                <label for="admin-llm-reasoning">Reasoning</label>
+                                <select id="admin-llm-reasoning">
+                                    <option value="">Model default</option>
+                                    <option value="off">Off (fastest)</option>
+                                    <option value="low">Low (recommended for reasoning models)</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="high">High (slowest)</option>
+                                </select>
+                                <span class="data-choice-help">How long a reasoning model may think before it answers. Some models ignore it; use Test connection to check that the endpoint accepts it.</span>
+                            </div>
                             <p class="data-choice-help" style="margin: 0 0 12px;">The context window must match what the model is given: for Ollama, Blaeu sets it per request; for other providers, use the model's limit.</p>
                             <div class="history-actions">
                                 <button type="button" class="btn btn-sm btn-outline" id="admin-llm-test-btn">Test connection</button>
@@ -982,6 +993,6 @@
     </div>
 
     <!-- Main Frontend Script -->
-    <script src="/static/js/app.js?v=7"></script>
+    <script src="/static/js/app.js?v=8"></script>
 </body>
 </html>

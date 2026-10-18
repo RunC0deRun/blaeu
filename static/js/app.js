@@ -5671,6 +5671,7 @@ function renderLlmSettings(config) {
     document.getElementById('admin-llm-model').value = config.model || '';
     document.getElementById('admin-llm-context-window').value = config.context_window;
     document.getElementById('admin-llm-temperature').value = config.temperature;
+    document.getElementById('admin-llm-reasoning').value = config.reasoning || '';
     const keyInput = document.getElementById('admin-llm-api-key');
     keyInput.value = '';
     keyInput.disabled = config.api_key_from_env;
@@ -5686,7 +5687,8 @@ function readLlmForm() {
         base_url: document.getElementById('admin-llm-base-url').value.trim(),
         model: document.getElementById('admin-llm-model').value.trim(),
         context_window: parseInt(document.getElementById('admin-llm-context-window').value, 10),
-        temperature: parseFloat(document.getElementById('admin-llm-temperature').value)
+        temperature: parseFloat(document.getElementById('admin-llm-temperature').value),
+        reasoning: document.getElementById('admin-llm-reasoning').value
     };
     const key = document.getElementById('admin-llm-api-key').value.trim();
     if (key) payload.api_key = key;

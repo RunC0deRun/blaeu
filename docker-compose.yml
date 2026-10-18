@@ -22,6 +22,7 @@ services:
       - BLAEU_LLM_API_KEY=${BLAEU_LLM_API_KEY:-}
       - BLAEU_LLM_ENABLED=${BLAEU_LLM_ENABLED:-false}
       - BLAEU_LLM_CONTEXT_WINDOW=${BLAEU_LLM_CONTEXT_WINDOW:-8192}
+      - BLAEU_LLM_REASONING=${BLAEU_LLM_REASONING:-}
     # Lets the container reach an LLM (e.g. Ollama) on the host at host.docker.internal, also on Linux
     extra_hosts:
       - "host.docker.internal:host-gateway"

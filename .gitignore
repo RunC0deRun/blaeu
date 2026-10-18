@@ -22,3 +22,6 @@ blaeu_data/
 .DS_Store
 Thumbs.db
 
+
+# Production data copies for the test instance (contain API keys and health data)
+*.tgz

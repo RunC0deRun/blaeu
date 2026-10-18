@@ -1,0 +1,30 @@
+# Test instance: builds the current working tree (no commit needed) and runs it next to
+# production on a separate copy of the data. See docs/testing-with-real-data.md.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build
+#
+# The project name keeps containers and networks apart from the production stack.
+name: blaeu-test
+
+services:
+  web:
+    image: blaeu:test
+    ports: !override
+      # Set BLAEU_TEST_PORT if 5101 is taken on your machine
+      - "${BLAEU_TEST_PORT:-5101}:5000"
+    volumes: !override
+      - blaeu_test_data:/data
+    environment:
+      # Never sync in the background: production already syncs the same accounts
+      - BLAEU_DISABLE_AUTO_SYNC=true
+      # Plain HTTP on localhost; production keeps secure cookies
+      - SESSION_COOKIE_SECURE=false
+      - BLAEU_WORKERS=1
+    restart: "no"
+
+volumes:
+  # Created and filled by hand from a copy of production (see the guide), so Compose
+  # never creates or removes it
+  blaeu_test_data:
+    name: blaeu_test_data
+    external: true

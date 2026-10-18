@@ -17,7 +17,7 @@
     <script src="/static/vendor/leaflet/leaflet.js"></script>
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/styles.css?v=2">
+    <link rel="stylesheet" href="/static/css/styles.css?v=3">
 </head>
 <body>
     <div class="app-container">
@@ -258,6 +258,26 @@
                         <span class="stat-value" id="stat-points">0</span>
                     </div>
                 </div>
+            </div>
+
+            <!-- Details of a workout without GPS (no map, animation or poster) -->
+            <div class="route-details-panel activity-details-panel hidden" id="activity-details-panel">
+                <div class="route-header">
+                    <div class="route-title-area">
+                        <div class="activity-sport-label" id="activity-sport-label"></div>
+                        <h2 class="route-title" id="activity-title">Activity Title</h2>
+                        <p class="route-desc" id="activity-date"></p>
+                    </div>
+                    <div class="route-actions">
+                        <button class="btn btn-outline" id="activity-back-btn">← Dashboard</button>
+                        <button class="btn btn-danger" id="delete-activity-btn">Delete</button>
+                    </div>
+                </div>
+                <div class="stats-grid" id="activity-stats-grid"></div>
+                <p class="activity-mapless-note">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    This workout was recorded without GPS, so there is no map, animation or poster.
+                </p>
             </div>
 
             <!-- Map Viewport -->
@@ -866,6 +886,6 @@
     </div>
 
     <!-- Main Frontend Script -->
-    <script src="/static/js/app.js?v=4"></script>
+    <script src="/static/js/app.js?v=5"></script>
 </body>
 </html>

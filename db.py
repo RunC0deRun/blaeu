@@ -560,6 +560,33 @@ def set_activity_hidden(activity_id, hidden):
     finally:
         conn.close()
 
+def get_activity(activity_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM activities WHERE id = ?", (activity_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_activity(activity_id):
+    """
+    Removes an activity from the training log. Uploaded activities are deleted; synced
+    ones are kept as hidden tombstones so the next sync or backfill does not import them
+    again (the same convention as delete_route).
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM activities WHERE id = ? AND source = 'upload'", (activity_id,))
+        cursor.execute("UPDATE activities SET hidden = 1 WHERE id = ?", (activity_id,))
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
 def get_latest_activity_start(user_id, source):
     conn = get_db()
     cursor = conn.cursor()

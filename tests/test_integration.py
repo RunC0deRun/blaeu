@@ -236,3 +236,93 @@ def test_privacy_zone_cropping(server, test_gpx_path):
         assert page.locator('#icon-pause:not(.hidden)').count() == 1
         
         browser.close()
+
+
+def test_mapless_activities_render_without_errors(server, test_gpx_path):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        pytest.skip("Playwright not installed. Skipping browser integration test.")
+
+    errors = []
+
+    def on_console(msg):
+        # Missing map tiles are network failures, not script errors
+        if msg.type == 'error' and 'Failed to load resource' not in msg.text:
+            errors.append(msg.text)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_context().new_page()
+        page.on("console", on_console)
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+
+        page.goto(server)
+        page.wait_for_selector('.app-title')
+        page.fill('#login-username', 'admin')
+        page.fill('#login-password', 'Password123')
+        page.click('#login-submit-btn')
+        page.wait_for_selector('#login-modal', state="hidden")
+
+        # A route with GPS, so map mode can be left for a map-less activity
+        if page.locator('.activity-card:not(.activity-card-mapless)').count() == 0:
+            page.set_input_files('#file-input', test_gpx_path)
+            page.click('#upload-btn')
+            page.wait_for_selector('.activity-card', timeout=5000)
+
+        # Workouts without GPS, as the Intervals.icu importer stores them
+        user_id = db.get_user_by_username('admin')['id']
+        gym_id = db.upsert_activity(user_id, 'intervals', 'i-gym', {
+            'name': 'Gym Session', 'sport_type': 'WeightTraining', 'start_time': '2026-09-02 17:00:00',
+            'timezone': 'Europe/Amsterdam', 'duration': 3000, 'moving_time': 2700,
+            'avg_hr': 118, 'max_hr': 151, 'training_load': 35, 'is_indoor': True,
+        })
+        db.upsert_activity(user_id, 'intervals', 'i-treadmill', {
+            'name': 'Treadmill Run', 'sport_type': 'VirtualRun', 'start_time': '2026-09-01 06:00:00',
+            'timezone': 'Not/AZone', 'duration': 1800, 'distance': 5000.0, 'avg_hr': 150,
+            'is_indoor': True,
+        })
+        page.reload()
+        page.wait_for_selector('.activity-card-mapless', timeout=5000)
+
+        # Cards: no miniature canvas, sport label and stats instead
+        cards = page.locator('.activity-card-mapless')
+        assert cards.count() == 2
+        assert cards.locator('canvas').count() == 0
+        assert 'Gym Session' in cards.nth(0).text_content()  # newest first
+        assert 'Weight Training' in cards.nth(0).text_content()
+        assert '5.00 km' in cards.nth(1).text_content()
+        assert page.text_content('#dashboard-activity-count').startswith('3 ')
+
+        # Details panel without a map
+        cards.nth(0).click()
+        page.wait_for_selector('#activity-details-panel:not(.hidden)', timeout=5000)
+        assert page.text_content('#activity-title') == 'Gym Session'
+        assert 'Avg HR' in page.text_content('#activity-stats-grid')
+        assert page.locator('.map-viewport').is_hidden()
+        assert page.locator('#route-details-panel').is_hidden()
+        assert page.locator('.timeline-item-mapless').count() == 2
+
+        # Switch to the route on the map and back to a map-less activity via the timeline
+        page.click('.timeline-item:not(.timeline-item-mapless)')
+        page.wait_for_selector('#route-details-panel:not(.hidden)', timeout=5000)
+        assert page.locator('#activity-details-panel').is_hidden()
+        page.click('.timeline-item-mapless >> nth=1')
+        page.wait_for_selector('#activity-details-panel:not(.hidden)', timeout=5000)
+        assert page.text_content('#activity-title') == 'Treadmill Run'
+        assert page.locator('.map-viewport').is_hidden()
+        assert page.locator('#animation-controller-overlay').is_hidden()
+
+        # Delete: back to the dashboard, the activity is kept as a hidden tombstone
+        page.click('#activity-back-btn')
+        page.wait_for_selector('#dashboard-view:not(.hidden)')
+        page.once("dialog", lambda dialog: dialog.accept())
+        page.click(f'.btn-delete-activity[data-activity-id="{gym_id}"]')
+        page.wait_for_selector(f'.activity-card-mapless[data-activity-id="{gym_id}"]', state='detached', timeout=5000)
+        assert page.locator('.activity-card-mapless').count() == 1
+        assert db.get_activity(gym_id)['hidden'] == 1
+
+        page.wait_for_timeout(300)
+        browser.close()
+
+    assert errors == []

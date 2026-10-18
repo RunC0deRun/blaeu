@@ -105,6 +105,7 @@ The following environment variables can be configured when running the Docker co
 | `BLAEU_LLM_REASONING` | *Model default* | How long a reasoning model thinks: `off`, `low`, `medium` or `high`. See [Choosing a model](#choosing-a-model). |
 | `BLAEU_LLM_EMBEDDING_MODEL` | *None* | Embedding model for the training literature library, e.g. `bge-m3`. Without it, documents can be uploaded but aren't searchable. |
 | `BLAEU_LLM_EMBEDDING_BASE_URL` | *Chat endpoint* | Separate OpenAI-compatible endpoint for embeddings, e.g. a local Ollama next to a hosted chat model. It never receives `BLAEU_LLM_API_KEY`. |
+| `BLAEU_LLM_LIBRARY_SEARCH` | `auto` | How the coach uses the library: `auto`, `tools` (the coach decides what to look up), `always` (search with the question first) or `off`. |
 
 ---
 
@@ -123,6 +124,8 @@ With Ollama, Blaeu sets the context window per request, so long prompts aren't s
 Users can add training books and articles in Settings > Library: personal documents only they can see, and (for admins) a shared library for everyone. Blaeu extracts the text (PDF, EPUB, Markdown or plain text; scanned books without a text layer aren't supported), splits it into passages and indexes them in the background. *Try a search* shows which passages would be found for a question.
 
 Search combines meaning and keywords, so it needs an **embedding model** (Settings > Admin > AI Coach). Use a multilingual one such as `bge-m3` (`ollama pull bge-m3`, about 1.2 GB): with it, a question in Dutch finds the right passage in an English book. Changing the embedding model re-indexes the whole library in the background.
+
+When a user asks the coach a question, the coach searches the library itself: it first looks at the athlete's training data, then searches for the topics that matter (for "plan tomorrow" after a race, for example "recovery after a race"), up to three times per answer. The chat shows each search, the answer cites passages like [1], and the sources are listed below it with book, chapter and page. **Library search** (Settings > Admin > AI Coach) controls this: *Automatic* uses tool calling when the model supports it (Ollama reports this per model) and otherwise searches once with the question before answering. Searching takes an extra round, so expect answers to take longer; with the library in use, set the context window to 16,384 tokens.
 
 Only upload material you're allowed to use; documents in the shared library are visible to every user of the server.
 

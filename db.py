@@ -411,10 +411,15 @@ def init_db():
         reasoning TEXT,
         model TEXT,
         status TEXT DEFAULT 'complete',
+        sources TEXT,
+        steps TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (conversation_id) REFERENCES chat_conversations(id) ON DELETE CASCADE
     );
     """)
+    # Library passages an answer cited, and the searches made for it (JSON)
+    add_column_if_missing(cursor, 'chat_messages', 'sources', "TEXT")
+    add_column_if_missing(cursor, 'chat_messages', 'steps', "TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_conversations_user ON chat_conversations(user_id, updated_at);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation ON chat_messages(conversation_id, id);")
 
@@ -1763,15 +1768,17 @@ def get_chat_messages(conversation_id):
     conn.close()
     return rows
 
-def add_chat_message(conversation_id, role, content, reasoning=None, model=None, status='complete'):
+def add_chat_message(conversation_id, role, content, reasoning=None, model=None, status='complete',
+                     sources=None, steps=None):
     now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
     conn = get_db()
     cursor = conn.cursor()
     try:
         cursor.execute("""
-            INSERT INTO chat_messages (conversation_id, role, content, reasoning, model, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (conversation_id, role, content, reasoning, model, status, now))
+            INSERT INTO chat_messages (conversation_id, role, content, reasoning, model, status, sources, steps, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (conversation_id, role, content, reasoning, model, status,
+              json.dumps(sources) if sources else None, json.dumps(steps) if steps else None, now))
         message_id = cursor.lastrowid
         cursor.execute("UPDATE chat_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         conn.commit()

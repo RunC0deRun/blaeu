@@ -108,14 +108,17 @@ def add_document(user_id, filename, data, shared=False, title=None):
     file_hash = hashlib.sha256(data).hexdigest()
     conn = db.get_db()
     try:
+        # A personal copy of a shared document would make every passage show up twice
         duplicate = conn.execute(
-            "SELECT title FROM library_documents WHERE file_hash = ? AND owner_user_id IS ?",
+            "SELECT title, owner_user_id FROM library_documents "
+            "WHERE file_hash = ? AND (owner_user_id IS ? OR owner_user_id IS NULL)",
             (file_hash, owner)
         ).fetchone()
     finally:
         conn.close()
     if duplicate:
-        raise UploadError(f'This file is already in the library as "{duplicate["title"]}".')
+        where = 'the shared library' if duplicate['owner_user_id'] is None else 'your library'
+        raise UploadError(f'This file is already in {where} as "{duplicate["title"]}".')
 
     os.makedirs(library_dir(), exist_ok=True)
     ext = os.path.splitext(filename)[1].lower()
@@ -160,6 +163,18 @@ def list_documents(user_id):
             ORDER BY d.owner_user_id IS NOT NULL, d.title COLLATE NOCASE
         """, (user_id,)).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def has_searchable(user_id, model):
+    """Whether the user may search at least one passage embedded with the current model."""
+    conn = db.get_db()
+    try:
+        return conn.execute(f"""
+            SELECT 1 FROM library_chunks c JOIN library_documents d ON d.id = c.document_id
+            WHERE {visible_condition()} AND c.embedding_model = ? LIMIT 1
+        """, (user_id, model)).fetchone() is not None
     finally:
         conn.close()
 

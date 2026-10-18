@@ -9,8 +9,8 @@ from db import (
     get_chat_messages, add_chat_message, get_db,
 )
 from utils import get_current_user_id, rate_limit
-from coach import llm
-from coach.context import build_messages, output_budget, ContextTooSmall
+from coach import agent, llm
+from coach.context import build_messages, ContextTooSmall
 from coach.settings import (
     get_llm_config, public_llm_config, is_configured, save_llm_settings, preview_llm_config,
     SettingsError,
@@ -136,7 +136,10 @@ def update_profile():
 # --- Conversations -------------------------------------------------------------------
 
 def _serialize_message(message):
-    return {k: message.get(k) for k in ('id', 'role', 'content', 'reasoning', 'status', 'model', 'created_at')}
+    data = {k: message.get(k) for k in ('id', 'role', 'content', 'reasoning', 'status', 'model', 'created_at')}
+    for key in ('sources', 'steps'):
+        data[key] = json.loads(message[key]) if message.get(key) else []
+    return data
 
 
 @coach_bp.route('/api/coach/conversations', methods=['GET'])
@@ -206,7 +209,8 @@ def _sse(event, data):
 def send_message(conversation_id):
     """
     Sends a message (or, with {"retry": true}, answers the last unanswered one again) and
-    streams the coach's answer as server-sent events: start, reasoning, content, error, done.
+    streams the coach's answer as server-sent events: start, reasoning, content, search,
+    search_result, sources, error and done.
     """
     user_id, error = _require_user()
     if error:
@@ -248,21 +252,24 @@ def send_message(conversation_id):
         add_chat_message(conversation_id, 'user', content)
         _set_title_if_missing(conversation, content)
 
-    max_tokens = output_budget(messages, config)
-
     def generate():
         parts, reasoning = [], []
-        truncated = False
+        result = {'sources': [], 'steps': [], 'truncated': False}
         status = 'interrupted'
         error_message = None
         try:
             yield _sse('start', {'model': config['model']})
-            for kind, text in llm.stream_chat(config, messages, max_tokens=max_tokens):
-                if kind == 'truncated':
-                    truncated = True
-                    continue
-                (parts if kind == 'content' else reasoning).append(text)
-                yield _sse(kind, {'text': text})
+            for kind, value in agent.run(user_id, config, messages, content):
+                if kind in ('content', 'reasoning'):
+                    (parts if kind == 'content' else reasoning).append(value)
+                    yield _sse(kind, {'text': value})
+                elif kind in ('search', 'search_result'):
+                    yield _sse(kind, value)
+                elif kind == 'done':
+                    result = value
+            truncated = result['truncated']
+            if result['sources']:
+                yield _sse('sources', {'sources': result['sources']})
             if truncated and not parts:
                 status, error_message = 'error', (
                     'The model used its whole output limit on reasoning before answering. '
@@ -286,7 +293,8 @@ def send_message(conversation_id):
             if answer or status == 'complete':
                 message_id = add_chat_message(
                     conversation_id, 'assistant', answer, ''.join(reasoning) or None,
-                    config['model'], status if status != 'error' else 'interrupted'
+                    config['model'], status if status != 'error' else 'interrupted',
+                    sources=result['sources'], steps=result['steps']
                 )
         if error_message:
             yield _sse('error', {'message': error_message})

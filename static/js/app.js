@@ -5148,6 +5148,23 @@ const COACH_SUGGESTIONS = [
 
 // Renders the coach's Markdown answer. All text is HTML-escaped first and only fixed tags
 // without attributes are added, so model output can never inject markup or scripts.
+function sourceName(source) {
+    return [source.title, source.section, source.page ? `p. ${source.page}` : null].filter(Boolean).join(' · ');
+}
+
+// Turns [n] markers for known sources into superscript citations. Runs on rendered (escaped)
+// HTML; the only inserted text is the escaped source name.
+function linkCoachCitations(html, sources) {
+    if (!sources || !sources.length) return html;
+    const byNumber = new Map(sources.map(s => [s.n, s]));
+    return html.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (match, numbers) => {
+        const list = numbers.split(',').map(n => parseInt(n, 10));
+        if (!list.every(n => byNumber.has(n))) return match;
+        const title = list.map(n => `[${n}] ${sourceName(byNumber.get(n))}`).join('\n');
+        return `<sup class="coach-cite" title="${escapeHTML(title)}">[${list.join(', ')}]</sup>`;
+    });
+}
+
 function renderCoachMarkdown(markdown) {
     const lines = escapeHTML(markdown || '').split('\n');
     const inline = text => text
@@ -5375,7 +5392,7 @@ async function openCoachConversation(id) {
         const container = document.getElementById('coach-messages');
         container.innerHTML = '';
         if (!data.messages.length) renderCoachEmptyState();
-        data.messages.forEach(m => appendCoachMessage(m.role, m.content, m.reasoning, m.status));
+        data.messages.forEach(m => appendCoachMessage(m.role, m.content, m.reasoning, m.status, m.sources, m.steps));
         const last = data.messages[data.messages.length - 1];
         if (last && last.role === 'user') appendCoachError('This message has no answer yet.', true);
         hideCoachHistory();
@@ -5400,7 +5417,70 @@ async function deleteCoachConversation(id) {
     }
 }
 
-function appendCoachMessage(role, content, reasoning, status) {
+function renderCoachSteps(stepsEl, steps) {
+    stepsEl.innerHTML = '';
+    stepsEl.hidden = !steps.length;
+    steps.forEach(step => {
+        const item = document.createElement('div');
+        item.className = 'coach-step' + (step.found === undefined ? ' active' : '');
+        const label = step.automatic ? 'Searched the library for your question' : `Searching the library: "${step.query}"`;
+        let result = '';
+        if (step.found !== undefined) {
+            result = step.found
+                ? ` · ${step.found} passage${step.found === 1 ? '' : 's'} from ${step.titles.join(', ')}`
+                : ' · nothing relevant found';
+        }
+        item.textContent = (step.found === undefined ? label + '...' : label.replace('Searching', 'Searched')) + result;
+        stepsEl.appendChild(item);
+    });
+}
+
+function citedNumbers(answer) {
+    const cited = new Set();
+    for (const match of (answer || '').matchAll(/\[(\d+(?:\s*,\s*\d+)*)\]/g)) {
+        match[1].split(',').forEach(n => cited.add(parseInt(n, 10)));
+    }
+    return cited;
+}
+
+// Lists the cited sources; passages the coach read but didn't cite are folded away
+function renderCoachSources(sourcesEl, sources, answer) {
+    sourcesEl.innerHTML = '';
+    sourcesEl.hidden = !sources.length;
+    if (!sources.length) return;
+    const cited = citedNumbers(answer);
+    const renderSource = source => {
+        const details = document.createElement('details');
+        details.className = 'coach-source';
+        const summary = document.createElement('summary');
+        summary.textContent = `[${source.n}] ${sourceName(source)}`;
+        const text = document.createElement('div');
+        text.className = 'coach-source-text';
+        text.textContent = source.text;
+        details.append(summary, text);
+        return details;
+    };
+    const used = sources.filter(s => cited.has(s.n));
+    const other = sources.filter(s => !cited.has(s.n));
+    if (used.length) {
+        const heading = document.createElement('div');
+        heading.className = 'coach-sources-heading';
+        heading.textContent = 'Sources';
+        sourcesEl.appendChild(heading);
+        used.forEach(s => sourcesEl.appendChild(renderSource(s)));
+    }
+    if (other.length) {
+        const more = document.createElement('details');
+        more.className = 'coach-sources-more';
+        const summary = document.createElement('summary');
+        summary.textContent = `${used.length ? 'Also consulted' : 'Consulted'}: ${other.length} passage${other.length === 1 ? '' : 's'}`;
+        more.appendChild(summary);
+        other.forEach(s => more.appendChild(renderSource(s)));
+        sourcesEl.appendChild(more);
+    }
+}
+
+function appendCoachMessage(role, content, reasoning, status, sources = [], steps = []) {
     const container = document.getElementById('coach-messages');
     const empty = container.querySelector('.coach-empty');
     if (empty) empty.remove();
@@ -5420,14 +5500,28 @@ function appendCoachMessage(role, content, reasoning, status) {
         details.hidden = !reasoning;
         el.appendChild(details);
     }
+    let stepsEl = null;
+    if (role === 'assistant') {
+        stepsEl = document.createElement('div');
+        stepsEl.className = 'coach-steps';
+        renderCoachSteps(stepsEl, steps);
+        el.appendChild(stepsEl);
+    }
     const body = document.createElement('div');
     body.className = 'coach-message-body';
     if (role === 'assistant') {
-        body.innerHTML = renderCoachMarkdown(content);
+        body.innerHTML = linkCoachCitations(renderCoachMarkdown(content), sources);
     } else {
         body.textContent = content;
     }
     el.appendChild(body);
+    let sourcesEl = null;
+    if (role === 'assistant') {
+        sourcesEl = document.createElement('div');
+        sourcesEl.className = 'coach-sources';
+        renderCoachSources(sourcesEl, sources, content);
+        el.appendChild(sourcesEl);
+    }
     if (status === 'interrupted') {
         const note = document.createElement('span');
         note.className = 'coach-message-note';
@@ -5436,7 +5530,7 @@ function appendCoachMessage(role, content, reasoning, status) {
     }
     container.appendChild(el);
     container.scrollTop = container.scrollHeight;
-    return { el, body, reasoningText, reasoningSummary };
+    return { el, body, reasoningText, reasoningSummary, stepsEl, sourcesEl };
 }
 
 function appendCoachError(message, canRetry) {
@@ -5527,6 +5621,8 @@ async function sendCoachMessage(text, retry = false) {
         let buffer = '';
         let errorMessage = null;
         let doneStatus = null;
+        const steps = [];
+        let sources = [];
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -5556,6 +5652,16 @@ async function sendCoachMessage(text, retry = false) {
                     reasoning += data.text;
                     view.reasoningText.textContent = reasoning;
                     view.reasoningText.parentElement.hidden = false;
+                } else if (event === 'search') {
+                    steps.push(data);
+                    renderCoachSteps(view.stepsEl, steps);
+                } else if (event === 'search_result') {
+                    steps[steps.length - 1] = data;
+                    renderCoachSteps(view.stepsEl, steps);
+                } else if (event === 'sources') {
+                    sources = data.sources;
+                    view.body.innerHTML = linkCoachCitations(renderCoachMarkdown(answer), sources);
+                    renderCoachSources(view.sourcesEl, sources, answer);
                 } else if (event === 'error') {
                     errorMessage = data.message;
                 } else if (event === 'done') {
@@ -5677,6 +5783,7 @@ function renderLlmSettings(config) {
     document.getElementById('admin-llm-temperature').value = config.temperature;
     document.getElementById('admin-llm-reasoning').value = config.reasoning || '';
     document.getElementById('admin-llm-embedding-model').value = config.embedding_model || '';
+    document.getElementById('admin-llm-library-search').value = config.library_search || 'auto';
     document.getElementById('admin-llm-embedding-base-url').value = config.embedding_base_url || '';
     const keyInput = document.getElementById('admin-llm-api-key');
     keyInput.value = '';
@@ -5696,6 +5803,7 @@ function readLlmForm() {
         temperature: parseFloat(document.getElementById('admin-llm-temperature').value),
         reasoning: document.getElementById('admin-llm-reasoning').value,
         embedding_model: document.getElementById('admin-llm-embedding-model').value.trim(),
+        library_search: document.getElementById('admin-llm-library-search').value,
         embedding_base_url: document.getElementById('admin-llm-embedding-base-url').value.trim()
     };
     const key = document.getElementById('admin-llm-api-key').value.trim();

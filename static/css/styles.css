@@ -2439,3 +2439,81 @@ input[type="range"]::-webkit-slider-thumb:hover {
     margin-bottom: 2px;
     white-space: normal;
 }
+
+/* Library searches and sources in coach answers */
+.coach-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-bottom: 8px;
+}
+
+.coach-step {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    padding-left: 18px;
+    position: relative;
+}
+
+.coach-step::before {
+    content: '⌕';
+    position: absolute;
+    left: 0;
+    color: var(--primary);
+}
+
+.coach-step.active {
+    color: var(--text-main);
+}
+
+.coach-cite {
+    color: var(--primary);
+    font-size: 0.7em;
+    cursor: help;
+    margin-left: 1px;
+}
+
+.coach-sources {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    font-size: 0.8rem;
+}
+
+.coach-sources-heading {
+    color: var(--primary);
+    font-size: 0.7rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+
+.coach-source summary {
+    cursor: pointer;
+    color: var(--text-main);
+    padding: 2px 0;
+}
+
+.coach-source-text {
+    white-space: pre-wrap;
+    color: var(--text-muted);
+    margin: 4px 0 6px;
+    padding-left: 10px;
+    border-left: 2px solid var(--border-hover);
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.coach-sources-more {
+    margin-top: 4px;
+    color: var(--text-muted);
+}
+
+.coach-sources-more > summary {
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+.coach-sources-more .coach-source {
+    margin-left: 10px;
+}

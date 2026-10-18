@@ -17,7 +17,7 @@
     <script src="/static/vendor/leaflet/leaflet.js"></script>
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/styles.css?v=7">
+    <link rel="stylesheet" href="/static/css/styles.css?v=9">
 </head>
 <body>
     <div class="app-container">
@@ -780,6 +780,16 @@
                                 <span class="data-choice-help">Turns library passages into vectors for search. Use a multilingual model such as <code>bge-m3</code> so questions in your language find passages in English books. Changing it re-indexes the library.</span>
                             </div>
                             <div class="form-group">
+                                <label for="admin-llm-library-search">Library Search</label>
+                                <select id="admin-llm-library-search">
+                                    <option value="auto">Automatic (recommended)</option>
+                                    <option value="tools">The coach decides what to look up</option>
+                                    <option value="always">Always search with the question first</option>
+                                    <option value="off">Off</option>
+                                </select>
+                                <span class="data-choice-help">With tool calling, the coach first looks at the training data and then searches for what matters, which finds better passages but takes an extra round. Automatic uses it when the model supports tools. With the library in use, a context window of 16,384 tokens is recommended.</span>
+                            </div>
+                            <div class="form-group">
                                 <label for="admin-llm-embedding-base-url">Embedding Endpoint URL (optional)</label>
                                 <input type="url" id="admin-llm-embedding-base-url" class="coach-input" placeholder="Same as the endpoint above" autocomplete="off">
                                 <span class="data-choice-help">Only needed when embeddings come from another server, e.g. a local Ollama next to a hosted chat model. It never receives the API key above.</span>
@@ -1042,6 +1052,6 @@
     </div>
 
     <!-- Main Frontend Script -->
-    <script src="/static/js/app.js?v=10"></script>
+    <script src="/static/js/app.js?v=13"></script>
 </body>
 </html>

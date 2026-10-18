@@ -17,6 +17,9 @@ DEFAULT_TEMPERATURE = 0.4
 DEFAULT_MAX_ANSWER_TOKENS = 1024
 # How much a reasoning model thinks before answering. '' keeps the model's default.
 REASONING_LEVELS = ('', 'off', 'low', 'medium', 'high')
+# How the coach uses the library: 'auto' lets the model search with a tool when it supports
+# tools and otherwise searches once with the question; 'tools' and 'always' force one way
+LIBRARY_SEARCH_MODES = ('auto', 'tools', 'always', 'off')
 
 # Host names that stay on this machine or local network
 LOCAL_SUFFIXES = ('.local', '.lan', '.home', '.internal', '.home.arpa', '.localhost')
@@ -29,6 +32,10 @@ class SettingsError(ValueError):
 def _env_bool(name, default=False):
     value = os.getenv(name)
     return default if value is None else value.lower() == 'true'
+
+
+def _valid(value, allowed, default):
+    return value if value in allowed else default
 
 
 def get_llm_config():
@@ -60,6 +67,7 @@ def get_llm_config():
         'temperature': temperature,
         'reasoning': reasoning if reasoning in REASONING_LEVELS else '',
         'max_answer_tokens': DEFAULT_MAX_ANSWER_TOKENS,
+        'library_search': _valid(pick('library_search', 'BLAEU_LLM_LIBRARY_SEARCH', 'auto'), LIBRARY_SEARCH_MODES, 'auto'),
         # Embeddings for the training literature library; empty means no library search
         'embedding_model': pick('embedding_model', 'BLAEU_LLM_EMBEDDING_MODEL', '') or '',
         # Optional separate endpoint for embeddings, e.g. a local Ollama next to a hosted chat model
@@ -153,6 +161,10 @@ def parse_llm_settings(data):
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 2:
             raise SettingsError('The temperature must be a number between 0 and 2.')
         changes['temperature'] = float(value)
+    if 'library_search' in data:
+        if data['library_search'] not in LIBRARY_SEARCH_MODES:
+            raise SettingsError('Library search must be one of: auto, tools, always or off.')
+        changes['library_search'] = data['library_search']
     if 'embedding_model' in data:
         value = (data['embedding_model'] or '').strip()
         if len(value) > 200:

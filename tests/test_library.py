@@ -165,8 +165,14 @@ def test_upload_validation(configured, user_id):
     with pytest.raises(library.UploadError, match='not a valid PDF'):
         library.add_document(user_id, 'book.pdf', b'not a pdf')
     library.add_document(user_id, 'notes.md', _md(LONG_TEXT))
-    with pytest.raises(library.UploadError, match='already in the library'):
+    with pytest.raises(library.UploadError, match='already in your library'):
         library.add_document(user_id, 'copy.md', _md(LONG_TEXT))
+
+
+def test_personal_copy_of_shared_document_is_refused(configured, user_id):
+    library.add_document(user_id, 'guide.md', _md(LONG_TEXT), shared=True)
+    with pytest.raises(library.UploadError, match='shared library'):
+        library.add_document(user_id, 'my-guide.md', _md(LONG_TEXT))
 
 
 def test_indexing_makes_document_searchable(configured, user_id):

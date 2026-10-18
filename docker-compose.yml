@@ -26,6 +26,7 @@ services:
       - BLAEU_LLM_EMBEDDING_MODEL=${BLAEU_LLM_EMBEDDING_MODEL:-}
       - BLAEU_LLM_EMBEDDING_BASE_URL=${BLAEU_LLM_EMBEDDING_BASE_URL:-}
       - BLAEU_LLM_LIBRARY_SEARCH=${BLAEU_LLM_LIBRARY_SEARCH:-auto}
+      - BLAEU_LLM_DATA_TOOLS=${BLAEU_LLM_DATA_TOOLS:-auto}
     # Lets the container reach an LLM (e.g. Ollama) on the host at host.docker.internal, also on Linux
     extra_hosts:
       - "host.docker.internal:host-gateway"

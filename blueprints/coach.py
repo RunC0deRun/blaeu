@@ -209,8 +209,8 @@ def _sse(event, data):
 def send_message(conversation_id):
     """
     Sends a message (or, with {"retry": true}, answers the last unanswered one again) and
-    streams the coach's answer as server-sent events: start, reasoning, content, search,
-    search_result, sources, error and done.
+    streams the coach's answer as server-sent events: start, reasoning, content, step,
+    step_result, sources, error and done.
     """
     user_id, error = _require_user()
     if error:
@@ -243,8 +243,10 @@ def send_message(conversation_id):
             return jsonify({'error': f'Your message is too long (at most {MAX_MESSAGE_CHARS} characters).'}), 400
         history.append({'role': 'user', 'content': content})
 
+    tool_plan = agent.plan(config, user_id)
     try:
-        messages = build_messages(user_id, history, config)
+        # With data tools, the prompt only needs a compact overview; the coach looks up the rest
+        messages = build_messages(user_id, history, config, compact=tool_plan['data_tools'])
     except ContextTooSmall:
         return jsonify({'error': "Your message doesn't fit in the model's context window. Try a shorter message."}), 400
 
@@ -259,11 +261,11 @@ def send_message(conversation_id):
         error_message = None
         try:
             yield _sse('start', {'model': config['model']})
-            for kind, value in agent.run(user_id, config, messages, content):
+            for kind, value in agent.run(user_id, config, messages, content, tool_plan):
                 if kind in ('content', 'reasoning'):
                     (parts if kind == 'content' else reasoning).append(value)
                     yield _sse(kind, {'text': value})
-                elif kind in ('search', 'search_result'):
+                elif kind in ('step', 'step_result'):
                     yield _sse(kind, value)
                 elif kind == 'done':
                     result = value

@@ -17,7 +17,7 @@
     <script src="/static/vendor/leaflet/leaflet.js"></script>
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/styles.css?v=9">
+    <link rel="stylesheet" href="/static/css/styles.css?v=10">
 </head>
 <body>
     <div class="app-container">
@@ -780,6 +780,14 @@
                                 <span class="data-choice-help">Turns library passages into vectors for search. Use a multilingual model such as <code>bge-m3</code> so questions in your language find passages in English books. Changing it re-indexes the library.</span>
                             </div>
                             <div class="form-group">
+                                <label for="admin-llm-data-tools">Training Data Lookups</label>
+                                <select id="admin-llm-data-tools">
+                                    <option value="auto">Automatic (recommended)</option>
+                                    <option value="off">Off: only the overview in the prompt</option>
+                                </select>
+                                <span class="data-choice-help">Lets the coach look up workouts, details, monthly totals and trends itself when a question needs more than the recent overview. Automatic uses it when the model supports tools.</span>
+                            </div>
+                            <div class="form-group">
                                 <label for="admin-llm-library-search">Library Search</label>
                                 <select id="admin-llm-library-search">
                                     <option value="auto">Automatic (recommended)</option>
@@ -1052,6 +1060,6 @@
     </div>
 
     <!-- Main Frontend Script -->
-    <script src="/static/js/app.js?v=13"></script>
+    <script src="/static/js/app.js?v=14"></script>
 </body>
 </html>

@@ -94,6 +94,24 @@ The following environment variables can be configured when running the Docker co
 | `BLAEU_WORKER_TIMEOUT` | `300` | Gunicorn worker timeout in seconds. Keep it above `BLAEU_OVERPASS_TIMEOUT`, since poster maps are generated within the request. |
 | `BLAEU_DISABLE_AUTO_SYNC` | `false` | Set to `true` to stop the background Garmin/Intervals.icu auto-sync, regardless of user settings. Used by the test instance; manual syncs and imports still work. |
 | `BLAEU_INTERVALS_REQUEST_DELAY` | `1.0` | Seconds to wait between Intervals.icu requests during syncs, to stay well clear of API throttling. |
+| `BLAEU_THREADS` | `8` | Threads per Gunicorn worker. AI coach answers stream for a while; threads keep the app responsive meanwhile. |
+| `BLAEU_LLM_BASE_URL` | *None* | Default OpenAI-compatible endpoint for the AI coach, e.g. `http://host.docker.internal:11434/v1` for Ollama on the host. Admins can also set it in Settings > Admin. |
+| `BLAEU_LLM_MODEL` | *None* | Default model for the AI coach, e.g. `qwen3:8b`. |
+| `BLAEU_LLM_API_KEY` | *None* | API key for a hosted LLM provider. When set, it overrides a key stored through the admin page, so the secret stays out of the database. |
+| `BLAEU_LLM_ENABLED` | `false` | Enables the AI coach when it's configured only through environment variables. |
+| `BLAEU_LLM_CONTEXT_WINDOW` | `8192` | Context window of the model, in tokens. Blaeu fits the training summary and conversation into it. |
+
+---
+
+## 🤖 AI Coach
+
+Blaeu can coach athletes through a chat panel on the dashboard. The coach sees the athlete's goals (Settings > Coach), recent training, thresholds, fitness and, with their opt-in, wellness data.
+
+1. Run an LLM. For privacy, run it locally with [Ollama](https://ollama.com), for example `ollama pull qwen3:8b`. Any OpenAI-compatible endpoint (OpenAI, OpenRouter, vLLM, LM Studio, llama.cpp) works too.
+2. As an admin, open Settings > Admin > AI Coach, enter the endpoint URL (`http://host.docker.internal:11434/v1` reaches Ollama on the Docker host) and the model, click **Test connection**, enable the coach and save.
+3. Users then see an **AI Coach** button on the dashboard.
+
+With Ollama, Blaeu sets the context window per request, so long prompts aren't silently cut off. When the endpoint is outside the local network, admins and users are told that training data is sent to that provider.
 
 ---
 

@@ -39,14 +39,19 @@ def server():
         f.write(transparent_png)
 
     # Start Flask server
-    server_thread = threading.Thread(target=lambda: app.run(host='127.0.0.1', port=5001, debug=False, use_reloader=False))
+    # A free port, so the tests never talk to another Blaeu instance on a fixed port
+    import socket
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    server_thread = threading.Thread(target=lambda: app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False))
     server_thread.daemon = True
     server_thread.start()
     
     # Give the server a moment to start
     time.sleep(1.0)
     
-    yield "http://127.0.0.1:5001"
+    yield f"http://127.0.0.1:{port}"
     
     # Cleanup temp resources
     os.close(temp_db_fd)

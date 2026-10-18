@@ -17,7 +17,7 @@
     <script src="/static/vendor/leaflet/leaflet.js"></script>
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/styles.css?v=3">
+    <link rel="stylesheet" href="/static/css/styles.css?v=4">
 </head>
 <body>
     <div class="app-container">
@@ -164,6 +164,10 @@
                     <div class="dashboard-header-main">
                         <h2 class="dashboard-headline">Activities Dashboard</h2>
                         <p class="dashboard-subtitle" id="dashboard-activity-count">0 Activities Loaded</p>
+                        <button type="button" class="btn btn-sm btn-primary coach-open-btn hidden" id="coach-open-btn" aria-controls="coach-panel" aria-expanded="false">
+                            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align: middle; margin-right: 4px; position: relative; top: -1px;"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM7 9h10v2H7V9zm6 5H7v-2h6v2zm4-6H7V6h10v2z" fill="currentColor"/></svg>
+                            AI Coach
+                        </button>
                     </div>
                     <!-- Aggregate Statistics Banner -->
                     <div class="dashboard-summary-banner">
@@ -442,7 +446,8 @@
                         <button type="button" class="tab-btn active" data-tab="settings-tab-general" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.95; border-bottom: 2px solid var(--primary); transition: all 0.2s;">General</button>
                         <button type="button" class="tab-btn" data-tab="settings-tab-video" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Video</button>
                         <button type="button" class="tab-btn" data-tab="settings-tab-integrations" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Integrations</button>
-                        <button type="button" class="tab-btn hidden" id="settings-admin-tab-btn" data-tab="settings-tab-admin" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">User Management</button>
+                        <button type="button" class="tab-btn" data-tab="settings-tab-coach" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Coach</button>
+                        <button type="button" class="tab-btn hidden" id="settings-admin-tab-btn" data-tab="settings-tab-admin" style="background: none; border: none; color: #fff; font-family: 'Outfit', sans-serif; cursor: pointer; padding: 6px 12px; font-weight: 500; font-size: 0.9em; opacity: 0.6; border-bottom: 2px solid transparent; transition: all 0.2s;">Admin</button>
                     </div>
 
                     <!-- General Settings Tab -->
@@ -659,8 +664,73 @@
                         </div>
                     </div>
 
+                    <!-- Coach Profile Tab -->
+                    <div id="settings-tab-coach" class="settings-tab-pane hidden">
+                        <p class="data-choice-help" style="margin: 0 0 15px;">Tell the AI coach about yourself. It uses this together with your training data, thresholds and (if you opted in) wellness data. Everything stays on this server unless the administrator connected an external AI provider.</p>
+                        <div class="form-group">
+                            <label for="coach-profile-goals">Goals</label>
+                            <textarea id="coach-profile-goals" class="coach-textarea" rows="3" maxlength="4000" placeholder="e.g. Run a half marathon under 1:45; build general endurance"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="coach-profile-target-events">Target Events</label>
+                            <textarea id="coach-profile-target-events" class="coach-textarea" rows="2" maxlength="4000" placeholder="e.g. Rotterdam half marathon, 12 April 2027 (A race)"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="coach-profile-availability">Weekly Availability</label>
+                            <textarea id="coach-profile-availability" class="coach-textarea" rows="2" maxlength="4000" placeholder="e.g. 4 sessions a week; long runs on Sunday; max 1 hour on weekdays"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="coach-profile-injuries">Injuries &amp; Limitations</label>
+                            <textarea id="coach-profile-injuries" class="coach-textarea" rows="2" maxlength="4000" placeholder="e.g. Recovering from a calf strain; no hard downhill running"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="coach-profile-notes">Anything Else</label>
+                            <textarea id="coach-profile-notes" class="coach-textarea" rows="2" maxlength="4000" placeholder="e.g. I prefer heart-rate based training; I also do strength training twice a week"></textarea>
+                        </div>
+                    </div>
+
                     <!-- Admin Settings Tab -->
                     <div id="settings-tab-admin" class="settings-tab-pane hidden">
+                        <!-- AI Coach Endpoint (admins only) -->
+                        <div id="admin-llm-section" class="admin-llm-section hidden">
+                            <h4 style="color: var(--primary); margin: 0 0 6px; font-family: 'Outfit', sans-serif;">AI Coach</h4>
+                            <p class="data-choice-help" style="margin: 0 0 12px;">Connect an OpenAI-compatible LLM endpoint. For privacy, run a local model with Ollama (e.g. <code>http://host.docker.internal:11434/v1</code>); hosted providers such as OpenAI or OpenRouter work too.</p>
+                            <label class="data-choice-label" for="admin-llm-enabled" style="margin-bottom: 12px;">
+                                <input type="checkbox" id="admin-llm-enabled">
+                                <span><strong>Enable the AI coach for all users</strong></span>
+                            </label>
+                            <div class="form-group">
+                                <label for="admin-llm-base-url">Endpoint URL</label>
+                                <input type="url" id="admin-llm-base-url" class="coach-input" placeholder="http://host.docker.internal:11434/v1" autocomplete="off">
+                            </div>
+                            <div id="admin-llm-external-warning" class="coach-notice hidden" role="note">This endpoint looks external: users' training and health data will be sent to this provider when they chat with the coach.</div>
+                            <div class="form-group">
+                                <label for="admin-llm-api-key">API Key</label>
+                                <input type="password" id="admin-llm-api-key" class="coach-input" placeholder="Not needed for Ollama" autocomplete="new-password">
+                                <span class="data-choice-help" id="admin-llm-api-key-status"></span>
+                            </div>
+                            <div class="form-group">
+                                <label for="admin-llm-model">Model</label>
+                                <input type="text" id="admin-llm-model" class="coach-input" list="admin-llm-model-options" placeholder="e.g. qwen3:8b or gpt-4o-mini" autocomplete="off">
+                                <datalist id="admin-llm-model-options"></datalist>
+                            </div>
+                            <div class="coach-form-row">
+                                <div class="form-group">
+                                    <label for="admin-llm-context-window">Context Window (tokens)</label>
+                                    <input type="number" id="admin-llm-context-window" class="coach-input" min="2048" max="1000000" step="1024">
+                                </div>
+                                <div class="form-group">
+                                    <label for="admin-llm-temperature">Temperature</label>
+                                    <input type="number" id="admin-llm-temperature" class="coach-input" min="0" max="2" step="0.1">
+                                </div>
+                            </div>
+                            <p class="data-choice-help" style="margin: 0 0 12px;">The context window must match what the model is given: for Ollama, Blaeu sets it per request; for other providers, use the model's limit.</p>
+                            <div class="history-actions">
+                                <button type="button" class="btn btn-sm btn-outline" id="admin-llm-test-btn">Test connection</button>
+                                <button type="button" class="btn btn-sm btn-primary" id="admin-llm-save-btn">Save AI coach settings</button>
+                            </div>
+                            <div id="admin-llm-test-result" class="coach-test-result hidden" aria-live="polite"></div>
+                        </div>
                         <!-- Admin User Management Panel (hidden by default) -->
                         <div id="admin-user-section" class="hidden" style="margin-top: 0;">
                             <h4 style="color: var(--primary); margin-bottom: 12px; font-family: 'Outfit', sans-serif;">User Account Management</h4>
@@ -825,6 +895,32 @@
         </div>
     </div>
 
+    <!-- AI Coach Chat Panel -->
+    <aside class="coach-panel hidden" id="coach-panel" role="dialog" aria-modal="false" aria-labelledby="coach-panel-title">
+        <header class="coach-panel-header">
+            <div>
+                <h3 id="coach-panel-title" class="coach-panel-title">AI Coach</h3>
+                <span class="coach-panel-model" id="coach-panel-model"></span>
+            </div>
+            <div class="coach-panel-actions">
+                <button type="button" class="btn btn-sm btn-outline" id="coach-history-btn" aria-expanded="false" aria-controls="coach-conversation-list">History</button>
+                <button type="button" class="btn btn-sm btn-outline" id="coach-new-btn">New chat</button>
+                <button type="button" class="coach-close-btn" id="coach-close-btn" aria-label="Close the AI coach">&times;</button>
+            </div>
+        </header>
+        <div class="coach-conversation-list hidden" id="coach-conversation-list" role="list" aria-label="Previous conversations"></div>
+        <div class="coach-messages" id="coach-messages" aria-live="polite"></div>
+        <form class="coach-composer" id="coach-composer">
+            <label for="coach-input" class="visually-hidden">Message the AI coach</label>
+            <textarea id="coach-input" rows="2" maxlength="8000" placeholder="Ask your coach, e.g. how should I train this week?"></textarea>
+            <div class="coach-composer-actions">
+                <span class="coach-disclaimer" id="coach-disclaimer">The coach can make mistakes and is no substitute for medical advice.</span>
+                <button type="button" class="btn btn-sm btn-outline hidden" id="coach-stop-btn">Stop</button>
+                <button type="submit" class="btn btn-sm btn-primary" id="coach-send-btn">Send</button>
+            </div>
+        </form>
+    </aside>
+
     <!-- Video Exporting Modal -->
     <div class="modal hidden" id="export-modal" style="z-index: 2000;">
         <div class="modal-content card" style="max-width: 400px; text-align: center;">
@@ -886,6 +982,6 @@
     </div>
 
     <!-- Main Frontend Script -->
-    <script src="/static/js/app.js?v=5"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>

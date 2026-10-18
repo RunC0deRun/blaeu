@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application files
 COPY app.py db.py gpx_parser.py poster_map.py utils.py ./
 COPY blueprints/ ./blueprints/
+COPY coach/ ./coach/
 COPY static/ ./static/
 COPY templates/ ./templates/
 
@@ -50,5 +51,6 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/')" || exit 1
 
-# Run with gunicorn; the default 300s timeout leaves room for slow Overpass queries during map rendering
-CMD ["sh", "-c", "gunicorn -w ${BLAEU_WORKERS:-2} -t ${BLAEU_WORKER_TIMEOUT:-300} -b 0.0.0.0:5000 app:app"]
+# Run with gunicorn; the default 300s timeout leaves room for slow Overpass queries during map rendering.
+# Threaded workers keep the app responsive while AI coach answers stream, which can take minutes.
+CMD ["sh", "-c", "gunicorn -w ${BLAEU_WORKERS:-2} --worker-class gthread --threads ${BLAEU_THREADS:-8} -t ${BLAEU_WORKER_TIMEOUT:-300} -b 0.0.0.0:5000 app:app"]

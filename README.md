@@ -22,6 +22,7 @@ Built with a clean **Flask + SQLite** backend and a responsive, futuristic **Van
   - Configurable framerates: Export at **24**, **25**, **30**, **50**, or **60 FPS**.
   - Multiple formats: High-quality server-side transcoding (via FFmpeg in the container) supports **WebM** and **MP4 (H.264/YUV420p)** exports with constant framerate mapping.
 - **Minimalist Poster Background Maps (v0.5.0)**: Toggle between default Dark Matter tiles and 17 minimalist map themes (Noir, Blueprint, Sunset, Neon Cyberpunk, etc.). Maps are generated dynamically on-the-fly on the backend using `osmnx` (cached locally) and rendered at high resolution (300 DPI) via `matplotlib`.
+- **Welcome Screen**: Opens on your latest workout with its route, heart rate zones and a comparison with similar workouts, followed by the AI coach's note for today, fitness, form, HRV and resting heart rate, earlier workouts, and background events such as syncs, history imports and library indexing. The full activities dashboard is one tab away.
 - **Organization & Search**: CRUD operations for folder hierarchies, tagging support, and chronological timeline ledger.
 - **Tile Proxy & CORS Protection**: Serves tiles from the same origin to avoid Canvas staining, caching them locally on disk to protect external map services.
 - **Duplicate Prevention**: Computes SHA-256 hashes of uploaded GPX logs to reject duplicate uploads.
@@ -117,6 +118,8 @@ Blaeu can coach athletes through a chat panel on the dashboard. The coach sees t
 1. Run an LLM. For privacy, run it locally with [Ollama](https://ollama.com), for example `ollama pull qwen3:8b` (see [Choosing a model](#choosing-a-model)). Any OpenAI-compatible endpoint (OpenAI, OpenRouter, vLLM, LM Studio, llama.cpp) works too.
 2. As an admin, open Settings > Admin > AI Coach, enter the endpoint URL (`http://host.docker.internal:11434/v1` reaches Ollama on the Docker host) and the model, click **Test connection**, enable the coach and save.
 3. Users then see an **AI Coach** button on the dashboard.
+
+The welcome screen also shows a short note from the coach: how the latest workout and recovery look, and what to do today. It is written in the background once a day (local models can take a few minutes), written again when a newer workout comes in, and **Ask a follow-up** continues it as a chat.
 
 With Ollama, Blaeu sets the context window per request, so long prompts aren't silently cut off. When the endpoint is outside the local network, admins and users are told that training data is sent to that provider.
 

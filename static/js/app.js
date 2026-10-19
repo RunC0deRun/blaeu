@@ -279,6 +279,7 @@ function initAppEvents() {
     initGarminIntegration();
     initIntervalsIntegration();
     initCoach();
+    initWelcome();
     initLibrary();
 
     // Delegated click listeners to prevent XSS in inline event handlers
@@ -463,6 +464,7 @@ async function loadRoutes() {
         }
         renderRoutesLedger();
         renderDashboardGrid();
+        loadWelcome();
         
         if (currentRoute) {
             showDashboardView(false);
@@ -863,6 +865,8 @@ function showDashboardView(show) {
         // Clean active classes on timeline items
         const activeItems = document.querySelectorAll('.timeline-item.active');
         activeItems.forEach(item => item.classList.remove('active'));
+        // The welcome map canvas has no size while the dashboard is hidden
+        requestAnimationFrame(drawWelcomeMap);
     } else {
         dashboardView.classList.add('hidden');
         mapViewport.classList.remove('hidden');
@@ -1175,6 +1179,25 @@ function renderDashboardGrid() {
     });
 }
 
+// The part of a route outside the start/finish privacy zone, as indexes into coords;
+// null when (almost) the whole route lies inside it
+function getPrivacyKeepRange(coords) {
+    const privacyDistance = getPrivacyDistance();
+    let first = 0;
+    let last = coords.length - 1;
+    if (privacyDistance > 0) {
+        const start = coords[0];
+        const finish = coords[coords.length - 1];
+        while (first < coords.length && getDistanceMeters(coords[first][0], coords[first][1], start[0], start[1]) <= privacyDistance) {
+            first++;
+        }
+        while (last >= first && getDistanceMeters(coords[last][0], coords[last][1], finish[0], finish[1]) <= privacyDistance) {
+            last--;
+        }
+    }
+    return first <= last && last - first + 1 >= 2 ? { first, last } : null;
+}
+
 // Draw a glowing neon route path miniature on a card canvas
 function drawRouteMiniature(canvas, coords, posterStatus) {
     const ctx = canvas.getContext('2d');
@@ -1254,33 +1277,10 @@ function drawRouteMiniature(canvas, coords, posterStatus) {
         return;
     }
     
-    const privacyDistance = getPrivacyDistance();
-    if (privacyDistance > 0 && coords.length > 0) {
-        const originalStart = coords[0];
-        const originalFinish = coords[coords.length - 1];
-        
-        let firstKeepIdx = 0;
-        while (firstKeepIdx < coords.length) {
-            const pt = coords[firstKeepIdx];
-            const dStart = getDistanceMeters(pt[0], pt[1], originalStart[0], originalStart[1]);
-            if (dStart > privacyDistance) {
-                break;
-            }
-            firstKeepIdx++;
-        }
-        
-        let lastKeepIdx = coords.length - 1;
-        while (lastKeepIdx >= firstKeepIdx) {
-            const pt = coords[lastKeepIdx];
-            const dFinish = getDistanceMeters(pt[0], pt[1], originalFinish[0], originalFinish[1]);
-            if (dFinish > privacyDistance) {
-                break;
-            }
-            lastKeepIdx--;
-        }
-        
-        if (firstKeepIdx <= lastKeepIdx && (lastKeepIdx - firstKeepIdx + 1) >= 2) {
-            coords = coords.slice(firstKeepIdx, lastKeepIdx + 1);
+    if (getPrivacyDistance() > 0) {
+        const keep = getPrivacyKeepRange(coords);
+        if (keep) {
+            coords = coords.slice(keep.first, keep.last + 1);
         } else {
             ctx.fillStyle = '#94a3b8';
             ctx.font = '12px Outfit';
@@ -4456,6 +4456,7 @@ async function handleLogout() {
         foldersList = [];
         deselectRoute();
         resetCoach();
+        resetWelcome();
         const adminSec = document.getElementById('admin-user-section');
         if (adminSec) adminSec.classList.add('hidden');
         await checkAuthStatus();
@@ -5120,6 +5121,536 @@ async function saveWellnessSetting() {
         if (currentUser) currentUser.wellness_opt_in = prefs.wellness_opt_in;
     } catch (err) {
         console.error('Error updating wellness setting', err);
+        alert(err.message);
+    }
+}
+
+// ----------------------------------------------------
+// Welcome screen
+// ----------------------------------------------------
+let welcomeData = null;
+let welcomeSeq = 0;
+let welcomeNotePoll = null;
+let welcomeResizeTimer = null;
+
+const WELCOME_NOTE_POLL_MS = 10000;
+const HR_ZONE_COLORS = ['#64748b', '#38bdf8', '#34d399', '#fbbf24', '#f97316', '#f43f5e', '#be123c'];
+
+function initWelcome() {
+    const tabs = [document.getElementById('dashboard-tab-welcome'), document.getElementById('dashboard-tab-activities')];
+    tabs[0].addEventListener('click', () => showDashboardTab('welcome'));
+    tabs[1].addEventListener('click', () => showDashboardTab('activities'));
+    tabs.forEach((tab, i) => tab.addEventListener('keydown', e => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const next = tabs[(i + 1) % tabs.length];
+        next.click();
+        next.focus();
+    }));
+    document.getElementById('welcome-all-activities-btn').addEventListener('click', () => showDashboardTab('activities'));
+    document.getElementById('welcome-play-btn').addEventListener('click', playWelcomeRoute);
+    document.getElementById('welcome-open-btn').addEventListener('click', () => {
+        if (welcomeData && welcomeData.latest) openWelcomeActivity(welcomeData.latest);
+    });
+    document.getElementById('welcome-coach-followup-btn').addEventListener('click', discussCoachNote);
+    document.getElementById('welcome-coach-refresh-btn').addEventListener('click', () => loadCoachNote(true));
+    window.addEventListener('resize', () => {
+        clearTimeout(welcomeResizeTimer);
+        welcomeResizeTimer = setTimeout(drawWelcomeMap, 150);
+    });
+}
+
+function showDashboardTab(name) {
+    const welcome = name === 'welcome';
+    document.getElementById('welcome-view').classList.toggle('hidden', !welcome);
+    document.getElementById('activities-overview').classList.toggle('hidden', welcome);
+    [['dashboard-tab-welcome', welcome], ['dashboard-tab-activities', !welcome]].forEach(([id, active]) => {
+        const tab = document.getElementById(id);
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-selected', String(active));
+        tab.tabIndex = active ? 0 : -1;
+    });
+    if (welcome) {
+        drawWelcomeMap();
+    } else {
+        // Canvases only get their size once the grid is visible
+        renderDashboardGrid();
+    }
+}
+
+// The browser's own date: the server uses it as "today" for the athlete
+function localDateISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function loadWelcome() {
+    const seq = ++welcomeSeq;
+    renderWelcomeGreeting();
+    try {
+        const res = await fetch(`/api/welcome?date=${localDateISO()}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (seq !== welcomeSeq) return;
+        welcomeData = data;
+        renderWelcome(data);
+    } catch (err) {
+        console.error('Could not load the welcome screen', err);
+    }
+    loadCoachNote();
+}
+
+function resetWelcome() {
+    welcomeSeq++;
+    welcomeData = null;
+    clearTimeout(welcomeNotePoll);
+    document.getElementById('welcome-coach-note').classList.add('hidden');
+    showDashboardTab('welcome');
+}
+
+function renderWelcomeGreeting() {
+    const now = new Date();
+    const hour = now.getHours();
+    const part = hour < 5 ? 'evening' : hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+    const name = currentUser && currentUser.username ? `, ${currentUser.username}` : '';
+    document.getElementById('welcome-greeting').textContent = `Good ${part}${name}`;
+    document.getElementById('welcome-date').textContent = now.toLocaleDateString(undefined, {
+        weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+    });
+}
+
+function renderWelcome(data) {
+    const hasLatest = !!data.latest;
+    document.getElementById('welcome-empty').classList.toggle('hidden', hasLatest);
+    document.getElementById('welcome-spotlight').classList.toggle('hidden', !hasLatest);
+    if (hasLatest) renderWelcomeSpotlight(data.latest, data.comparison);
+    renderWelcomeRail(data);
+    renderWelcomeRecent(data.recent || []);
+    renderWelcomeEvents(data.events || []);
+}
+
+function shortDuration(seconds) {
+    if (!seconds) return '—';
+    const total = Math.round(seconds);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function hoursMinutes(seconds) {
+    const minutes = Math.round((seconds || 0) / 60);
+    return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+function paceValue(mps) {
+    const perKm = Math.round(1000 / mps);
+    return `${Math.floor(perKm / 60)}:${String(perKm % 60).padStart(2, '0')}`;
+}
+
+// The headline numbers for the spotlight, as [label, value, unit]
+function welcomeSpotStats(a) {
+    const stats = [];
+    const time = a.moving_time || a.duration;
+    if (hasValue(a.distance) && a.distance > 0) stats.push(['Distance', (a.distance / 1000).toFixed(1), 'km']);
+    if (time) stats.push(['Time', shortDuration(time), '']);
+    if (a.distance > 0 && time > 0) {
+        const mps = a.distance / time;
+        if (getSportCategory(a.sport_type) === 'ride') stats.push(['Speed', (mps * 3.6).toFixed(1), 'km/h']);
+        else if (mps > 0.1) stats.push(['Pace', paceValue(mps), '/km']);
+    }
+    if (hasValue(a.avg_hr)) stats.push(['Avg HR', Math.round(a.avg_hr), 'bpm']);
+    if (hasValue(a.avg_power)) stats.push(['Avg power', Math.round(a.avg_power), 'W']);
+    if (hasValue(a.training_load)) stats.push(['Load', Math.round(a.training_load), '', true]);
+    if (hasValue(a.aerobic_te)) stats.push(['Aerobic TE', Number(a.aerobic_te).toFixed(1), '']);
+    if (hasValue(a.elevation_gain) && a.elevation_gain > 0 && !a.is_indoor) stats.push(['Elevation', Math.round(a.elevation_gain), 'm']);
+    if (hasValue(a.calories)) stats.push(['Calories', Math.round(a.calories), 'kcal']);
+    return stats.slice(0, 6);
+}
+
+function renderWelcomeSpotlight(a, comparison) {
+    const route = a.route_id ? routesList.find(r => r.id === a.route_id) : null;
+    const hasMap = !!(route && Array.isArray(route.simplified_path) && route.simplified_path.length > 1);
+
+    document.getElementById('welcome-spot-meta').textContent = `${formatActivityDate(a)} · ${formatSportLabel(a.sport_type)}`;
+    document.getElementById('welcome-spot-title').textContent = a.name || formatSportLabel(a.sport_type);
+    document.getElementById('welcome-spot-stats').innerHTML = welcomeSpotStats(a).map(([label, value, unit, glow]) => `
+        <div>
+            <div class="welcome-label">${escapeHTML(label)}</div>
+            <div class="welcome-big${glow ? ' glow' : ''}">${escapeHTML(String(value))}${unit ? `<small>${escapeHTML(unit)}</small>` : ''}</div>
+        </div>`).join('');
+
+    const zones = document.getElementById('welcome-zones');
+    const zoneTimes = a.hr_zone_times || [];
+    const zoneTotal = zoneTimes.reduce((sum, t) => sum + t, 0);
+    zones.classList.toggle('hidden', !zoneTotal);
+    if (zoneTotal) {
+        const color = i => HR_ZONE_COLORS[Math.min(i, HR_ZONE_COLORS.length - 1)];
+        const label = zoneTimes.map((t, i) => t ? `zone ${i + 1} ${Math.round(100 * t / zoneTotal)}%` : '').filter(Boolean).join(', ');
+        zones.innerHTML = `
+            <div class="welcome-label">Time in HR zones</div>
+            <div class="welcome-zone-bar" role="img" aria-label="${escapeHTML(label)}">
+                ${zoneTimes.map((t, i) => t ? `<i style="width:${(100 * t / zoneTotal).toFixed(1)}%;background:${color(i)}"></i>` : '').join('')}
+            </div>
+            <div class="welcome-zone-legend">
+                ${zoneTimes.map((t, i) => t ? `<span style="--zone-color:${color(i)}">Z${i + 1} ${shortDuration(t)}</span>` : '').join('')}
+            </div>`;
+    }
+
+    const compare = document.getElementById('welcome-compare');
+    const sentence = comparisonSentence(comparison);
+    compare.classList.toggle('hidden', !sentence);
+    compare.innerHTML = sentence;
+
+    document.getElementById('welcome-map-canvas').classList.toggle('hidden', !hasMap);
+    document.getElementById('welcome-play-btn').classList.toggle('hidden', !hasMap);
+    const mapless = document.getElementById('welcome-mapless');
+    mapless.classList.toggle('hidden', hasMap);
+    if (!hasMap) {
+        mapless.innerHTML = `${sportIconSvg(a.sport_type, 48)}<span>${a.is_indoor ? 'Indoor workout' : 'No GPS recorded'}</span>`;
+    }
+    const privacy = getPrivacyDistance();
+    const chip = document.getElementById('welcome-privacy-chip');
+    chip.classList.toggle('hidden', !hasMap || !privacy);
+    chip.textContent = `PRIVACY ZONE ${privacy} m`;
+    drawWelcomeMap();
+}
+
+function comparisonSentence(c) {
+    if (!c) return '';
+    const others = `your last ${c.count} similar workouts`;
+    let main;
+    if (c.metric === 'pace') {
+        const s = Math.round(Math.abs(c.diff));
+        main = s < 2 ? `<b>The same pace</b> as ${others}` : `<b>${s} s/km ${c.diff < 0 ? 'faster' : 'slower'}</b> than ${others}`;
+    } else {
+        const kmh = Math.abs(c.diff).toFixed(1);
+        main = Math.abs(c.diff) < 0.3 ? `<b>The same speed</b> as ${others}` : `<b>${kmh} km/h ${c.diff > 0 ? 'faster' : 'slower'}</b> than ${others}`;
+    }
+    if (c.hr_diff === null || c.hr_diff === undefined) return `${main}.`;
+    if (Math.abs(c.hr_diff) <= 1) return `${main}, at the same average heart rate.`;
+    return `${main}, at a ${Math.abs(c.hr_diff)} bpm ${c.hr_diff < 0 ? 'lower' : 'higher'} average heart rate.`;
+}
+
+function drawWelcomeMap() {
+    const latest = welcomeData && welcomeData.latest;
+    const canvas = document.getElementById('welcome-map-canvas');
+    if (!latest || !latest.route_id || canvas.classList.contains('hidden') || !canvas.offsetWidth) return;
+    const route = routesList.find(r => r.id === latest.route_id);
+    if (route && route.simplified_path) drawWelcomeRoute(canvas, route);
+}
+
+// Marker spacing on the welcome map: every 5 km, wider on long rides so there are at most six
+const WELCOME_MARKER_STEPS_KM = [5, 10, 25, 50, 100];
+
+// The latest route, drawn at the screen's full resolution: a cyan-to-purple gradient over a
+// soft glow, start and finish dots in the gradient's colours, and distance markers
+function drawWelcomeRoute(canvas, route) {
+    const coords = route.simplified_path;
+    const width = canvas.offsetWidth;
+    const height = canvas.offsetHeight;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const keep = getPrivacyKeepRange(coords);
+    if (!keep) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '12px Outfit, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Route within privacy zone', width / 2, height / 2);
+        return;
+    }
+
+    // Distance along the simplified path, scaled to the recorded distance so markers land
+    // where the kilometres really are
+    const along = [0];
+    for (let i = 1; i < coords.length; i++) {
+        along.push(along[i - 1] + getDistanceMeters(coords[i - 1][0], coords[i - 1][1], coords[i][0], coords[i][1]));
+    }
+    const pathLength = along[along.length - 1] || 1;
+    const scale = route.total_distance > 0 ? route.total_distance / pathLength : 1;
+
+    // Equirectangular projection, fitted to the visible part
+    const visible = coords.slice(keep.first, keep.last + 1);
+    const lats = visible.map(p => p[0]);
+    const lons = visible.map(p => p[1]);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+    const latCos = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180);
+    const pad = 44;
+    const fit = Math.min((width - pad * 2) / (((maxLon - minLon) * latCos) || 1e-4), (height - pad * 2) / ((maxLat - minLat) || 1e-4));
+    const offsetX = (width - (maxLon - minLon) * latCos * fit) / 2;
+    const offsetY = (height - (maxLat - minLat) * fit) / 2;
+    const project = p => [offsetX + (p[1] - minLon) * latCos * fit, height - (offsetY + (p[0] - minLat) * fit)];
+    const points = visible.map(project);
+
+    const xs = points.map(p => p[0]);
+    const gradient = ctx.createLinearGradient(Math.min(...xs), 0, Math.max(...xs), 0);
+    gradient.addColorStop(0, '#00f0ff');
+    gradient.addColorStop(1, '#9333ea');
+    const trace = () => {
+        ctx.beginPath();
+        points.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+    };
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = gradient;
+
+    ctx.save();
+    ctx.filter = 'blur(4px)';
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 7;
+    trace();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.lineWidth = 2.5;
+    trace();
+    ctx.stroke();
+
+    const dot = (p, fill, r) => {
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], r, 0, 2 * Math.PI);
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#070a13';
+        ctx.stroke();
+    };
+
+    // Distance markers, only where the route is visible
+    const totalKm = pathLength * scale / 1000;
+    const step = WELCOME_MARKER_STEPS_KM.find(s => totalKm / s <= 6) || WELCOME_MARKER_STEPS_KM[WELCOME_MARKER_STEPS_KM.length - 1];
+    ctx.font = '500 10px "JetBrains Mono", monospace';
+    ctx.textBaseline = 'alphabetic';
+    // A marker right at the finish would sit on the finish dot
+    for (let km = step; km < totalKm - step * 0.3; km += step) {
+        const target = km * 1000 / scale;
+        const i = along.findIndex(d => d >= target);
+        if (i < 1 || i - 1 < keep.first || i > keep.last) continue;
+        const t = (target - along[i - 1]) / ((along[i] - along[i - 1]) || 1);
+        const p = project([
+            coords[i - 1][0] + (coords[i][0] - coords[i - 1][0]) * t,
+            coords[i - 1][1] + (coords[i][1] - coords[i - 1][1]) * t
+        ]);
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], 3.5, 0, 2 * Math.PI);
+        ctx.fillStyle = '#070a13';
+        ctx.fill();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.stroke();
+        const label = `${km} km`;
+        const labelWidth = ctx.measureText(label).width;
+        // Keep the label inside the map
+        const lx = p[0] + 8 + labelWidth > width - 6 ? p[0] - 8 - labelWidth : p[0] + 8;
+        ctx.fillStyle = 'rgba(7, 10, 19, 0.75)';
+        ctx.fillRect(lx - 3, p[1] - 17, labelWidth + 6, 14);
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText(label, lx, p[1] - 6);
+    }
+
+    dot(points[0], '#00f0ff', 5);
+    dot(points[points.length - 1], '#9333ea', 5);
+}
+
+async function openWelcomeActivity(activity) {
+    if (activity.route_id) {
+        await selectRoute(activity.route_id);
+    } else if (activitiesList.some(a => a.id === activity.id)) {
+        selectActivity(activity.id);
+    }
+}
+
+async function playWelcomeRoute() {
+    const latest = welcomeData && welcomeData.latest;
+    if (!latest || !latest.route_id) return;
+    await selectRoute(latest.route_id);
+    if (currentRoute && currentRoute.id === latest.route_id && !isPlaying) toggleAnimation();
+}
+
+// A small trend line; the viewBox is stretched to the tile's width
+function sparklineSvg(series) {
+    const values = (series || []).map(p => p.value).filter(v => v !== null && v !== undefined);
+    if (values.length < 2) return '';
+    const W = 200, H = 30, pad = 3;
+    const min = Math.min(...values), max = Math.max(...values);
+    const x = i => (i / (values.length - 1)) * W;
+    const y = v => pad + (1 - (v - min) / ((max - min) || 1)) * (H - pad * 2);
+    const line = values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+    return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <path d="${line} L${W} ${H} L0 ${H} Z" fill="rgba(0,240,255,0.08)"/>
+        <path d="${line}" fill="none" stroke="#00f0ff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    </svg>`;
+}
+
+// Form zones as Intervals.icu names them
+function formZone(form) {
+    if (form > 25) return ['Transition', 'warn'];
+    if (form > 5) return ['Fresh', 'info'];
+    if (form >= -10) return ['Grey zone', 'info'];
+    if (form >= -30) return ['Optimal', 'good'];
+    return ['High risk', 'bad'];
+}
+
+function signed(n, digits = 0) {
+    const rounded = Number(n.toFixed(digits));
+    return `${rounded > 0 ? '+' : rounded < 0 ? '−' : ''}${Math.abs(rounded).toFixed(digits)}`;
+}
+
+function renderWelcomeRail(data) {
+    const tiles = [];
+    const f = data.fitness;
+    if (f) {
+        const [zone, cls] = formZone(f.form);
+        tiles.push(`<span class="welcome-label">Form</span>
+            <span class="welcome-big glow">${signed(f.form)}</span>
+            <span class="welcome-pill ${cls}">${zone}</span>`);
+        const ramp = hasValue(f.ramp_rate) ? `Ramp ${signed(f.ramp_rate, 1)} per week` : `Fatigue ${Math.round(f.atl)}`;
+        tiles.push(`<span class="welcome-label">Fitness</span>
+            <span class="welcome-big">${Math.round(f.ctl)}</span>
+            ${sparklineSvg(f.ctl_series)}
+            <span class="welcome-sub">${ramp}</span>`);
+    }
+    const r = data.recovery;
+    [['hrv', 'HRV', 'ms'], ['resting_hr', 'Resting HR', 'bpm']].forEach(([key, label, unit]) => {
+        const m = r && r[key];
+        if (!m) return;
+        const diff = Math.round(m.value - m.avg7);
+        const vs = diff ? `${diff > 0 ? '▲' : '▼'} ${Math.abs(diff)} vs 7-day avg` : 'Same as 7-day avg';
+        tiles.push(`<span class="welcome-label">${label}</span>
+            <span class="welcome-big">${Math.round(m.value)}<small>${unit}</small></span>
+            ${sparklineSvg(m.series)}
+            <span class="welcome-sub">${vs}</span>`);
+    });
+    const week = data.last_seven_days;
+    if (week && week.sessions) {
+        tiles.push(`<span class="welcome-label">Last 7 days</span>
+            <span class="welcome-big">${Math.round(week.load) || week.sessions}<small>${week.load ? 'load' : 'sessions'}</small></span>
+            <span class="welcome-sub">${week.sessions} ${week.sessions === 1 ? 'session' : 'sessions'} · ${hoursMinutes(week.duration)} h</span>`);
+    }
+    document.getElementById('welcome-rail').innerHTML = tiles.map(t => `<div class="welcome-panel">${t}</div>`).join('');
+}
+
+function welcomeActivityMeta(a) {
+    const parts = [formatActivityDate(a)];
+    if (a.distance > 0) parts.push(`${(a.distance / 1000).toFixed(1)} km`);
+    const time = a.moving_time || a.duration;
+    if (time) parts.push(shortDuration(time));
+    if (hasValue(a.avg_hr)) parts.push(`${Math.round(a.avg_hr)} bpm`);
+    return parts.join(' · ');
+}
+
+function renderWelcomeRecent(activities) {
+    const box = document.getElementById('welcome-recent');
+    if (!activities.length) {
+        box.innerHTML = '<p class="welcome-none">No earlier workouts yet.</p>';
+        return;
+    }
+    box.innerHTML = activities.map((a, i) => `
+        <button type="button" class="welcome-row" data-index="${i}">
+            <span class="welcome-sport ${getSportCategory(a.sport_type)}">${sportIconSvg(a.sport_type, 18)}</span>
+            <span style="min-width:0">
+                <span class="welcome-row-name" style="display:block">${escapeHTML(a.name || formatSportLabel(a.sport_type))}</span>
+                <span class="welcome-row-meta" style="display:block">${escapeHTML(welcomeActivityMeta(a))}</span>
+            </span>
+            <span class="welcome-row-load">${hasValue(a.training_load) ? `${Math.round(a.training_load)}<small>LOAD</small>` : ''}</span>
+        </button>`).join('');
+    box.querySelectorAll('.welcome-row').forEach(row => {
+        row.addEventListener('click', () => openWelcomeActivity(activities[Number(row.dataset.index)]));
+    });
+}
+
+function formatEventTime(stamp) {
+    const ts = parseUtcTimestamp(stamp);
+    if (ts === null) return '';
+    const minutes = Math.round((Date.now() - ts) / 60000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes} min ago`;
+    if (minutes < 24 * 60) return `${Math.round(minutes / 60)} h ago`;
+    const date = new Date(ts);
+    if (minutes < 6 * 24 * 60) return date.toLocaleDateString(undefined, { weekday: 'short' });
+    return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
+
+function renderWelcomeEvents(events) {
+    const box = document.getElementById('welcome-events');
+    if (!events.length) {
+        box.innerHTML = '<p class="welcome-none">Syncs, library indexing and coach conversations will show up here.</p>';
+        return;
+    }
+    box.innerHTML = events.map(e => `
+        <div class="welcome-event">
+            <span class="welcome-event-dot ${escapeHTML(e.kind)}"></span>
+            <div style="min-width:0">
+                <div class="welcome-event-title">${escapeHTML(e.title)}</div>
+                <div class="welcome-event-detail">${escapeHTML(e.detail)}</div>
+            </div>
+            <span class="welcome-event-time">${escapeHTML(formatEventTime(e.time))}</span>
+        </div>`).join('');
+}
+
+// --- The coach's note ---
+
+async function loadCoachNote(refresh = false) {
+    clearTimeout(welcomeNotePoll);
+    if (!currentUser) return;
+    const seq = welcomeSeq;
+    try {
+        const res = refresh
+            ? await fetch('/api/coach/daily-note/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ date: localDateISO() })
+            })
+            : await fetch(`/api/coach/daily-note?date=${localDateISO()}`);
+        const note = await res.json();
+        if (seq !== welcomeSeq) return;
+        if (!res.ok) throw new Error(note.error || `HTTP ${res.status}`);
+        renderCoachNote(note);
+        if (note.status === 'generating') {
+            welcomeNotePoll = setTimeout(() => loadCoachNote(), WELCOME_NOTE_POLL_MS);
+        }
+    } catch (err) {
+        console.error('Could not load the coach note', err);
+    }
+}
+
+function renderCoachNote(note) {
+    const panel = document.getElementById('welcome-coach-note');
+    const text = document.getElementById('welcome-coach-text');
+    const followup = document.getElementById('welcome-coach-followup-btn');
+    const refresh = document.getElementById('welcome-coach-refresh-btn');
+    panel.classList.toggle('hidden', note.status === 'unavailable');
+    text.classList.toggle('pending', note.status === 'generating');
+    text.classList.toggle('failed', note.status === 'failed');
+    followup.classList.toggle('hidden', note.status !== 'ready');
+    refresh.classList.toggle('hidden', note.status === 'generating' || note.status === 'unavailable');
+    refresh.textContent = note.status === 'failed' ? 'Try again' : 'Write a new note';
+    if (note.status === 'generating') {
+        text.textContent = 'Your coach is going through your latest training to write today\'s note. This can take a few minutes.';
+    } else if (note.status === 'failed') {
+        text.textContent = `The coach couldn't write today's note. ${note.error || ''}`.trim();
+    } else if (note.status === 'ready') {
+        text.innerHTML = renderCoachMarkdown(note.content);
+    }
+}
+
+async function discussCoachNote() {
+    try {
+        const res = await fetch('/api/coach/daily-note/discuss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date: localDateISO() })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not open the conversation.');
+        await openCoachPanel();
+        await openCoachConversation(data.id);
+    } catch (err) {
         alert(err.message);
     }
 }

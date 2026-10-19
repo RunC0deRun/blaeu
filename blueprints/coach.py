@@ -1,7 +1,7 @@
 import json
 import logging
 
-from flask import Blueprint, Response, jsonify, request, stream_with_context
+from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 
 from db import (
     get_user_by_id, get_coach_profile, save_coach_profile, COACH_PROFILE_FIELDS,
@@ -9,7 +9,7 @@ from db import (
     get_chat_messages, add_chat_message, get_db,
 )
 from utils import get_current_user_id, rate_limit
-from coach import agent, llm
+from coach import agent, daily_note, llm
 from coach.context import build_messages, ContextTooSmall
 from coach.settings import (
     get_llm_config, public_llm_config, is_configured, save_llm_settings, preview_llm_config,
@@ -306,3 +306,49 @@ def send_message(conversation_id):
         'Cache-Control': 'no-cache',
         'X-Accel-Buffering': 'no',  # don't let a reverse proxy buffer the stream
     })
+
+
+# --- Daily note on the welcome screen ------------------------------------------------
+
+def _serialize_note(note):
+    if note is None:
+        return {'status': 'unavailable'}
+    return {k: note.get(k) for k in ('date', 'status', 'content', 'model', 'error', 'updated_at')}
+
+
+@coach_bp.route('/api/coach/daily-note', methods=['GET'])
+def get_daily_note_route():
+    """The day's note; starts generating it in the background when needed (status 'generating')."""
+    user_id, error = _require_user()
+    if error:
+        return error
+    day = daily_note.parse_day(request.args.get('date'))
+    note = daily_note.get_or_start(current_app._get_current_object(), user_id, day)
+    return jsonify(_serialize_note(note))
+
+
+@coach_bp.route('/api/coach/daily-note/refresh', methods=['POST'])
+@rate_limit(limit=5, period=60)
+def refresh_daily_note():
+    user_id, error = _require_user()
+    if error:
+        return error
+    day = daily_note.parse_day((request.json or {}).get('date'))
+    note = daily_note.get_or_start(current_app._get_current_object(), user_id, day, refresh=True)
+    if note is None:
+        return jsonify({'error': 'The AI coach is not set up yet. Ask an administrator to configure it.'}), 503
+    return jsonify(_serialize_note(note))
+
+
+@coach_bp.route('/api/coach/daily-note/discuss', methods=['POST'])
+def discuss_daily_note():
+    """Opens a conversation that starts with the note, so the athlete can ask follow-up questions."""
+    user_id, error = _require_user()
+    if error:
+        return error
+    day = daily_note.parse_day((request.json or {}).get('date'))
+    conversation_id = daily_note.discuss(user_id, day)
+    if conversation_id is None:
+        return jsonify({'error': "Today's note isn't ready yet."}), 409
+    conversation = get_conversation(conversation_id, user_id)
+    return jsonify({k: conversation[k] for k in ('id', 'title', 'created_at', 'updated_at')})

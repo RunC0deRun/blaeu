@@ -17,7 +17,7 @@
     <script src="/static/vendor/leaflet/leaflet.js"></script>
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/styles.css?v=10">
+    <link rel="stylesheet" href="/static/css/styles.css?v=11">
 </head>
 <body>
     <div class="app-container">
@@ -160,14 +160,83 @@
 
             <!-- Central Dashboard View -->
             <div class="dashboard-view" id="dashboard-view">
+                <div class="dashboard-tabs">
+                    <div class="dashboard-tablist" role="tablist" aria-label="Home">
+                        <button type="button" role="tab" class="dashboard-tab active" id="dashboard-tab-welcome" aria-selected="true" aria-controls="welcome-view">Welcome</button>
+                        <button type="button" role="tab" class="dashboard-tab" id="dashboard-tab-activities" aria-selected="false" aria-controls="activities-overview" tabindex="-1">All activities</button>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-primary coach-open-btn hidden" id="coach-open-btn" aria-controls="coach-panel" aria-expanded="false">
+                        <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align: middle; margin-right: 4px; position: relative; top: -1px;"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM7 9h10v2H7V9zm6 5H7v-2h6v2zm4-6H7V6h10v2z" fill="currentColor"/></svg>
+                        AI Coach
+                    </button>
+                </div>
+
+                <!-- Welcome: the latest workout, the coach's note, key numbers and recent events -->
+                <section class="welcome-view" id="welcome-view" role="tabpanel" aria-labelledby="dashboard-tab-welcome">
+                    <div class="welcome-greet">
+                        <span class="welcome-date" id="welcome-date"></span>
+                        <h2 class="welcome-greeting" id="welcome-greeting">Welcome</h2>
+                    </div>
+
+                    <div class="welcome-empty hidden" id="welcome-empty">
+                        <h3>Your log is empty</h3>
+                        <p>Import a GPX file from the sidebar, or connect Garmin Connect or Intervals.icu in Settings, and your latest workout will show up here.</p>
+                    </div>
+
+                    <div class="welcome-panel welcome-spotlight hidden" id="welcome-spotlight">
+                        <div class="welcome-map-pane" id="welcome-map-pane">
+                            <canvas class="welcome-map-canvas" id="welcome-map-canvas" aria-label="Route of the latest workout"></canvas>
+                            <div class="welcome-mapless hidden" id="welcome-mapless"></div>
+                            <span class="welcome-map-chip hidden" id="welcome-privacy-chip"></span>
+                            <div class="welcome-map-actions">
+                                <button type="button" class="btn btn-sm btn-primary" id="welcome-play-btn">▶ Play route</button>
+                                <button type="button" class="btn btn-sm btn-outline" id="welcome-open-btn">Open</button>
+                            </div>
+                        </div>
+                        <div class="welcome-spot-body">
+                            <div>
+                                <div class="welcome-spot-meta" id="welcome-spot-meta"></div>
+                                <h3 class="welcome-spot-title" id="welcome-spot-title"></h3>
+                            </div>
+                            <div class="welcome-spot-stats" id="welcome-spot-stats"></div>
+                            <div class="welcome-zones hidden" id="welcome-zones"></div>
+                            <p class="welcome-compare hidden" id="welcome-compare"></p>
+                        </div>
+                    </div>
+
+                    <div class="welcome-panel welcome-coach-note hidden" id="welcome-coach-note" aria-live="polite">
+                        <div class="welcome-coach-avatar" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM7 9h10v2H7V9zm6 5H7v-2h6v2zm4-6H7V6h10v2z" fill="currentColor"/></svg>
+                        </div>
+                        <div class="welcome-coach-body">
+                            <div class="welcome-coach-tag">Coach · today</div>
+                            <div class="welcome-coach-text" id="welcome-coach-text"></div>
+                            <div class="welcome-coach-actions">
+                                <button type="button" class="btn btn-sm btn-primary hidden" id="welcome-coach-followup-btn">Ask a follow-up</button>
+                                <button type="button" class="btn btn-sm btn-outline hidden" id="welcome-coach-refresh-btn">Write a new note</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="welcome-rail" id="welcome-rail"></div>
+
+                    <div class="welcome-bottom">
+                        <div class="welcome-panel">
+                            <div class="welcome-panel-title">Earlier activities <button type="button" class="welcome-link" id="welcome-all-activities-btn">All activities</button></div>
+                            <div class="welcome-rows" id="welcome-recent"></div>
+                        </div>
+                        <div class="welcome-panel">
+                            <div class="welcome-panel-title">Background activity</div>
+                            <div class="welcome-feed" id="welcome-events"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="activities-overview hidden" id="activities-overview" role="tabpanel" aria-labelledby="dashboard-tab-activities">
                 <div class="dashboard-header-section">
                     <div class="dashboard-header-main">
                         <h2 class="dashboard-headline">Activities Dashboard</h2>
                         <p class="dashboard-subtitle" id="dashboard-activity-count">0 Activities Loaded</p>
-                        <button type="button" class="btn btn-sm btn-primary coach-open-btn hidden" id="coach-open-btn" aria-controls="coach-panel" aria-expanded="false">
-                            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align: middle; margin-right: 4px; position: relative; top: -1px;"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM7 9h10v2H7V9zm6 5H7v-2h6v2zm4-6H7V6h10v2z" fill="currentColor"/></svg>
-                            AI Coach
-                        </button>
                     </div>
                     <!-- Aggregate Statistics Banner -->
                     <div class="dashboard-summary-banner">
@@ -188,6 +257,7 @@
                 <!-- Dashboard Grid -->
                 <div class="dashboard-container" id="dashboard-grid">
                     <!-- Dynamic Activity Cards will be populated here -->
+                </div>
                 </div>
             </div>
 
@@ -1060,6 +1130,6 @@
     </div>
 
     <!-- Main Frontend Script -->
-    <script src="/static/js/app.js?v=14"></script>
+    <script src="/static/js/app.js?v=19"></script>
 </body>
 </html>

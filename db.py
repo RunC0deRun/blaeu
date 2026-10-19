@@ -450,6 +450,25 @@ def init_db():
         FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
     );
     """)
+    # The coach's note on the welcome screen: one per user and day, regenerated when a newer
+    # workout arrives. status is 'generating', 'ready' or 'failed'.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS coach_daily_notes (
+        user_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        status TEXT NOT NULL,
+        content TEXT,
+        model TEXT,
+        error TEXT,
+        based_on_activity_id INTEGER,
+        conversation_id INTEGER,
+        locked_until TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, date),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    """)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS library_chunks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1783,6 +1802,69 @@ def add_chat_message(conversation_id, role, content, reasoning=None, model=None,
         cursor.execute("UPDATE chat_conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         conn.commit()
         return message_id
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# Helper Functions for the Coach's Daily Note
+def get_daily_note(user_id, date):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM coach_daily_notes WHERE user_id = ? AND date = ?", (user_id, date))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def claim_daily_note(user_id, date, based_on_activity_id, now_str, lease_until_str):
+    """
+    Marks the day's note as generating, unless another process holds the lease. Returns True
+    when this caller should generate it.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO coach_daily_notes (user_id, date, status, based_on_activity_id, locked_until, created_at, updated_at)
+            VALUES (?, ?, 'generating', ?, ?, ?, ?)
+            ON CONFLICT (user_id, date) DO UPDATE SET
+                status = 'generating', error = NULL, conversation_id = NULL,
+                based_on_activity_id = excluded.based_on_activity_id,
+                locked_until = excluded.locked_until, updated_at = excluded.updated_at
+            WHERE coach_daily_notes.locked_until IS NULL OR coach_daily_notes.locked_until <= ?
+        """, (user_id, date, based_on_activity_id, lease_until_str, now_str, now_str, now_str))
+        conn.commit()
+        return cursor.rowcount == 1
+    except sqlite3.Error:
+        conn.rollback()
+        return False
+    finally:
+        conn.close()
+
+def finish_daily_note(user_id, date, status, content=None, model=None, error=None):
+    now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE coach_daily_notes SET status = ?, content = ?, model = ?, error = ?, locked_until = NULL, updated_at = ?
+            WHERE user_id = ? AND date = ?
+        """, (status, content, model, error, now, user_id, date))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def set_daily_note_conversation(user_id, date, conversation_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE coach_daily_notes SET conversation_id = ? WHERE user_id = ? AND date = ?",
+                       (conversation_id, user_id, date))
+        conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
         raise e

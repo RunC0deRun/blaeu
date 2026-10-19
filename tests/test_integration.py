@@ -109,8 +109,14 @@ def test_end_to_end_flow(server, test_gpx_path):
         
         # Click upload button
         page.click('#upload-btn')
-        
+
+        # The welcome screen shows the new route as the latest workout, with its map
+        page.wait_for_selector('#welcome-spotlight:not(.hidden)', timeout=5000)
+        assert page.text_content('#welcome-spot-title').strip()
+        assert page.locator('#welcome-map-canvas').is_visible()
+
         # Click the newly uploaded route card to open it
+        page.click('#dashboard-tab-activities')
         page.wait_for_selector('.activity-card', timeout=5000)
         page.click('.activity-card')
         
@@ -178,6 +184,7 @@ def test_privacy_zone_cropping(server, test_gpx_path):
         page.click('#upload-btn')
         
         # Click the newly uploaded route card to open it
+        page.click('#dashboard-tab-activities')
         page.wait_for_selector('.activity-card', timeout=5000)
         page.click('.activity-card')
         
@@ -268,6 +275,7 @@ def test_mapless_activities_render_without_errors(server, test_gpx_path):
         page.fill('#login-password', 'Password123')
         page.click('#login-submit-btn')
         page.wait_for_selector('#login-modal', state="hidden")
+        page.click('#dashboard-tab-activities')
 
         # A route with GPS, so map mode can be left for a map-less activity
         if page.locator('.activity-card:not(.activity-card-mapless)').count() == 0:
@@ -288,6 +296,8 @@ def test_mapless_activities_render_without_errors(server, test_gpx_path):
             'is_indoor': True,
         })
         page.reload()
+        page.wait_for_selector('#login-modal', state="hidden")
+        page.click('#dashboard-tab-activities')
         page.wait_for_selector('.activity-card-mapless', timeout=5000)
 
         # Cards: no miniature canvas, sport label and stats instead

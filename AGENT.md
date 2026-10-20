@@ -88,6 +88,7 @@ Provides stunning map backdrops using OpenStreetMap:
 - Translates coordinates from EPSG:4326 to EPSG:3857 (Web Mercator) to achieve mathematically perfect alignment with Leaflet vectors.
 - Clamps aspect ratios (0.5 to 2.0) and adds padding to bounding boxes.
 - Queries street networks, water bodies, and parks using OSMnx, rendering them using custom thematic color configurations (loaded from `/static/themes/*.json`) via `matplotlib` at 300 DPI.
+- **Map render queue**: Background renders in the user's default poster style go through the `map_render_jobs` table, so the queue survives restarts and is shared by all gunicorn workers. Each process runs a worker (`utils.process_next_map_render`) that leases one job at a time; renders are spaced out and the whole queue backs off when Overpass fails. The welcome screen queues every route without a rendered map (`POST /api/map-queue`) and tracks progress (`GET /api/map-queue`); dashboard cards with a rendered map show a map badge (`map_rendered` in `/api/routes`).
 
 
 ---

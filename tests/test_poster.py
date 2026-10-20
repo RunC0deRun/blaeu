@@ -375,56 +375,174 @@ def test_generate_poster_background_safe_zone(client, mock_gis):
     assert y_route_max <= y_max_l - 0.25 * height_m_l + 1.0
 
 
+def _upload(client, gpx=GPX_DATA_1, name='test_route.gpx'):
+    res = client.post('/api/upload', data={'file': (io.BytesIO(gpx.encode('utf-8')), name)},
+                      content_type='multipart/form-data')
+    assert res.status_code == 201
+    return json.loads(res.data)['id']
 
 
+class _Clock:
+    def __init__(self):
+        from datetime import datetime, timezone
+        self.now = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        from datetime import timedelta
+        self.now += timedelta(seconds=seconds)
 
 
-
-def test_poster_queue_backs_off_and_retries(monkeypatch):
+@pytest.fixture
+def clock(monkeypatch):
     import utils
-    from app import app as flask_app
+    c = _Clock()
+    monkeypatch.setattr(utils, '_utcnow', c)
+    return c
+
+
+def test_poster_queue_backs_off_and_retries(client, clock, monkeypatch):
+    import utils
     from poster_map import OSMNetworkError
 
+    route_id = _upload(client)
     calls = []
-    def fake_generate(route_id, user_id, theme_name):
-        calls.append(route_id)
+    def fake_generate(rid, user_id, theme_name):
+        calls.append(rid)
         if len(calls) <= 2:
             raise OSMNetworkError("Overpass refused the connection.")
-
-    sleeps = []
-    statuses = []
     monkeypatch.setattr(utils, '_generate_route_poster', fake_generate)
-    monkeypatch.setattr(utils, 'update_route_poster_status', lambda rid, st: statuses.append((rid, st['status'])))
-    monkeypatch.setattr(utils.time, 'sleep', lambda s: sleeps.append(s))
 
-    with flask_app.app_context():
-        utils.run_async_poster_generation(42, 1, 'noir')
-    utils._poster_queue.join()
+    utils.run_async_poster_generation(route_id, 1, 'noir')
 
-    # Two failures, then success on the third attempt
-    assert calls == [42, 42, 42]
-    # The wait before the second retry is double the wait before the first
-    assert len(sleeps) >= 2
-    assert sleeps[-1] == pytest.approx(2 * sleeps[-2], rel=0.01)
-    assert (42, 'failed') not in statuses
+    assert utils.process_next_map_render()
+    # The whole queue waits while the job backs off
+    assert not utils.process_next_map_render()
+    clock.advance(utils._backoff_delay(1))
+    assert utils.process_next_map_render()
+    clock.advance(utils._backoff_delay(1))
+    assert not utils.process_next_map_render()  # the second wait is twice as long
+    clock.advance(utils._backoff_delay(1))
+    assert utils.process_next_map_render()
+
+    assert calls == [route_id, route_id, route_id]
+    assert [j['status'] for j in db_jobs(1)] == ['done']
 
 
-def test_poster_queue_gives_up_after_max_attempts(monkeypatch):
+def db_jobs(user_id):
+    import db
+    return db.get_map_render_jobs(user_id)
+
+
+def test_poster_queue_gives_up_after_max_attempts(client, clock, monkeypatch):
     import utils
-    from app import app as flask_app
     from poster_map import OSMNetworkError
 
-    def always_fail(route_id, user_id, theme_name):
+    route_id = _upload(client)
+    def always_fail(rid, user_id, theme_name):
         raise OSMNetworkError("Overpass refused the connection.")
-
-    statuses = []
     monkeypatch.setattr(utils, '_generate_route_poster', always_fail)
-    monkeypatch.setattr(utils, 'update_route_poster_status', lambda rid, st: statuses.append((rid, st['status'])))
-    monkeypatch.setattr(utils.time, 'sleep', lambda s: None)
     monkeypatch.setattr(utils, 'POSTER_MAX_ATTEMPTS', 3)
 
-    with flask_app.app_context():
-        utils.run_async_poster_generation(43, 1, 'noir')
-    utils._poster_queue.join()
+    utils.run_async_poster_generation(route_id, 1, 'noir')
+    for _ in range(3):
+        assert utils.process_next_map_render()
+        clock.advance(utils.POSTER_BACKOFF_MAX)
+    assert not utils.process_next_map_render()
 
-    assert statuses[-1] == (43, 'failed')
+    job = db_jobs(1)[0]
+    assert job['status'] == 'failed' and job['attempts'] == 3
+    assert json.loads(client.get(f'/api/routes/{route_id}').data)['poster_status']['status'] == 'failed'
+
+
+def test_map_queue_fills_with_unrendered_routes(client, clock, mock_gis):
+    import utils
+
+    # With live dark tiles there is nothing to render
+    first = _upload(client)
+    assert json.loads(client.post('/api/map-queue').data)['added'] == 0
+
+    with patch('app.run_async_poster_generation'):
+        client.put('/api/auth/default-map-style', json={'default_map_style': 'noir'})
+    status = json.loads(client.get('/api/map-queue').data)
+    assert status['theme'] == 'noir' and status['queued'] == 1 and status['rendered'] == 0
+    # Filling again doesn't queue the same route twice
+    assert json.loads(client.post('/api/map-queue').data)['added'] == 0
+
+    assert utils.process_next_map_render()
+    status = json.loads(client.get('/api/map-queue').data)
+    assert status == {**status, 'queued': 0, 'done': 1, 'rendered': 1, 'routes': 1, 'current': None}
+    route = next(r for r in json.loads(client.get('/api/routes').data) if r['id'] == first)
+    assert route['map_rendered'] is True
+
+    # A rendered map no longer counts once the default style changes
+    client.put('/api/auth/default-map-style', json={'default_map_style': 'blueprint'})
+    route = next(r for r in json.loads(client.get('/api/routes').data) if r['id'] == first)
+    assert route['map_rendered'] is False
+    status = json.loads(client.get('/api/map-queue').data)
+    assert status['queued'] == 1 and status['done'] == 0  # a new batch
+
+    # Switching back to live tiles drops the waiting renders
+    client.put('/api/auth/default-map-style', json={'default_map_style': 'dark'})
+    status = json.loads(client.get('/api/map-queue').data)
+    assert status['theme'] is None and status['queued'] == 0
+    assert not utils.process_next_map_render()
+
+
+def test_map_queue_renders_one_at_a_time_newest_first(client, clock, monkeypatch):
+    import utils
+
+    older = _upload(client)
+    newer = _upload(client, GPX_DATA_1.replace('2026-05-25', '2026-06-25'), 'newer.gpx')
+    rendered = []
+    monkeypatch.setattr(utils, '_generate_route_poster', lambda rid, uid, theme: rendered.append(rid))
+
+    utils.run_async_poster_generation(older, 1, 'noir')
+    utils.run_async_poster_generation(newer, 1, 'noir')
+    assert utils.process_next_map_render()
+    # The pause between renders holds the next one back
+    assert not utils.process_next_map_render()
+    clock.advance(utils.OVERPASS_MIN_INTERVAL)
+    assert utils.process_next_map_render()
+    assert rendered == [newer, older]
+
+
+def test_map_queue_retries_a_render_whose_worker_died(client, clock, monkeypatch):
+    import db
+    import utils
+
+    route_id = _upload(client)
+    utils.run_async_poster_generation(route_id, 1, 'noir')
+    assert db.claim_next_map_render(utils._fmt(clock()), utils._fmt(clock()))  # lease ends right away
+    clock.advance(1)
+    rendered = []
+    monkeypatch.setattr(utils, '_generate_route_poster', lambda rid, uid, theme: rendered.append(rid))
+    assert utils.process_next_map_render()
+    assert rendered == [route_id]
+
+
+def test_map_queue_requires_login(clean_env):
+    unauthed = clean_env.test_client()
+    assert unauthed.get('/api/map-queue').status_code == 401
+    assert unauthed.post('/api/map-queue').status_code == 401
+
+
+def test_map_with_missing_image_is_not_rendered(client, clock, mock_gis):
+    import db
+    import utils
+
+    route_id = _upload(client)
+    client.put('/api/auth/default-map-style', json={'default_map_style': 'noir'})
+    assert utils.process_next_map_render()
+    route = next(r for r in json.loads(client.get('/api/routes').data) if r['id'] == route_id)
+    assert route['map_rendered'] is True
+
+    # The database still says completed, but the image is gone (cleared cache, copied data)
+    os.remove(os.path.join(db.poster_maps_dir(), os.path.basename(route['poster_status']['image_url'])))
+    route = next(r for r in json.loads(client.get('/api/routes').data) if r['id'] == route_id)
+    assert route['map_rendered'] is False and route['poster_status'] is None
+    # The map view renders it again instead of showing a blank background
+    assert json.loads(client.get(f'/api/routes/{route_id}').data)['poster_status'] is None
+    assert json.loads(client.post('/api/map-queue').data)['added'] == 1

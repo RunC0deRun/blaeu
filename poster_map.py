@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import osmnx as ox
 from shapely.geometry import Point
 from pyproj import Transformer
-from db import DATA_DIR, update_route_poster_status
+from db import DATA_DIR, poster_maps_dir, update_route_poster_status
 import requests
 import numpy as np
 import matplotlib.colors as mcolors
@@ -160,9 +160,6 @@ def create_gradient_fade(ax, color, location="bottom", zorder=10):
 
 
 
-# Set up directories
-POSTER_MAPS_DIR = os.path.join(DATA_DIR, 'poster_maps')
-os.makedirs(POSTER_MAPS_DIR, exist_ok=True)
 
 # Configure OSMnx settings
 ox.settings.use_cache = True
@@ -296,7 +293,7 @@ def generate_poster_background(route_id, lat_min, lat_max, lon_min, lon_max, the
     bbox_str = f"{lat_min:.6f}_{lat_max:.6f}_{lon_min:.6f}_{lon_max:.6f}_{label_str}_{aspect_ratio}"
     bbox_hash = hashlib.md5(bbox_str.encode()).hexdigest()[:8]
     filename = f"{route_id}_{theme_name}_{bbox_hash}.png"
-    output_path = os.path.join(POSTER_MAPS_DIR, filename)
+    output_path = os.path.join(poster_maps_dir(), filename)
     
     # Load theme colors
     base_dir = os.path.dirname(os.path.abspath(__file__))

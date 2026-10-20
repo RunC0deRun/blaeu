@@ -20,6 +20,12 @@ def get_timezone_abbr(created_at_str, timezone_name):
 DATA_DIR = os.getenv('DATA_DIR', './data')
 DB_PATH = os.path.join(DATA_DIR, 'blaeu.db')
 
+def poster_maps_dir():
+    """Where rendered poster map backgrounds are stored."""
+    path = os.path.join(DATA_DIR, 'poster_maps')
+    os.makedirs(path, exist_ok=True)
+    return path
+
 def get_db():
     os.makedirs(DATA_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -367,6 +373,28 @@ def init_db():
     );
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sync_jobs_status ON sync_jobs(status);")
+
+    # Create Map Render Jobs Table: the queue of poster map backgrounds still to render. It lives
+    # in the database so it survives restarts and all gunicorn workers share one queue.
+    # A finished job is kept as 'done' (counting towards the progress shown on the welcome
+    # screen) until the user's next batch starts; its lease doubles as the pause between renders.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS map_render_jobs (
+        route_id INTEGER PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        theme TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        attempts INTEGER DEFAULT 0,
+        last_error TEXT,
+        next_attempt_at TEXT,
+        locked_until TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_map_render_jobs_user ON map_render_jobs(user_id, status);")
 
     # Create App Settings Table: instance-wide key/value settings managed by admins (e.g. the LLM endpoint)
     cursor.execute("""
@@ -1379,6 +1407,141 @@ def update_route_poster_status(route_id, poster_status_dict):
     try:
         status_json = json.dumps(poster_status_dict) if poster_status_dict else None
         cursor.execute("UPDATE routes SET poster_status = ? WHERE id = ?", (status_json, route_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def enqueue_map_render(route_id, user_id, theme):
+    """
+    Queues a route's map for rendering, or requeues it with a new theme. A job that is being
+    rendered right now is left alone.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        _start_new_render_batch(cursor, user_id)
+        cursor.execute("""
+            INSERT INTO map_render_jobs (route_id, user_id, theme) VALUES (?, ?, ?)
+            ON CONFLICT(route_id) DO UPDATE SET
+                theme = excluded.theme, status = 'queued', attempts = 0, last_error = NULL,
+                next_attempt_at = NULL, locked_until = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE map_render_jobs.status != 'running'
+        """, (route_id, user_id, theme))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def _start_new_render_batch(cursor, user_id):
+    # Once a user's queue has run dry, the finished jobs of that batch no longer count
+    cursor.execute("""
+        DELETE FROM map_render_jobs WHERE user_id = ? AND status = 'done' AND NOT EXISTS (
+            SELECT 1 FROM map_render_jobs WHERE user_id = ? AND status IN ('queued', 'running'))
+    """, (user_id, user_id))
+
+def clear_map_render_queue(user_id):
+    """Drops the user's maps that are still waiting to render."""
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM map_render_jobs WHERE user_id = ? AND status = 'queued'", (user_id,))
+        cursor.execute("""
+            UPDATE routes SET poster_status = NULL
+            WHERE user_id = ? AND json_extract(poster_status, '$.status') = 'queued'
+        """, (user_id,))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_map_render_jobs(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT j.*, r.name AS route_name, r.poster_status FROM map_render_jobs j
+        JOIN routes r ON r.id = j.route_id
+        WHERE j.user_id = ? ORDER BY r.created_at DESC, j.route_id DESC
+    """, (user_id,))
+    rows = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return rows
+
+def get_user_route_posters(user_id):
+    """The poster status of each of the user's own routes, newest first."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, poster_status FROM routes WHERE user_id = ? ORDER BY created_at DESC, id DESC", (user_id,))
+    rows = []
+    for row in cursor.fetchall():
+        try:
+            poster = json.loads(row['poster_status']) if row['poster_status'] else None
+        except (TypeError, ValueError):
+            poster = None
+        rows.append({'id': row['id'], 'poster_status': poster})
+    conn.close()
+    return rows
+
+def claim_next_map_render(now_str, lease_until_str):
+    """
+    Leases the next map to render, across all users and processes. Only one map renders at a
+    time, and none while a job is backing off after an Overpass failure or the pause after the
+    previous render is still running. A running job whose lease expired (its worker died) is
+    picked up again. Returns the job, or None.
+    """
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("BEGIN IMMEDIATE")
+        cursor.execute("""
+            SELECT 1 FROM map_render_jobs
+            WHERE (status IN ('running', 'done', 'failed') AND locked_until > ?)
+               OR (status = 'queued' AND attempts > 0 AND next_attempt_at > ?)
+            LIMIT 1
+        """, (now_str, now_str))
+        if cursor.fetchone():
+            conn.rollback()
+            return None
+        cursor.execute("""
+            SELECT j.* FROM map_render_jobs j JOIN routes r ON r.id = j.route_id
+            WHERE j.status = 'queued' OR (j.status = 'running' AND (j.locked_until IS NULL OR j.locked_until <= ?))
+            ORDER BY r.created_at DESC, j.route_id DESC LIMIT 1
+        """, (now_str,))
+        job = cursor.fetchone()
+        if not job:
+            conn.rollback()
+            return None
+        cursor.execute("""
+            UPDATE map_render_jobs SET status = 'running', locked_until = ?, updated_at = ?
+            WHERE route_id = ?
+        """, (lease_until_str, now_str, job['route_id']))
+        conn.commit()
+        return dict(job)
+    except sqlite3.Error:
+        conn.rollback()
+        return None
+    finally:
+        conn.close()
+
+MAP_RENDER_JOB_UPDATABLE = {'status', 'attempts', 'last_error', 'next_attempt_at', 'locked_until'}
+
+def update_map_render_job(route_id, **fields):
+    unknown = set(fields) - MAP_RENDER_JOB_UPDATABLE
+    if unknown:
+        raise ValueError(f"Unknown map render job fields: {sorted(unknown)}")
+    fields['updated_at'] = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    assignments = ', '.join(f"{k} = ?" for k in fields)
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"UPDATE map_render_jobs SET {assignments} WHERE route_id = ?", (*fields.values(), route_id))
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()

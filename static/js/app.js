@@ -480,33 +480,121 @@ async function loadRoutes() {
     }
 }
 
+// While maps are waiting in the render queue, poll its (small) status and reload the routes
+// only when a render moved on, so cards show progress and the rendered-map badge
 function checkAndStartPolling() {
-    const isGenerating = routesList.some(r => r.poster_status && r.poster_status.status === 'generating');
-    if (isGenerating) {
-        if (!posterPollingInterval) {
-            posterPollingInterval = setInterval(async () => {
-                try {
-                    const res = await fetch('/api/routes');
-                    routesList = await res.json();
-                    renderRoutesLedger();
-                    renderDashboardGrid();
-                    
-                    const stillGenerating = routesList.some(r => r.poster_status && r.poster_status.status === 'generating');
-                    if (!stillGenerating) {
-                        clearInterval(posterPollingInterval);
-                        posterPollingInterval = null;
-                    }
-                } catch (err) {
-                    console.error("Error polling routes", err);
-                }
-            }, 1000);
+    const pending = routesList.some(r => r.poster_status && ['queued', 'generating'].includes(r.poster_status.status));
+    if (pending && !posterPollingInterval) refreshMapQueue();
+}
+
+const MAP_QUEUE_POLL_MS = 3000;
+let mapQueueStatus = null;
+let mapQueueSeq = 0;
+
+function mapQueueSignature(status) {
+    if (!status) return '';
+    const current = status.current || {};
+    return [status.theme, status.rendered, status.queued, status.done, status.failed, current.route_id, current.progress].join('|');
+}
+
+async function refreshMapQueue(options = {}) {
+    clearTimeout(posterPollingInterval);
+    posterPollingInterval = null;
+    if (!currentUser) return;
+    const seq = ++mapQueueSeq;
+    try {
+        const res = options.fill || options.retryFailed
+            ? await fetch('/api/map-queue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ retry_failed: !!options.retryFailed })
+            })
+            : await fetch('/api/map-queue');
+        if (!res.ok || seq !== mapQueueSeq) return;
+        const status = await res.json();
+        const changed = mapQueueSignature(status) !== mapQueueSignature(mapQueueStatus);
+        const hadStatus = !!mapQueueStatus;
+        mapQueueStatus = status;
+        renderMapQueue(status);
+        if (changed && hadStatus) {
+            const routesRes = await fetch('/api/routes');
+            if (routesRes.ok) {
+                routesList = await routesRes.json();
+                renderRoutesLedger();
+                renderDashboardGrid();
+            }
         }
-    } else {
-        if (posterPollingInterval) {
-            clearInterval(posterPollingInterval);
-            posterPollingInterval = null;
+        if (status.queued > 0 && seq === mapQueueSeq) {
+            posterPollingInterval = setTimeout(refreshMapQueue, MAP_QUEUE_POLL_MS);
         }
+    } catch (err) {
+        console.error('Could not load the map render queue', err);
     }
+}
+
+const MAP_RENDER_STEPS = ['Starting', 'Loading street networks', 'Analyzing water bodies', 'Querying parks & greenery', 'Rendering poster layout'];
+
+function renderMapQueue(status) {
+    const box = document.getElementById('welcome-map-queue');
+    if (!box) return;
+    if (!status || !status.routes) {
+        box.classList.add('hidden');
+        return;
+    }
+    box.classList.remove('hidden');
+    const icon = mapRenderedIconSvg(14);
+
+    if (!status.theme) {
+        box.innerHTML = `
+            <div class="welcome-map-queue-head"><span class="welcome-map-queue-title">${icon} Map rendering</span></div>
+            <div class="welcome-map-queue-detail">Your maps use the live dark style, so there is nothing to render. Pick a poster style as your default map style to render a map for every activity.</div>`;
+        return;
+    }
+
+    const theme = (mapThemes.find(t => t.id === status.theme) || {}).name || status.theme;
+    const percent = Math.round(100 * status.rendered / status.routes);
+    let detail;
+    let warning = false;
+    if (status.current) {
+        const step = Math.min(status.current.progress || 0, MAP_RENDER_STEPS.length - 1);
+        detail = `Rendering “${escapeHTML(status.current.name || 'activity')}”: ${MAP_RENDER_STEPS[step].toLowerCase()} (step ${step + 1} of ${MAP_RENDER_STEPS.length})`;
+        const waiting = status.queued - 1;
+        if (waiting > 0) detail += ` · ${waiting} waiting`;
+    } else if (status.retry_at) {
+        warning = true;
+        detail = `Paused: OpenStreetMap could not be reached. Retrying ${escapeHTML(formatRetryTime(status.retry_at))}, ${status.queued} waiting`;
+    } else if (status.queued > 0) {
+        detail = `${status.queued} waiting to render`;
+    } else if (status.rendered === status.routes) {
+        detail = `Every activity has a ${escapeHTML(theme)} map`;
+    } else {
+        detail = 'Nothing waiting to render';
+    }
+    if (status.failed > 0) {
+        detail += ` · ${status.failed} could not be rendered <button type="button" class="welcome-link" id="welcome-map-queue-retry">Retry</button>`;
+    }
+
+    box.innerHTML = `
+        <div class="welcome-map-queue-head">
+            <span class="welcome-map-queue-title">${icon} Map rendering</span>
+            <span class="welcome-map-queue-count">${status.rendered} / ${status.routes}</span>
+        </div>
+        <div class="welcome-map-queue-bar" role="progressbar" aria-label="Activities with a rendered ${escapeHTML(theme)} map"
+             aria-valuemin="0" aria-valuemax="${status.routes}" aria-valuenow="${status.rendered}"><i style="width: ${percent}%"></i></div>
+        <div class="welcome-map-queue-detail${warning ? ' warning' : ''}">${detail}</div>`;
+    const retry = document.getElementById('welcome-map-queue-retry');
+    if (retry) retry.addEventListener('click', () => refreshMapQueue({ retryFailed: true }));
+}
+
+function formatRetryTime(stamp) {
+    const ts = parseUtcTimestamp(stamp);
+    if (ts === null) return 'soon';
+    const minutes = Math.ceil((ts - Date.now()) / 60000);
+    return minutes <= 1 ? 'in a minute' : `in ${minutes} min`;
+}
+
+function mapRenderedIconSvg(size) {
+    return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>`;
 }
 
 function renderRoutesLedger() {
@@ -1089,6 +1177,10 @@ function renderDashboardGrid() {
                 `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Public"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>` :
                 `<svg viewBox="0 0 24 24" width="12" height="12" style="vertical-align: middle; margin-right: 4px;" fill="currentColor" title="Private"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></svg>`;
     
+            const mapRenderedBadge = route.map_rendered
+                ? `<span class="map-rendered-badge" title="Map rendered" aria-label="Map rendered" role="img">${mapRenderedIconSvg(12)}</span>`
+                : '';
+
             const actionsHtml = route.is_owner ? `
                 <div class="activity-card-actions">
                     <button class="btn-icon btn-edit-route" data-route-id="${route.id}" title="Edit details">
@@ -1124,7 +1216,7 @@ function renderDashboardGrid() {
                     <div class="activity-card-body">
                         <div class="activity-card-time" style="display: flex; align-items: center; justify-content: space-between;">
                             <span>${formattedDate}</span>
-                            <span style="opacity: 0.7; display: inline-flex; align-items: center;">${privacyIcon}</span>
+                            <span style="display: inline-flex; align-items: center;">${mapRenderedBadge}<span style="opacity: 0.7; display: inline-flex; align-items: center;">${privacyIcon}</span></span>
                         </div>
                         <h3 class="activity-card-title" title="${escapeHTML(route.name)}">${escapeHTML(route.name)}</h3>
                         <p class="activity-card-desc">${escapeHTML(route.description || 'No description provided.')}</p>
@@ -5198,6 +5290,8 @@ async function loadWelcome() {
         console.error('Could not load the welcome screen', err);
     }
     loadCoachNote();
+    // Queues every activity that has no rendered map yet, then tracks the queue
+    refreshMapQueue({ fill: true });
 }
 
 function resetWelcome() {

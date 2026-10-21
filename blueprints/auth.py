@@ -8,7 +8,7 @@ from db import (
     get_users, backfill_ownerless_data, update_user_default_map_style,
     update_user_default_aspect_ratio
 )
-from utils import rate_limit, get_csrf_token, get_current_user_id
+from utils import rate_limit, get_csrf_token, get_current_user_id, queue_unrendered_maps
 
 logger = logging.getLogger('blaeu.auth')
 auth_bp = Blueprint('auth', __name__)
@@ -166,6 +166,8 @@ def update_default_style():
         
     try:
         update_user_default_map_style(user_id, default_style)
+        # Maps rendered in the old style or shape no longer count; render them again
+        queue_unrendered_maps(user_id)
         return jsonify({
             'success': True,
             'default_map_style': default_style
@@ -220,6 +222,8 @@ def update_default_aspect_ratio():
         
     try:
         update_user_default_aspect_ratio(user_id, default_aspect_ratio)
+        # Maps rendered in the old style or shape no longer count; render them again
+        queue_unrendered_maps(user_id)
         return jsonify({
             'success': True,
             'default_aspect_ratio': default_aspect_ratio

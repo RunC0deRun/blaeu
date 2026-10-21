@@ -24,7 +24,7 @@ if __name__ != '__main__':
 from flask import Flask, jsonify, render_template, session, request
 
 from db import init_db, DATA_DIR
-from utils import get_csrf_token, rate_limit_records, run_async_poster_generation
+from utils import get_csrf_token, rate_limit_records, run_async_poster_generation, start_map_render_worker
 
 GPX_STORE_DIR = os.path.join(DATA_DIR, 'gpx')
 TILES_CACHE_DIR = os.path.join(DATA_DIR, 'tiles_cache')
@@ -160,6 +160,9 @@ if AUTO_SYNC_DISABLED:
 auto_sync_thread = threading.Thread(target=auto_sync_worker_loop)
 auto_sync_thread.daemon = True
 auto_sync_thread.start()
+
+# Background worker: renders the poster maps waiting in the map render queue
+start_map_render_worker(app)
 
 @app.after_request
 def add_security_headers(response):

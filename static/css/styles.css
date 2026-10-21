@@ -3085,6 +3085,70 @@ input[type="range"]::-webkit-slider-thumb:hover {
     font-size: 0.85rem;
 }
 
+/* Map render queue on the welcome screen */
+.welcome-map-queue {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+}
+
+.welcome-map-queue-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.welcome-map-queue-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+}
+
+.welcome-map-queue-count {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.welcome-map-queue-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+
+.welcome-map-queue-bar i {
+    display: block;
+    height: 100%;
+    background: var(--primary);
+    box-shadow: 0 0 8px var(--primary-glow);
+    transition: width 0.4s ease;
+}
+
+.welcome-map-queue-detail {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    overflow-wrap: anywhere;
+}
+
+.welcome-map-queue-detail.warning {
+    color: #fbbf24;
+}
+
+/* Marks a dashboard card whose poster map has been rendered */
+.map-rendered-badge {
+    display: inline-flex;
+    align-items: center;
+    color: var(--primary);
+    margin-right: 6px;
+}
+
 @media (max-width: 1100px) {
     .welcome-spotlight,
     .welcome-bottom {

@@ -5,12 +5,13 @@ import logging
 from flask import Blueprint, request, jsonify, send_file
 from db import (
     get_db, add_route, get_routes, get_route, update_route, delete_route,
-    get_all_tags, get_user_by_id, update_route_poster_status
+    get_all_tags, get_user_by_id, update_route_poster_status, poster_maps_dir
 )
 from gpx_parser import parse_gpx
 import app
 from utils import (
-    get_current_user_id, rate_limit, run_async_poster_generation
+    get_current_user_id, rate_limit, run_async_poster_generation, is_map_rendered, drop_missing_poster,
+    queue_unrendered_maps, map_render_queue_status
 )
 
 logger = logging.getLogger('blaeu.routes')
@@ -127,10 +128,36 @@ def list_routes():
     sort_by = request.args.get('sort_by')
     sort_order = request.args.get('sort_order')
     routes = get_routes(user_id, folder_id, sort_by=sort_by, sort_order=sort_order)
+    user = get_user_by_id(user_id)
     # Add ownership property for client UI
     for r in routes:
+        drop_missing_poster(r)
         r['is_owner'] = (r['user_id'] == user_id)
+        r['map_rendered'] = r['is_owner'] and is_map_rendered(r['poster_status'], user)
     return jsonify(routes)
+
+
+@routes_bp.route('/api/map-queue', methods=['GET'])
+def get_map_queue():
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+    return jsonify(map_render_queue_status(user_id))
+
+
+@routes_bp.route('/api/map-queue', methods=['POST'])
+def fill_map_queue():
+    """Queues every route of the user that doesn't have a rendered map yet."""
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+    data = request.get_json(silent=True) or {}
+    try:
+        queued = queue_unrendered_maps(user_id, retry_failed=bool(data.get('retry_failed')))
+    except Exception:
+        logger.exception("Could not fill the map render queue")
+        return jsonify({'error': 'Could not queue maps: An unexpected error occurred.'}), 500
+    return jsonify({'added': queued, **map_render_queue_status(user_id)})
 
 
 @routes_bp.route('/api/routes/<int:route_id>', methods=['GET'])
@@ -154,7 +181,7 @@ def get_route_details(route_id):
         parsed = parse_gpx(content)
         
         # Merge parsed tracks and waypoints into the response
-        response_data = dict(route)
+        response_data = drop_missing_poster(dict(route))
         response_data['tracks'] = parsed['tracks']
         response_data['waypoints'] = parsed['waypoints']
         response_data['is_owner'] = (route['user_id'] == user_id)
@@ -264,7 +291,6 @@ def get_poster_map_image(filename):
     if not user_id:
         return jsonify({'error': 'Unauthorized. Please log in.'}), 401
         
-    from poster_map import POSTER_MAPS_DIR
     filename = os.path.basename(filename)
     
     # Enforce strict ownership / route publicity check
@@ -281,7 +307,7 @@ def get_poster_map_image(filename):
         except (ValueError, IndexError):
             pass
             
-    file_path = os.path.join(POSTER_MAPS_DIR, filename)
+    file_path = os.path.join(poster_maps_dir(), filename)
     if os.path.exists(file_path):
         return send_file(file_path, mimetype='image/png')
     else:

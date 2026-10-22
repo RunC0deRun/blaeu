@@ -3175,3 +3175,269 @@ input[type="range"]::-webkit-slider-thumb:hover {
         font-size: 1.4rem;
     }
 }
+
+/* Rail tiles open a detail panel with the metric's history */
+.welcome-tile {
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    align-items: stretch;
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.welcome-tile:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-2px);
+}
+
+.welcome-tile:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.welcome-tile.active {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.25), 0 0 18px rgba(0, 240, 255, 0.12);
+}
+
+.welcome-tile .welcome-pill {
+    align-self: flex-start;
+}
+
+.welcome-metric-detail {
+    gap: 16px;
+}
+
+.welcome-metric-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.welcome-metric-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin-top: 2px;
+}
+
+.welcome-metric-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.welcome-range {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.welcome-range-btn {
+    font-family: var(--font-main);
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 4px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.welcome-range-btn:hover {
+    color: var(--text-main);
+}
+
+.welcome-range-btn.active {
+    background: rgba(0, 240, 255, 0.12);
+    color: var(--primary);
+}
+
+.welcome-metric-close {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.welcome-metric-close:hover {
+    color: var(--text-main);
+    border-color: var(--border-hover);
+}
+
+.welcome-range-btn:focus-visible,
+.welcome-metric-close:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.welcome-metric-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 12px;
+}
+
+.welcome-metric-summary .welcome-big {
+    font-size: 1.15rem;
+}
+
+.welcome-metric-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.welcome-metric-legend:empty {
+    display: none;
+}
+
+.welcome-metric-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.welcome-metric-legend i.line {
+    width: 16px;
+    height: 2px;
+    border-radius: 1px;
+}
+
+.welcome-metric-legend i.dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+}
+
+.welcome-metric-chart {
+    position: relative;
+    min-height: 260px;
+    transition: opacity 0.2s;
+}
+
+.welcome-metric-chart.loading {
+    opacity: 0.4;
+}
+
+.welcome-metric-chart svg {
+    display: block;
+    overflow: visible;
+}
+
+.welcome-chart-grid {
+    stroke: rgba(255, 255, 255, 0.06);
+}
+
+.welcome-chart-zero {
+    stroke: rgba(255, 255, 255, 0.22);
+}
+
+.welcome-chart-tick,
+.welcome-chart-band {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    fill: var(--text-muted);
+}
+
+.welcome-chart-band {
+    font-family: var(--font-main);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    opacity: 0.8;
+}
+
+.welcome-chart-cross {
+    stroke: rgba(255, 255, 255, 0.35);
+    stroke-dasharray: 3 3;
+}
+
+.welcome-chart-hit {
+    cursor: crosshair;
+    outline: none;
+}
+
+.welcome-chart-hit:focus-visible {
+    stroke: var(--primary);
+    stroke-width: 1;
+}
+
+.welcome-chart-bar.hover {
+    opacity: 1;
+    filter: brightness(1.25);
+}
+
+.welcome-chart-tooltip {
+    position: absolute;
+    z-index: 2;
+    min-width: 150px;
+    max-width: 240px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-hover);
+    background: rgba(7, 10, 19, 0.94);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.welcome-tooltip-date {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--primary);
+    margin-bottom: 2px;
+}
+
+.welcome-tooltip-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.welcome-tooltip-row i {
+    width: 12px;
+    height: 2px;
+    border-radius: 1px;
+    flex: none;
+}
+
+.welcome-tooltip-row strong {
+    font-family: var(--font-mono);
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.welcome-tooltip-workout {
+    font-size: 0.75rem;
+    padding-left: 18px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .welcome-tile,
+    .welcome-metric-chart {
+        transition: none;
+    }
+
+    .welcome-tile:hover {
+        transform: none;
+    }
+}

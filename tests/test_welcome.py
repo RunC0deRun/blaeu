@@ -205,3 +205,54 @@ def test_discuss_note_starts_conversation(authed_client, configured):
     authed_client.delete(f'/api/coach/conversations/{conversation_id}')
     fresh = authed_client.post('/api/coach/daily-note/discuss', json={'date': TODAY.isoformat()})
     assert fresh.get_json()['id'] != conversation_id
+
+
+# --- Metric history ------------------------------------------------------------------
+
+def _metric(client, metric, days=42):
+    return client.get(f'/api/welcome/metrics/{metric}?days={days}&date={TODAY.isoformat()}')
+
+
+def test_metric_history_validation(client, authed_client):
+    assert _metric(authed_client, 'nonsense').status_code == 404
+    assert _metric(authed_client, 'form', days=30).status_code == 400
+    assert _metric(authed_client, 'hrv').status_code == 403  # wellness needs opt-in
+    authed_client.post('/api/auth/logout')
+    assert _metric(authed_client, 'form').status_code == 401
+
+
+def test_metric_history_fitness_and_form(authed_client, user_id):
+    for i in range(50):
+        db.upsert_daily_wellness(user_id, _day(i), 'intervals', {'ctl': 60 - i * 0.2, 'atl': 55 + (i % 7)})
+    data = _metric(authed_client, 'fitness').get_json()
+    assert data['start'] == _day(41) and data['end'] == _day(0)
+    points = data['points']
+    assert len(points) == 42 and points[0]['date'] == _day(41) and points[-1]['date'] == _day(0)
+    assert points[-1]['ctl'] == 60 and points[-1]['atl'] == 55 and points[-1]['value'] == 5
+    assert _metric(authed_client, 'form').get_json()['points'] == points
+
+
+def test_metric_history_wellness_rolling_average(authed_client, user_id):
+    db.update_user_wellness_opt_in(user_id, True)
+    # HRV on alternate days only; the average covers the readings of the last 7 days
+    for i in range(0, 60, 2):
+        db.upsert_daily_wellness(user_id, _day(i), 'intervals', {'hrv': 60 + i % 4})
+    points = _metric(authed_client, 'hrv').get_json()['points']
+    assert [p['date'] for p in points] == [_day(i) for i in range(40, -1, -2)]
+    # Readings on days 0, 2, 4 and 6: 60, 62, 60, 62
+    assert points[-1]['value'] == 60 and points[-1]['rolling'] == 61
+
+
+def test_metric_history_load(authed_client, user_id):
+    db.upsert_activity(user_id, 'intervals', 'a', _run('Tempo', 0, 10000, 2900, 150, training_load=80))
+    db.upsert_activity(user_id, 'intervals', 'b', _run('Easy', 0, 6000, 2100, 130, training_load=30))
+    db.upsert_activity(user_id, 'intervals', 'c', _run('Long', 6, 20000, 6600, 145, training_load=120))
+    db.upsert_activity(user_id, 'intervals', 'd', _run('Old', 7, 8000, 2700, 140, training_load=40))
+    points = _metric(authed_client, 'load').get_json()['points']
+    assert len(points) == 42 and points[-1]['date'] == _day(0)
+    today = points[-1]
+    assert today['value'] == 110
+    assert sorted(w['name'] for w in today['workouts']) == ['Easy', 'Tempo']
+    # The rolling total counts the last 7 days: today and day 6, not day 7
+    assert today['rolling'] == 230
+    assert points[-2]['value'] == 0 and points[-2]['workouts'] == []

@@ -5246,9 +5246,10 @@ function initWelcome() {
     });
     document.getElementById('welcome-coach-followup-btn').addEventListener('click', discussCoachNote);
     document.getElementById('welcome-coach-refresh-btn').addEventListener('click', () => loadCoachNote(true));
+    initWelcomeMetrics();
     window.addEventListener('resize', () => {
         clearTimeout(welcomeResizeTimer);
-        welcomeResizeTimer = setTimeout(drawWelcomeMap, 150);
+        welcomeResizeTimer = setTimeout(() => { drawWelcomeMap(); drawMetricChart(); }, 150);
     });
 }
 
@@ -5297,6 +5298,8 @@ async function loadWelcome() {
 function resetWelcome() {
     welcomeSeq++;
     welcomeData = null;
+    welcomeMetricCache.clear();
+    closeWelcomeMetric();
     clearTimeout(welcomeNotePoll);
     document.getElementById('welcome-coach-note').classList.add('hidden');
     showDashboardTab('welcome');
@@ -5600,14 +5603,14 @@ function renderWelcomeRail(data) {
     const f = data.fitness;
     if (f) {
         const [zone, cls] = formZone(f.form);
-        tiles.push(`<span class="welcome-label">Form</span>
+        tiles.push(['form', `<span class="welcome-label">Form</span>
             <span class="welcome-big glow">${signed(f.form)}</span>
-            <span class="welcome-pill ${cls}">${zone}</span>`);
+            <span class="welcome-pill ${cls}">${zone}</span>`]);
         const ramp = hasValue(f.ramp_rate) ? `Ramp ${signed(f.ramp_rate, 1)} per week` : `Fatigue ${Math.round(f.atl)}`;
-        tiles.push(`<span class="welcome-label">Fitness</span>
+        tiles.push(['fitness', `<span class="welcome-label">Fitness</span>
             <span class="welcome-big">${Math.round(f.ctl)}</span>
             ${sparklineSvg(f.ctl_series)}
-            <span class="welcome-sub">${ramp}</span>`);
+            <span class="welcome-sub">${ramp}</span>`]);
     }
     const r = data.recovery;
     [['hrv', 'HRV', 'ms'], ['resting_hr', 'Resting HR', 'bpm']].forEach(([key, label, unit]) => {
@@ -5615,18 +5618,484 @@ function renderWelcomeRail(data) {
         if (!m) return;
         const diff = Math.round(m.value - m.avg7);
         const vs = diff ? `${diff > 0 ? '▲' : '▼'} ${Math.abs(diff)} vs 7-day avg` : 'Same as 7-day avg';
-        tiles.push(`<span class="welcome-label">${label}</span>
+        tiles.push([key, `<span class="welcome-label">${label}</span>
             <span class="welcome-big">${Math.round(m.value)}<small>${unit}</small></span>
             ${sparklineSvg(m.series)}
-            <span class="welcome-sub">${vs}</span>`);
+            <span class="welcome-sub">${vs}</span>`]);
     });
     const week = data.last_seven_days;
     if (week && week.sessions) {
-        tiles.push(`<span class="welcome-label">Last 7 days</span>
+        tiles.push(['load', `<span class="welcome-label">Last 7 days</span>
             <span class="welcome-big">${Math.round(week.load) || week.sessions}<small>${week.load ? 'load' : 'sessions'}</small></span>
-            <span class="welcome-sub">${week.sessions} ${week.sessions === 1 ? 'session' : 'sessions'} · ${hoursMinutes(week.duration)} h</span>`);
+            <span class="welcome-sub">${week.sessions} ${week.sessions === 1 ? 'session' : 'sessions'} · ${hoursMinutes(week.duration)} h</span>`]);
     }
-    document.getElementById('welcome-rail').innerHTML = tiles.map(t => `<div class="welcome-panel">${t}</div>`).join('');
+    const rail = document.getElementById('welcome-rail');
+    rail.innerHTML = tiles.map(([metric, body]) => `
+        <button type="button" class="welcome-panel welcome-tile" data-metric="${metric}"
+            aria-expanded="false" aria-controls="welcome-metric-detail">${body}</button>`).join('');
+    rail.querySelectorAll('.welcome-tile').forEach(tile => {
+        tile.addEventListener('click', () => toggleWelcomeMetric(tile.dataset.metric));
+    });
+    // New data: keep an open detail panel open, refreshed, when its tile still exists
+    welcomeMetricCache.clear();
+    if (welcomeMetric.open && tiles.some(([metric]) => metric === welcomeMetric.open)) {
+        openWelcomeMetric(welcomeMetric.open);
+    } else {
+        closeWelcomeMetric();
+    }
+}
+
+// --- Metric details: an expanded tile with the metric's history ---
+
+const WELCOME_METRICS = {
+    form: {
+        label: 'Form', title: 'Form over time', unit: '',
+        note: 'Form is fitness minus fatigue. Below −10 you are building fitness, below −30 the load is high enough to risk overreaching; above +5 you are fresh. The bands follow Intervals.icu.',
+        series: [{ key: 'value', label: 'Form', color: '#00f0ff', kind: 'line' }],
+        signed: true, bands: true
+    },
+    fitness: {
+        label: 'Fitness', title: 'Fitness and fatigue', unit: '',
+        note: 'Fitness (CTL) is your average daily training load over 42 days, fatigue (ATL) over 7 days. Fitness rises slowly with consistent training; fatigue reacts to the last week.',
+        series: [
+            { key: 'ctl', label: 'Fitness', color: '#00f0ff', kind: 'area' },
+            { key: 'atl', label: 'Fatigue', color: '#b57bff', kind: 'line' }
+        ]
+    },
+    hrv: {
+        label: 'HRV', title: 'Heart rate variability', unit: 'ms',
+        note: 'Daily readings vary a lot, so watch the 7-day average: a drop well below your usual level can mean you are tired, ill or stressed.',
+        series: [
+            { key: 'value', label: 'Daily', color: '#94a3b8', kind: 'dots' },
+            { key: 'rolling', label: '7-day average', color: '#00f0ff', kind: 'line' }
+        ]
+    },
+    resting_hr: {
+        label: 'Resting HR', title: 'Resting heart rate', unit: 'bpm',
+        note: 'A resting heart rate several beats above your 7-day average often comes with fatigue or a cold coming on.',
+        series: [
+            { key: 'value', label: 'Daily', color: '#94a3b8', kind: 'dots' },
+            { key: 'rolling', label: '7-day average', color: '#00f0ff', kind: 'line' }
+        ]
+    },
+    load: {
+        label: 'Training load', title: 'Training load', unit: '',
+        note: 'Training load per day, or per week for ranges over three months. Hover over a bar to see the workouts in it.',
+        series: [{ key: 'value', label: 'Load', color: '#00f0ff', kind: 'bar' }]
+    }
+};
+const WELCOME_METRIC_DEFAULT_DAYS = 90;
+// Above this many days, load is shown per week instead of per day
+const WELCOME_LOAD_DAILY_MAX_DAYS = 90;
+// Form zones as bands on the form chart: [from, to, name, colour]
+const FORM_BANDS = [
+    [-Infinity, -30, 'High risk', '244, 63, 94'],
+    [-30, -10, 'Optimal', '52, 211, 153'],
+    [-10, 5, 'Grey zone', '148, 163, 184'],
+    [5, 25, 'Fresh', '0, 240, 255'],
+    [25, Infinity, 'Transition', '251, 191, 36']
+];
+
+let welcomeMetric = { open: null, days: WELCOME_METRIC_DEFAULT_DAYS, points: [], seq: 0 };
+const welcomeMetricCache = new Map();
+
+function initWelcomeMetrics() {
+    document.getElementById('welcome-metric-close').addEventListener('click', () => {
+        const metric = welcomeMetric.open;
+        closeWelcomeMetric();
+        const tile = document.querySelector(`.welcome-tile[data-metric="${metric}"]`);
+        if (tile) tile.focus();
+    });
+    document.querySelectorAll('.welcome-range-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            welcomeMetric.days = Number(btn.dataset.days);
+            if (welcomeMetric.open) openWelcomeMetric(welcomeMetric.open);
+        });
+    });
+    document.getElementById('welcome-metric-detail').addEventListener('keydown', e => {
+        if (e.key === 'Escape') document.getElementById('welcome-metric-close').click();
+    });
+}
+
+function toggleWelcomeMetric(metric) {
+    if (welcomeMetric.open === metric) closeWelcomeMetric();
+    else openWelcomeMetric(metric);
+}
+
+function closeWelcomeMetric() {
+    welcomeMetric.open = null;
+    welcomeMetric.seq++;
+    document.getElementById('welcome-metric-detail').classList.add('hidden');
+    document.querySelectorAll('.welcome-tile').forEach(t => {
+        t.classList.remove('active');
+        t.setAttribute('aria-expanded', 'false');
+    });
+}
+
+async function openWelcomeMetric(metric) {
+    const spec = WELCOME_METRICS[metric];
+    const seq = ++welcomeMetric.seq;
+    welcomeMetric.open = metric;
+    document.querySelectorAll('.welcome-tile').forEach(t => {
+        const active = t.dataset.metric === metric;
+        t.classList.toggle('active', active);
+        t.setAttribute('aria-expanded', String(active));
+    });
+    document.querySelectorAll('.welcome-range-btn').forEach(btn => {
+        const active = Number(btn.dataset.days) === welcomeMetric.days;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+    });
+    const panel = document.getElementById('welcome-metric-detail');
+    panel.classList.remove('hidden');
+    document.getElementById('welcome-metric-label').textContent = spec.label;
+    document.getElementById('welcome-metric-title').textContent = spec.title;
+    document.getElementById('welcome-metric-note').textContent = spec.note;
+    renderMetricLegend(spec);
+
+    const chart = document.getElementById('welcome-metric-chart');
+    const key = `${metric}:${welcomeMetric.days}`;
+    let data = welcomeMetricCache.get(key);
+    if (!data) {
+        // Keep the previous chart while loading, dimmed, instead of a blank frame
+        chart.classList.add('loading');
+        try {
+            const res = await fetch(`/api/welcome/metrics/${metric}?days=${welcomeMetric.days}&date=${localDateISO()}`);
+            data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+            welcomeMetricCache.set(key, data);
+        } catch (err) {
+            if (seq !== welcomeMetric.seq) return;
+            chart.classList.remove('loading');
+            chart.innerHTML = `<p class="welcome-none">${escapeHTML(err.message)}</p>`;
+            document.getElementById('welcome-metric-summary').innerHTML = '';
+            return;
+        }
+    }
+    if (seq !== welcomeMetric.seq) return;
+    chart.classList.remove('loading');
+    welcomeMetric.points = metricChartPoints(metric, data);
+    renderMetricSummary(metric, data);
+    drawMetricChart();
+}
+
+function parseISODate(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+
+function formatMetricValue(metric, value) {
+    if (value === null || value === undefined || Number.isNaN(value)) return '—';
+    const spec = WELCOME_METRICS[metric];
+    return spec.signed ? signed(value) : String(Math.round(value));
+}
+
+// Load over long ranges becomes weekly totals; everything else is plotted as it comes
+function metricChartPoints(metric, data) {
+    if (metric !== 'load' || data.days <= WELCOME_LOAD_DAILY_MAX_DAYS) {
+        return data.points.map(p => ({ ...p, time: parseISODate(p.date).getTime() }));
+    }
+    const weekStart = (currentUser && currentUser.week_start_day) || 'Monday';
+    const weeks = new Map();
+    data.points.forEach(p => {
+        const start = getStartOfWeek(new Date(`${p.date}T00:00:00Z`), weekStart);
+        const iso = start.toISOString().slice(0, 10);
+        const week = weeks.get(iso) || { date: iso, week: true, value: 0, workouts: [] };
+        week.value += p.value;
+        week.workouts.push(...p.workouts);
+        weeks.set(iso, week);
+    });
+    return [...weeks.values()].map(w => ({ ...w, time: parseISODate(w.date).getTime() }));
+}
+
+function renderMetricLegend(spec) {
+    const legend = document.getElementById('welcome-metric-legend');
+    legend.innerHTML = '';
+    if (spec.series.length < 2) return;
+    spec.series.forEach(s => {
+        const item = document.createElement('span');
+        const key = document.createElement('i');
+        key.className = s.kind === 'dots' ? 'dot' : 'line';
+        key.style.background = s.color;
+        item.append(key, document.createTextNode(s.label));
+        legend.appendChild(item);
+    });
+}
+
+function renderMetricSummary(metric, data) {
+    const spec = WELCOME_METRICS[metric];
+    const unit = spec.unit ? ` ${spec.unit}` : '';
+    const items = [];
+    const values = data.points.map(p => metric === 'fitness' ? p.ctl : p.value).filter(v => v !== null && v !== undefined);
+    if (!values.length) {
+        document.getElementById('welcome-metric-summary').innerHTML = '';
+        return;
+    }
+    if (metric === 'load') {
+        const last = data.points[data.points.length - 1];
+        const rolling = data.points.map(p => p.rolling);
+        const sessions = data.points.reduce((n, p) => n + p.workouts.length, 0);
+        items.push(['Last 7 days', Math.round(last.rolling)]);
+        items.push(['Average week', Math.round(rolling.reduce((a, b) => a + b, 0) / rolling.length)]);
+        items.push(['Busiest 7 days', Math.round(Math.max(...rolling))]);
+        items.push(['Workouts', sessions]);
+    } else {
+        const first = values[0], last = values[values.length - 1];
+        const label = metric === 'fitness' ? 'Fitness now' : 'Now';
+        items.push([label, formatMetricValue(metric, last) + unit]);
+        items.push(['Average', formatMetricValue(metric, values.reduce((a, b) => a + b, 0) / values.length) + unit]);
+        items.push(['Low', formatMetricValue(metric, Math.min(...values)) + unit]);
+        items.push(['High', formatMetricValue(metric, Math.max(...values)) + unit]);
+        const change = last - first;
+        items.push(['Change', `${signed(change)}${unit}`]);
+    }
+    document.getElementById('welcome-metric-summary').innerHTML = items.map(([label, value]) => `
+        <div><div class="welcome-label">${escapeHTML(label)}</div><div class="welcome-big">${escapeHTML(String(value))}</div></div>`).join('');
+}
+
+// A round step for about `count` gridlines between lo and hi
+function niceStep(lo, hi, count) {
+    const raw = (hi - lo) / count || 1;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const norm = raw / mag;
+    return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+}
+
+function drawMetricChart() {
+    const metric = welcomeMetric.open;
+    const container = document.getElementById('welcome-metric-chart');
+    if (!metric || !container.offsetWidth) return;
+    const spec = WELCOME_METRICS[metric];
+    const points = welcomeMetric.points;
+    container.innerHTML = '';
+    if (!points.length) {
+        container.innerHTML = '<p class="welcome-none">No data in this period.</p>';
+        return;
+    }
+
+    const NS = 'http://www.w3.org/2000/svg';
+    const make = (tag, attrs, parent) => {
+        const el = document.createElementNS(NS, tag);
+        Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+        if (parent) parent.appendChild(el);
+        return el;
+    };
+    const W = container.offsetWidth, H = 260;
+    const M = { left: 40, right: 16, top: 12, bottom: 26 };
+    const isBar = spec.series[0].kind === 'bar';
+
+    // X: real time, so gaps in the data stay visible; bars get half a slot of room at the ends
+    const slot = isBar ? (points.length > 1 ? (points[1].time - points[0].time) : 86400000) : 0;
+    const t0 = points[0].time - slot / 2, t1 = points[points.length - 1].time + slot / 2;
+    const x = t => M.left + ((t - t0) / ((t1 - t0) || 1)) * (W - M.left - M.right);
+
+    // Y: every plotted series shares one axis
+    const values = [];
+    points.forEach(p => spec.series.forEach(s => { if (p[s.key] !== null && p[s.key] !== undefined) values.push(p[s.key]); }));
+    let lo = Math.min(...values), hi = Math.max(...values);
+    if (isBar || metric === 'fitness') lo = 0;
+    if (spec.bands) { lo = Math.min(lo, -15); hi = Math.max(hi, 10); }
+    const pad = (hi - lo) * 0.08 || 1;
+    if (!isBar && metric !== 'fitness') lo -= pad;
+    hi += pad;
+    const step = niceStep(lo, hi, 4);
+    lo = Math.floor(lo / step) * step;
+    hi = Math.ceil(hi / step) * step;
+    const y = v => M.top + (1 - (v - lo) / ((hi - lo) || 1)) * (H - M.top - M.bottom);
+
+    const svg = make('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img',
+        'aria-label': `${spec.title}, ${points.length} values from ${points[0].date} to ${points[points.length - 1].date}` }, container);
+
+    if (spec.bands) {
+        FORM_BANDS.forEach(([from, to, name, rgb]) => {
+            const top = y(Math.min(to, hi)), bottom = y(Math.max(from, lo));
+            if (bottom - top <= 0) return;
+            make('rect', { x: M.left, y: top, width: W - M.left - M.right, height: bottom - top, fill: `rgba(${rgb}, 0.07)` }, svg);
+            if (bottom - top >= 14) {
+                const label = make('text', { x: W - M.right - 6, y: top + 12, 'text-anchor': 'end', class: 'welcome-chart-band' }, svg);
+                label.textContent = name;
+            }
+        });
+    }
+
+    for (let v = lo; v <= hi + step / 2; v += step) {
+        make('line', { x1: M.left, x2: W - M.right, y1: y(v), y2: y(v), class: v === 0 ? 'welcome-chart-zero' : 'welcome-chart-grid' }, svg);
+        const label = make('text', { x: M.left - 8, y: y(v) + 3, 'text-anchor': 'end', class: 'welcome-chart-tick' }, svg);
+        label.textContent = spec.signed ? signed(v) : String(Math.round(v * 10) / 10);
+    }
+
+    // X ticks: month starts, or weekly for short ranges
+    const days = (t1 - t0) / 86400000;
+    const first = new Date(t0);
+    const ticks = [];
+    for (let d = new Date(first.getFullYear(), first.getMonth(), first.getDate()); d.getTime() <= t1; d.setDate(d.getDate() + 1)) {
+        if (d.getTime() < t0) continue;
+        if (days <= 60 ? d.getDay() === 1 : d.getDate() === 1) ticks.push(new Date(d));
+    }
+    ticks.forEach(d => {
+        const label = make('text', { x: x(d.getTime()), y: H - 8, 'text-anchor': 'middle', class: 'welcome-chart-tick' }, svg);
+        label.textContent = days <= 60
+            ? d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+            : d.toLocaleDateString(undefined, { month: 'short' });
+    });
+
+    const pathFor = key => {
+        let d = '';
+        let prev = null;
+        points.forEach(p => {
+            if (p[key] === null || p[key] === undefined) { prev = null; return; }
+            // Break the line where more than a week of data is missing
+            d += `${prev && p.time - prev.time <= 7 * 86400000 ? 'L' : 'M'}${x(p.time).toFixed(1)} ${y(p[key]).toFixed(1)}`;
+            prev = p;
+        });
+        return d;
+    };
+
+    const markLayer = make('g', {}, svg);
+    spec.series.forEach(s => {
+        if (s.kind === 'bar') {
+            const slotWidth = (x(points[0].time + slot) - x(points[0].time));
+            const bw = Math.max(1, slotWidth - 2);
+            points.forEach(p => {
+                if (!p.value) return;
+                const top = y(p.value), base = y(0);
+                const r = Math.min(4, bw / 2, base - top);
+                make('path', {
+                    d: `M${x(p.time) - bw / 2} ${base} V${top + r} q0 ${-r} ${r} ${-r} H${x(p.time) + bw / 2 - r} q${r} 0 ${r} ${r} V${base} Z`,
+                    fill: s.color, opacity: 0.75, class: 'welcome-chart-bar', 'data-time': p.time
+                }, markLayer);
+            });
+        } else if (s.kind === 'dots') {
+            points.forEach(p => {
+                if (p[s.key] === null || p[s.key] === undefined) return;
+                make('circle', { cx: x(p.time), cy: y(p[s.key]), r: 2.5, fill: s.color, opacity: 0.6 }, markLayer);
+            });
+        } else {
+            const d = pathFor(s.key);
+            if (s.kind === 'area') {
+                const gradientId = `welcome-area-${metric}`;
+                const grad = make('linearGradient', { id: gradientId, x1: 0, x2: 0, y1: 0, y2: 1 }, make('defs', {}, svg));
+                make('stop', { offset: 0, 'stop-color': s.color, 'stop-opacity': 0.22 }, grad);
+                make('stop', { offset: 1, 'stop-color': s.color, 'stop-opacity': 0 }, grad);
+                const area = points.filter(p => p[s.key] !== null && p[s.key] !== undefined);
+                make('path', { d: `${d} L${x(area[area.length - 1].time)} ${y(lo)} L${x(area[0].time)} ${y(lo)} Z`, fill: `url(#${gradientId})` }, markLayer);
+            }
+            make('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }, markLayer);
+        }
+    });
+
+    // Hover layer: a crosshair that snaps to the nearest day, and a tooltip with every series
+    const cross = make('line', { y1: M.top, y2: H - M.bottom, class: 'welcome-chart-cross', visibility: 'hidden' }, svg);
+    const markers = spec.series.filter(s => s.kind !== 'bar').map(s =>
+        make('circle', { r: 4.5, fill: s.color, stroke: '#0e1320', 'stroke-width': 2, visibility: 'hidden' }, svg));
+    const tooltip = document.createElement('div');
+    tooltip.className = 'welcome-chart-tooltip hidden';
+    container.appendChild(tooltip);
+    const hit = make('rect', { x: M.left, y: M.top, width: W - M.left - M.right, height: H - M.top - M.bottom,
+        fill: 'transparent', tabindex: 0, class: 'welcome-chart-hit',
+        'aria-label': 'Chart values: use the arrow keys to move between days' }, svg);
+
+    let index = points.length - 1;
+    const show = i => {
+        index = Math.max(0, Math.min(points.length - 1, i));
+        const p = points[index];
+        const px = x(p.time);
+        cross.setAttribute('x1', px);
+        cross.setAttribute('x2', px);
+        cross.setAttribute('visibility', 'visible');
+        spec.series.filter(s => s.kind !== 'bar').forEach((s, k) => {
+            const v = p[s.key];
+            markers[k].setAttribute('visibility', v === null || v === undefined ? 'hidden' : 'visible');
+            if (v !== null && v !== undefined) {
+                markers[k].setAttribute('cx', px);
+                markers[k].setAttribute('cy', y(v));
+            }
+        });
+        svg.querySelectorAll('.welcome-chart-bar').forEach(bar => bar.classList.toggle('hover', Number(bar.dataset.time) === p.time));
+        fillMetricTooltip(tooltip, metric, spec, p);
+        tooltip.classList.remove('hidden');
+        const tw = tooltip.offsetWidth;
+        tooltip.style.left = `${px + 14 + tw > W ? px - 14 - tw : px + 14}px`;
+        tooltip.style.top = `${M.top}px`;
+    };
+    const hide = () => {
+        cross.setAttribute('visibility', 'hidden');
+        markers.forEach(m => m.setAttribute('visibility', 'hidden'));
+        svg.querySelectorAll('.welcome-chart-bar.hover').forEach(bar => bar.classList.remove('hover'));
+        tooltip.classList.add('hidden');
+    };
+    const nearest = clientX => {
+        const box = svg.getBoundingClientRect();
+        const t = t0 + ((clientX - box.left - M.left) / (W - M.left - M.right)) * (t1 - t0);
+        let best = 0;
+        points.forEach((p, i) => { if (Math.abs(p.time - t) < Math.abs(points[best].time - t)) best = i; });
+        return best;
+    };
+    hit.addEventListener('pointermove', e => show(nearest(e.clientX)));
+    hit.addEventListener('pointerleave', () => { if (document.activeElement !== hit) hide(); });
+    hit.addEventListener('focus', () => show(index));
+    hit.addEventListener('blur', hide);
+    hit.addEventListener('keydown', e => {
+        const moves = { ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity };
+        if (!(e.key in moves)) return;
+        e.preventDefault();
+        show(e.key === 'Home' ? 0 : e.key === 'End' ? points.length - 1 : index + moves[e.key]);
+    });
+}
+
+function fillMetricTooltip(tooltip, metric, spec, p) {
+    tooltip.innerHTML = '';
+    const date = parseISODate(p.date);
+    const head = document.createElement('div');
+    head.className = 'welcome-tooltip-date';
+    head.textContent = p.week
+        ? `Week of ${date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`
+        : date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+    tooltip.appendChild(head);
+    const row = (value, label, color) => {
+        const line = document.createElement('div');
+        line.className = 'welcome-tooltip-row';
+        if (color) {
+            const key = document.createElement('i');
+            key.style.background = color;
+            line.appendChild(key);
+        }
+        const strong = document.createElement('strong');
+        strong.textContent = value;
+        line.append(strong, document.createTextNode(` ${label}`));
+        tooltip.appendChild(line);
+    };
+    const unit = spec.unit ? ` ${spec.unit}` : '';
+    if (metric === 'load') {
+        row(String(Math.round(p.value)), p.week ? 'load this week' : 'load', spec.series[0].color);
+        if (!p.week && p.rolling !== undefined) row(String(Math.round(p.rolling)), 'load in the 7 days to here');
+        const list = p.workouts || [];
+        if (!list.length) row('Rest', p.week ? 'week' : 'day');
+        list.slice(0, 6).forEach(w => {
+            const line = document.createElement('div');
+            line.className = 'welcome-tooltip-workout';
+            line.textContent = `${w.name || formatSportLabel(w.sport_type)}${hasValue(w.load) ? ` · ${Math.round(w.load)}` : ''}`;
+            tooltip.appendChild(line);
+        });
+        if (list.length > 6) {
+            const more = document.createElement('div');
+            more.className = 'welcome-tooltip-workout';
+            more.textContent = `and ${list.length - 6} more`;
+            tooltip.appendChild(more);
+        }
+        return;
+    }
+    if (metric === 'form') {
+        row(signed(p.value), formZone(p.value)[0].toLowerCase(), spec.series[0].color);
+        row(String(Math.round(p.ctl)), 'fitness');
+        row(String(Math.round(p.atl)), 'fatigue');
+        return;
+    }
+    spec.series.forEach(s => {
+        if (p[s.key] === null || p[s.key] === undefined) return;
+        row(`${Math.round(p[s.key])}${unit}`, s.label.toLowerCase(), s.color);
+    });
+    if (metric === 'fitness') row(signed(p.ctl - p.atl), 'form');
 }
 
 function welcomeActivityMeta(a) {

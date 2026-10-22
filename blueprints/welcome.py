@@ -4,7 +4,7 @@ recovery numbers, earlier workouts, and what the app did in the background.
 """
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request
 
@@ -209,4 +209,91 @@ def welcome():
         'recovery': recovery,
         'last_seven_days': _last_seven_days(activities, day),
         'events': _events(user_id),
+    })
+
+
+# --- Metric history for the expanded tiles -------------------------------------------
+
+METRICS = ('form', 'fitness', 'hrv', 'resting_hr', 'load')
+WELLNESS_METRICS = ('hrv', 'resting_hr')
+RANGE_DAYS = (42, 90, 182, 365)
+ROLLING_DAYS = 7
+
+
+def _activity_date(activity):
+    return (activity.get('start_time_local') or activity.get('start_time') or '')[:10]
+
+
+def _dates(start, day):
+    return [(start + timedelta(days=i)).isoformat() for i in range((day - start).days + 1)]
+
+
+def metric_history(user_id, metric, day, days):
+    """
+    One value per day for the last `days` days up to `day`. Days without data are left out
+    (fitness, HRV, resting HR) or zero (load). HRV and resting HR carry a 7-day rolling
+    average; load carries the workouts of the day and the 7-day rolling total.
+    """
+    start = day - timedelta(days=days - 1)
+    if metric == 'load':
+        lookback = start - timedelta(days=ROLLING_DAYS - 1)
+        by_day = {}
+        for a in get_activities(user_id, start=lookback.isoformat()):
+            by_day.setdefault(_activity_date(a), []).append(a)
+        points = []
+        for iso in _dates(lookback, day):
+            acts = by_day.get(iso, [])
+            points.append({
+                'date': iso,
+                'value': sum(a.get('training_load') or 0 for a in acts),
+                'workouts': [{'name': a.get('name'), 'sport_type': a.get('sport_type'),
+                              'load': a.get('training_load')} for a in reversed(acts)],
+            })
+        for i, p in enumerate(points):
+            p['rolling'] = sum(q['value'] for q in points[max(0, i - ROLLING_DAYS + 1):i + 1])
+        return points[ROLLING_DAYS - 1:]
+
+    lookback = start - timedelta(days=ROLLING_DAYS - 1)
+    wellness = _merge_wellness(get_daily_wellness(user_id, start=lookback.isoformat(), end=day.isoformat()))
+    wellness.reverse()  # oldest first
+    if metric in ('form', 'fitness'):
+        return [{'date': w['date'], 'ctl': w['ctl'], 'atl': w['atl'], 'value': w['ctl'] - w['atl']}
+                for w in wellness
+                if w['date'] >= start.isoformat() and w.get('ctl') is not None and w.get('atl') is not None]
+
+    points = []
+    window = []
+    for w in wellness:
+        if w.get(metric) is None:
+            continue
+        window = [p for p in window if p[0] > (date.fromisoformat(w['date']) - timedelta(days=ROLLING_DAYS)).isoformat()]
+        window.append((w['date'], w[metric]))
+        if w['date'] >= start.isoformat():
+            points.append({'date': w['date'], 'value': w[metric],
+                           'rolling': sum(v for _, v in window) / len(window)})
+    return points
+
+
+@welcome_bp.route('/api/welcome/metrics/<metric>', methods=['GET'])
+def welcome_metric(metric):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'Unauthorized. Please log in.'}), 401
+    if metric not in METRICS:
+        return jsonify({'error': f'Unknown metric. Use one of: {", ".join(METRICS)}.'}), 404
+    if metric in WELLNESS_METRICS and (get_user_by_id(user_id) or {}).get('wellness_opt_in') != 1:
+        return jsonify({'error': 'Turn on wellness data in Settings to see this metric.'}), 403
+    try:
+        days = int(request.args.get('days', RANGE_DAYS[1]))
+    except ValueError:
+        days = RANGE_DAYS[1]
+    if days not in RANGE_DAYS:
+        return jsonify({'error': f'days must be one of {", ".join(map(str, RANGE_DAYS))}.'}), 400
+    day = parse_day(request.args.get('date'))
+    return jsonify({
+        'metric': metric,
+        'days': days,
+        'start': (day - timedelta(days=days - 1)).isoformat(),
+        'end': day.isoformat(),
+        'points': metric_history(user_id, metric, day, days),
     })

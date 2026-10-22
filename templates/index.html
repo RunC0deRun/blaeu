@@ -17,7 +17,7 @@
     <script src="/static/vendor/leaflet/leaflet.js"></script>
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/styles.css?v=11">
+    <link rel="stylesheet" href="/static/css/styles.css?v=12">
 </head>
 <body>
     <div class="app-container">
@@ -219,6 +219,27 @@
                     </div>
 
                     <div class="welcome-rail" id="welcome-rail"></div>
+                    <section class="welcome-panel welcome-metric-detail hidden" id="welcome-metric-detail" aria-labelledby="welcome-metric-title">
+                        <div class="welcome-metric-head">
+                            <div>
+                                <div class="welcome-label" id="welcome-metric-label"></div>
+                                <h3 class="welcome-metric-title" id="welcome-metric-title"></h3>
+                            </div>
+                            <div class="welcome-metric-controls">
+                                <div class="welcome-range" role="group" aria-label="Time range">
+                                    <button type="button" class="welcome-range-btn" data-days="42">6 weeks</button>
+                                    <button type="button" class="welcome-range-btn" data-days="90">3 months</button>
+                                    <button type="button" class="welcome-range-btn" data-days="182">6 months</button>
+                                    <button type="button" class="welcome-range-btn" data-days="365">1 year</button>
+                                </div>
+                                <button type="button" class="welcome-metric-close" id="welcome-metric-close" aria-label="Close details">×</button>
+                            </div>
+                        </div>
+                        <div class="welcome-metric-summary" id="welcome-metric-summary"></div>
+                        <div class="welcome-metric-legend" id="welcome-metric-legend"></div>
+                        <div class="welcome-metric-chart" id="welcome-metric-chart"></div>
+                        <p class="welcome-metric-note" id="welcome-metric-note"></p>
+                    </section>
 
                     <div class="welcome-bottom">
                         <div class="welcome-panel">
@@ -1131,6 +1152,6 @@
     </div>
 
     <!-- Main Frontend Script -->
-    <script src="/static/js/app.js?v=19"></script>
+    <script src="/static/js/app.js?v=20"></script>
 </body>
 </html>

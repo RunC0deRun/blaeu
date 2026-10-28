@@ -24,6 +24,7 @@ let activeTagFilter = '';
 let currentUser = null;
 let authMode = 'login';
 let registrationOpen = true;
+let ssoConfig = null; // {enabled, provider_name, password_login} from /api/auth/status
 let csrfToken = null;
 
 // Intercept all fetch requests to automatically attach CSRF token for state-changing operations
@@ -235,6 +236,14 @@ function initAppEvents() {
     if (logoutBtn) {
         logoutBtn.addEventListener('click', handleLogout);
     }
+    const ssoLinkBtn = document.getElementById('sso-link-btn');
+    if (ssoLinkBtn) {
+        ssoLinkBtn.addEventListener('click', handleSsoLink);
+    }
+    const ssoUnlinkBtn = document.getElementById('sso-unlink-btn');
+    if (ssoUnlinkBtn) {
+        ssoUnlinkBtn.addEventListener('click', handleSsoUnlink);
+    }
     const privacyToggleBtn = document.getElementById('route-privacy-toggle-btn');
     if (privacyToggleBtn) {
         privacyToggleBtn.addEventListener('click', handlePrivacyToggle);
@@ -333,6 +342,18 @@ function initAppEvents() {
             const activityName = importIntervalsBtn.getAttribute('data-name');
             const startTime = importIntervalsBtn.getAttribute('data-start-time');
             importSingleIntervalsActivity(activityId, activityName, startTime, importIntervalsBtn);
+            return;
+        }
+
+        // Map a user account to a single sign-on identity
+        const mapSsoBtn = e.target.closest('.btn-map-sso');
+        if (mapSsoBtn) {
+            handleAdminSsoMapping(parseInt(mapSsoBtn.getAttribute('data-user-id'), 10), mapSsoBtn.getAttribute('data-username'), mapSsoBtn.getAttribute('data-mapped') || '');
+            return;
+        }
+        const unlinkSsoBtn = e.target.closest('.btn-unlink-sso');
+        if (unlinkSsoBtn) {
+            handleAdminSsoUnlink(parseInt(unlinkSsoBtn.getAttribute('data-user-id'), 10), unlinkSsoBtn.getAttribute('data-username'));
             return;
         }
 
@@ -2840,6 +2861,7 @@ function openSettingsModal() {
         document.getElementById('admin-llm-section').classList.add('hidden');
     }
     loadCoachProfile();
+    renderSsoSettings();
 }
 
 function loadSettingsIntoModal() {
@@ -4393,8 +4415,11 @@ async function checkAuthStatus() {
         const res = await fetch('/api/auth/status');
         const data = await res.json();
         const loginModal = document.getElementById('login-modal');
+        ssoConfig = data.sso || null;
+        const ssoError = takeSsoError();
         
         if (data.logged_in) {
+            if (ssoError) alert(ssoError);
             currentUser = data.user;
             csrfToken = data.csrf_token;
             if (loginModal) loginModal.style.display = 'none';
@@ -4419,6 +4444,13 @@ async function checkAuthStatus() {
             registrationOpen = data.registration_open;
             if (loginModal) loginModal.style.display = 'flex';
             showAuthModal(data.no_users_exist, data.registration_open);
+            if (ssoError) {
+                const errorMsg = document.getElementById('login-error-msg');
+                if (errorMsg) {
+                    errorMsg.textContent = ssoError;
+                    errorMsg.style.display = 'block';
+                }
+            }
         }
     } catch (err) {
         console.error("Error checking auth status:", err);
@@ -4475,6 +4507,86 @@ function showAuthModal(noUsersExist, registrationOpen) {
                 }
             }
         }
+    }
+    renderSsoLogin(noUsersExist);
+}
+
+// Shows the single sign-on button and hides the password form when the instance only uses SSO
+function renderSsoLogin(noUsersExist) {
+    const section = document.getElementById('sso-login-section');
+    const btn = document.getElementById('sso-login-btn');
+    const divider = document.getElementById('sso-login-divider');
+    const form = document.getElementById('login-form');
+    const loginTitle = document.getElementById('login-title');
+    const ssoEnabled = !!(ssoConfig && ssoConfig.enabled);
+    const passwordLogin = !ssoConfig || ssoConfig.password_login;
+
+    if (section) section.classList.toggle('hidden', !ssoEnabled);
+    if (btn && ssoEnabled) btn.textContent = `Log in with ${ssoConfig.provider_name}`;
+    if (divider) divider.style.display = passwordLogin ? 'flex' : 'none';
+    if (form) form.style.display = passwordLogin ? '' : 'none';
+    if (!passwordLogin && loginTitle) {
+        loginTitle.textContent = noUsersExist ? 'Create Admin Account' : 'Log In';
+    }
+}
+
+// The SSO callback reports failures as ?sso_error=...; read it once and drop it from the URL
+function takeSsoError() {
+    const params = new URLSearchParams(window.location.search);
+    const message = params.get('sso_error');
+    if (!message) return null;
+    params.delete('sso_error');
+    const query = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
+    return message;
+}
+
+function renderSsoSettings() {
+    const section = document.getElementById('sso-settings-section');
+    if (!section) return;
+    const sso = currentUser && currentUser.sso;
+    if (!ssoConfig || !ssoConfig.enabled || !sso) {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+    const provider = ssoConfig.provider_name;
+    const status = document.getElementById('sso-settings-status');
+    const linkBtn = document.getElementById('sso-link-btn');
+    const unlinkBtn = document.getElementById('sso-unlink-btn');
+    if (sso.linked) {
+        status.textContent = sso.identity ? `Linked to ${provider} as ${sso.identity}.` : `Linked to ${provider}.`;
+        linkBtn.classList.add('hidden');
+        unlinkBtn.classList.toggle('hidden', !sso.has_password || !ssoConfig.password_login);
+    } else {
+        status.textContent = `Link this account to ${provider} to log in with it. Your activities and settings stay as they are.`;
+        linkBtn.textContent = `Link ${provider} account`;
+        linkBtn.classList.remove('hidden');
+        unlinkBtn.classList.add('hidden');
+    }
+}
+
+async function handleSsoLink() {
+    try {
+        const res = await fetch('/api/auth/oidc/link', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not start linking');
+        window.location.href = data.url;
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function handleSsoUnlink() {
+    if (!confirm(`Unlink ${ssoConfig.provider_name}? You can still log in with your password.`)) return;
+    try {
+        const res = await fetch('/api/auth/oidc/link', { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not unlink');
+        currentUser.sso = { ...currentUser.sso, linked: false, identity: null };
+        renderSsoSettings();
+    } catch (err) {
+        alert(err.message);
     }
 }
 
@@ -4597,15 +4709,27 @@ async function handlePrivacyToggle() {
 async function loadAdminUserList() {
     const listBody = document.getElementById('admin-user-list');
     if (!listBody) return;
-    listBody.innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 10px;">Loading users...</td></tr>';
+    listBody.innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 10px;">Loading users...</td></tr>';
     
     try {
         const res = await fetch('/api/auth/users');
         if (!res.ok) throw new Error('Failed to fetch user list');
         const users = await res.json();
         
+        const ssoEnabled = !!(ssoConfig && ssoConfig.enabled);
+        document.querySelectorAll('.admin-sso-col').forEach(col => col.classList.toggle('hidden', !ssoEnabled));
         listBody.innerHTML = users.map(user => {
             const role = user.is_admin ? '<span style="color: var(--primary);">Admin</span>' : 'User';
+            let ssoCell = '';
+            if (ssoEnabled) {
+                const name = escapeHTML(user.username);
+                if (user.sso_identity) {
+                    ssoCell = `<td style="padding: 8px 0;">${escapeHTML(user.sso_identity)} <button type="button" class="btn btn-sm btn-outline btn-unlink-sso" data-user-id="${user.id}" data-username="${name}" style="padding: 2px 8px; margin-left: 4px;">Unlink</button></td>`;
+                } else {
+                    const mapped = user.oidc_username ? `<span style="opacity: 0.7;">Awaits ${escapeHTML(user.oidc_username)}</span> ` : '';
+                    ssoCell = `<td style="padding: 8px 0;">${mapped}<button type="button" class="btn btn-sm btn-outline btn-map-sso" data-user-id="${user.id}" data-username="${name}" data-mapped="${escapeHTML(user.oidc_username || '')}" style="padding: 2px 8px;">${user.oidc_username ? 'Change' : 'Map'}</button></td>`;
+                }
+            }
             const isSelf = currentUser && currentUser.id === user.id;
             const deleteBtn = isSelf ? 
                 '<span style="opacity: 0.5; font-size: 0.9em; padding: 4px 8px;">(You)</span>' :
@@ -4615,12 +4739,45 @@ async function loadAdminUserList() {
                 <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
                     <td style="padding: 8px 0; font-weight: 500;">${escapeHTML(user.username)}</td>
                     <td style="padding: 8px 0;">${role}</td>
+                    ${ssoCell}
                     <td style="padding: 8px 0; text-align: right;">${deleteBtn}</td>
                 </tr>
             `;
         }).join('');
     } catch (err) {
-        listBody.innerHTML = `<tr><td colspan="3" style="text-align: center; color: #ef4444; padding: 10px;">${escapeHTML(err.message)}</td></tr>`;
+        listBody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #ef4444; padding: 10px;">${escapeHTML(err.message)}</td></tr>`;
+    }
+}
+
+async function saveAdminSsoMapping(userId, body) {
+    const res = await fetch(`/api/auth/users/${userId}/sso`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to update single sign-on');
+}
+
+async function handleAdminSsoMapping(userId, username, mapped) {
+    const provider = ssoConfig ? ssoConfig.provider_name : 'single sign-on';
+    const value = prompt(`${provider} username for "${username}". At their first ${provider} login, that identity is linked to this account and keeps all its data. Leave empty to remove the mapping.`, mapped);
+    if (value === null) return;
+    try {
+        await saveAdminSsoMapping(userId, { oidc_username: value.trim() || null });
+        loadAdminUserList();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+async function handleAdminSsoUnlink(userId, username) {
+    if (!confirm(`Unlink the single sign-on identity of "${username}"? Their data stays; they can be linked again.`)) return;
+    try {
+        await saveAdminSsoMapping(userId, { unlink: true });
+        loadAdminUserList();
+    } catch (err) {
+        alert(err.message);
     }
 }
 

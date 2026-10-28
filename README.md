@@ -89,6 +89,16 @@ The following environment variables can be configured when running the Docker co
 | `SESSION_COOKIE_SECURE` | `true` | Restricts session cookies to secure HTTPS connections. Set to `false` if hosting on HTTP only. |
 | `BLAEU_BEHIND_PROXY` | `false` | Set to `true` if hosting Blaeu behind a reverse proxy (e.g., Nginx, Traefik) to enable Flask `ProxyFix` middleware. |
 | `BLAEU_ALLOW_REGISTRATION` | `false` | Set to `true` to allow public user account registration on the login page. |
+| `BLAEU_OIDC_ISSUER` | *None* | Issuer URL of an OpenID Connect provider, e.g. `https://auth.example.com/application/o/blaeu/` for authentik. Together with `BLAEU_OIDC_CLIENT_ID` it enables single sign-on. See [Single sign-on (OIDC)](#-single-sign-on-oidc). |
+| `BLAEU_OIDC_CLIENT_ID` | *None* | Client ID of the Blaeu application at the provider. |
+| `BLAEU_OIDC_CLIENT_SECRET` | *None* | Client secret for a confidential client. Leave empty for a public client (PKCE is always used). |
+| `BLAEU_OIDC_PROVIDER_NAME` | `Single Sign-On` | Name on the login button, e.g. `authentik`. |
+| `BLAEU_OIDC_SCOPES` | `openid profile email` | Scopes requested at login. |
+| `BLAEU_OIDC_USERNAME_CLAIM` | `preferred_username` | Claim used as the username of new accounts and to match existing ones. `email` only counts when the provider marks it verified. |
+| `BLAEU_OIDC_AUTO_CREATE` | `false` | Create a Blaeu account for a provider user that isn't linked or mapped to one yet. The first account on an empty instance is always created (as admin). |
+| `BLAEU_OIDC_MATCH_USERNAME` | `false` | At a first SSO login, link to the existing account with the same username. Only enable this when users can't choose their own username at the provider. |
+| `BLAEU_OIDC_DISABLE_PASSWORD_LOGIN` | `false` | Hide the password form and allow only single sign-on. Link existing accounts first. |
+| `BLAEU_OIDC_REDIRECT_URI` | *Derived* | Overrides the callback URL. By default it's `https://<your host>/api/auth/oidc/callback`; behind a reverse proxy set `BLAEU_BEHIND_PROXY=true` so the host and scheme are right. |
 | `CARTO_API_KEY` | *None* | API key for the CARTO Dark Matter basemap tiles. Required since CARTO's September 2026 basemap terms; without it every tile shows "API KEY REQUIRED". Request a free key at [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey). |
 | `BLAEU_OVERPASS_URL` | `https://overpass-api.de/api` | Overpass API endpoint used by OSMnx to fetch poster map data. Point it at another Overpass instance if the public one is overloaded. |
 | `BLAEU_OVERPASS_TIMEOUT` | `180` | Timeout in seconds for Overpass queries when generating poster maps. |
@@ -110,6 +120,35 @@ The following environment variables can be configured when running the Docker co
 | `BLAEU_LLM_DATA_TOOLS` | `auto` | Whether the coach may look up training data with tools (`auto`: when the model supports tools) or only uses the overview in its prompt (`off`). |
 
 ---
+
+## 🔐 Single sign-on (OIDC)
+
+Blaeu can log users in through any OpenID Connect provider, such as authentik, Keycloak or Authelia. Password login keeps working unless you turn it off.
+
+### Setting up authentik
+
+1. In authentik, create an **OAuth2/OpenID Provider** with client type *Confidential* and the redirect URI `https://<your blaeu host>/api/auth/oidc/callback` (strict). Keep the default `openid`, `profile` and `email` scope mappings.
+2. Create an **Application** for that provider, e.g. with slug `blaeu`, and bind the users or groups that may use Blaeu.
+3. Configure Blaeu:
+
+   ```bash
+   BLAEU_OIDC_ISSUER=https://auth.example.com/application/o/blaeu/
+   BLAEU_OIDC_CLIENT_ID=<client id>
+   BLAEU_OIDC_CLIENT_SECRET=<client secret>
+   BLAEU_OIDC_PROVIDER_NAME=authentik
+   ```
+
+   Behind a reverse proxy, also set `BLAEU_BEHIND_PROXY=true`.
+
+### Keeping existing accounts and their data
+
+An account is linked to a provider identity by its stable subject ID, so renaming a user at the provider doesn't matter. Existing accounts can be linked in three ways; all keep the account's activities, folders and settings:
+
+- **Users link themselves**: log in with the password, open **Settings > General > Single Sign-On** and choose **Link authentik account**.
+- **Admins map accounts**: in **Settings > Admin**, choose **Map** next to a user and enter their provider username. Their first SSO login is then linked to that account.
+- **Matching usernames**: with `BLAEU_OIDC_MATCH_USERNAME=true`, a first SSO login links to the account with the same username. Only use this when users can't pick their own username at the provider.
+
+A provider user that matches none of these is refused, unless `BLAEU_OIDC_AUTO_CREATE=true` creates a new account for them. Once every account is linked you can set `BLAEU_OIDC_DISABLE_PASSWORD_LOGIN=true`.
 
 ## 🤖 AI Coach
 

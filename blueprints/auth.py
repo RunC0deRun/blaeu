@@ -9,6 +9,7 @@ from db import (
     update_user_default_aspect_ratio
 )
 from utils import rate_limit, get_csrf_token, get_current_user_id, queue_unrendered_maps
+from blueprints.oidc import password_login_enabled, sso_status, user_sso_info
 
 logger = logging.getLogger('blaeu.auth')
 auth_bp = Blueprint('auth', __name__)
@@ -20,6 +21,9 @@ def register():
     username = data.get('username')
     password = data.get('password')
     
+    if not password_login_enabled():
+        return jsonify({'error': 'Accounts are created through single sign-on on this instance.'}), 403
+
     if not username or not password:
         return jsonify({'error': 'Username and password are required'}), 400
         
@@ -59,7 +63,8 @@ def register():
                 'is_admin': is_admin,
                 'default_map_style': 'dark',
                 'week_start_day': 'Monday',
-                'default_aspect_ratio': '16:9'
+                'default_aspect_ratio': '16:9',
+                'sso': user_sso_info(get_user_by_id(user_id))
             },
             'csrf_token': csrf_token
         }), 201
@@ -81,11 +86,15 @@ def login():
     username = data.get('username')
     password = data.get('password')
     
+    if not password_login_enabled():
+        return jsonify({'error': 'Log in with single sign-on on this instance.'}), 403
+
     if not username or not password:
         return jsonify({'error': 'Username and password are required'}), 400
         
     user = get_user_by_username(username)
-    if not user or not check_password_hash(user['password_hash'], password):
+    # Accounts created through single sign-on have no password
+    if not user or not user['password_hash'] or not check_password_hash(user['password_hash'], password):
         return jsonify({'error': 'Invalid username or password'}), 401
         
     session['user_id'] = user['id']
@@ -99,7 +108,8 @@ def login():
             'default_map_style': user.get('default_map_style', 'dark'),
             'week_start_day': user.get('week_start_day', 'Monday'),
             'default_aspect_ratio': user.get('default_aspect_ratio', '16:9'),
-            'wellness_opt_in': user.get('wellness_opt_in')
+            'wellness_opt_in': user.get('wellness_opt_in'),
+            'sso': user_sso_info(user)
         },
         'csrf_token': csrf_token
     })
@@ -124,7 +134,8 @@ def auth_status():
         return jsonify({
             'logged_in': False,
             'no_users_exist': user_count == 0,
-            'registration_open': registration_open,
+            'registration_open': registration_open and password_login_enabled(),
+            'sso': sso_status(),
             'csrf_token': csrf_token
         })
         
@@ -134,7 +145,8 @@ def auth_status():
         return jsonify({
             'logged_in': False,
             'no_users_exist': user_count == 0,
-            'registration_open': registration_open,
+            'registration_open': registration_open and password_login_enabled(),
+            'sso': sso_status(),
             'csrf_token': csrf_token
         })
         
@@ -147,8 +159,10 @@ def auth_status():
             'default_map_style': user.get('default_map_style', 'dark'),
             'week_start_day': user.get('week_start_day', 'Monday'),
             'default_aspect_ratio': user.get('default_aspect_ratio', '16:9'),
-            'wellness_opt_in': user.get('wellness_opt_in')
+            'wellness_opt_in': user.get('wellness_opt_in'),
+            'sso': user_sso_info(user)
         },
+        'sso': sso_status(),
         'csrf_token': csrf_token
     })
 

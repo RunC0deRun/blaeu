@@ -109,6 +109,25 @@ def init_db():
     add_column_if_missing(cursor, 'users', 'default_map_style', "TEXT DEFAULT 'dark'")
     add_column_if_missing(cursor, 'users', 'week_start_day', "TEXT DEFAULT 'Monday'")
     add_column_if_missing(cursor, 'users', 'default_aspect_ratio', "TEXT DEFAULT '16:9'")
+    # Identity-provider username an admin mapped this account to; claimed at the first SSO login
+    add_column_if_missing(cursor, 'users', 'oidc_username', "TEXT")
+
+    # Create User Identities Table: links a local account to an OIDC identity (issuer + subject)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_identities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        issuer TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        username TEXT,
+        email TEXT,
+        linked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        last_login_at TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(issuer, subject),
+        UNIQUE(user_id, issuer)
+    );
+    """)
     add_column_if_missing(cursor, 'routes', 'timezone', "TEXT")
     add_column_if_missing(cursor, 'routes', 'simplified_path', "TEXT")
     add_column_if_missing(cursor, 'routes', 'poster_status', "TEXT")
@@ -1295,7 +1314,12 @@ def get_user_by_id(user_id):
 def get_users():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, username, is_admin, created_at FROM users ORDER BY username ASC")
+    cursor.execute("""
+        SELECT u.id, u.username, u.is_admin, u.created_at, u.oidc_username,
+               (SELECT COALESCE(i.username, i.email, i.subject) FROM user_identities i
+                WHERE i.user_id = u.id ORDER BY i.id LIMIT 1) AS sso_identity
+        FROM users u ORDER BY u.username ASC
+    """)
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -1338,6 +1362,110 @@ def delete_user(user_id):
         cursor.execute("DELETE FROM garmin_connections WHERE user_id = ?", (user_id,))
         conn.commit()
         return True
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def get_user_by_oidc_username(oidc_username):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE oidc_username = ? COLLATE NOCASE", (oidc_username.strip(),))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def set_user_oidc_username(user_id, oidc_username):
+    """Maps an account to an identity-provider username; None clears the mapping."""
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET oidc_username = ? WHERE id = ?", (oidc_username, user_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def set_user_password_hash(user_id, password_hash):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# Helper Functions for OIDC Identities
+def get_identity(issuer, subject):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM user_identities WHERE issuer = ? AND subject = ?", (issuer, subject))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_user_identity(user_id, issuer=None):
+    conn = get_db()
+    cursor = conn.cursor()
+    if issuer is None:
+        cursor.execute("SELECT * FROM user_identities WHERE user_id = ? ORDER BY id LIMIT 1", (user_id,))
+    else:
+        cursor.execute("SELECT * FROM user_identities WHERE user_id = ? AND issuer = ?", (user_id, issuer))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def link_identity(user_id, issuer, subject, username=None, email=None):
+    """
+    Links an OIDC identity to a local account and claims any admin mapping for it.
+    Raises ValueError when the identity or the account is already linked elsewhere.
+    """
+    now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO user_identities (user_id, issuer, subject, username, email, last_login_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, issuer, subject, username, email, now))
+        cursor.execute("UPDATE users SET oidc_username = NULL WHERE id = ?", (user_id,))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        raise ValueError("Identity already linked")
+    finally:
+        conn.close()
+
+def touch_identity(identity_id, username=None, email=None):
+    """Records a login and keeps the provider's username and email current."""
+    now = datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE user_identities
+            SET last_login_at = ?, username = COALESCE(?, username), email = COALESCE(?, email)
+            WHERE id = ?
+        """, (now, username, email, identity_id))
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+def unlink_identities(user_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM user_identities WHERE user_id = ?", (user_id,))
+        conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
         raise e

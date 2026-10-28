@@ -102,6 +102,7 @@ from blueprints.coach import coach_bp
 from blueprints.library import library_bp
 from blueprints.activities import activities_bp
 from blueprints.welcome import welcome_bp
+from blueprints.oidc import oidc_bp
 
 # Register Blueprints
 app.register_blueprint(auth_bp)
@@ -114,6 +115,7 @@ app.register_blueprint(coach_bp)
 app.register_blueprint(library_bp)
 app.register_blueprint(activities_bp)
 app.register_blueprint(welcome_bp)
+app.register_blueprint(oidc_bp)
 
 # Background worker: Garmin & Intervals.icu auto-sync plus resumable history backfills
 AUTO_SYNC_DISABLED = os.getenv('BLAEU_DISABLE_AUTO_SYNC', 'false').lower() == 'true'

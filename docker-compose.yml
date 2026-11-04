@@ -8,6 +8,9 @@ services:
     environment:
       - DATA_DIR=/data
       - BLAEU_ALLOW_REGISTRATION=${BLAEU_ALLOW_REGISTRATION:-false}
+      # Set to true behind a reverse proxy (Traefik, Nginx, ...) so Blaeu sees the real host and HTTPS
+      - BLAEU_BEHIND_PROXY=${BLAEU_BEHIND_PROXY:-false}
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-true}
       # Single sign-on through an OpenID Connect provider such as authentik (see README)
       - BLAEU_OIDC_ISSUER=${BLAEU_OIDC_ISSUER:-}
       - BLAEU_OIDC_CLIENT_ID=${BLAEU_OIDC_CLIENT_ID:-}

@@ -98,7 +98,7 @@ The following environment variables can be configured when running the Docker co
 | `BLAEU_OIDC_AUTO_CREATE` | `false` | Create a Blaeu account for a provider user that isn't linked or mapped to one yet. The first account on an empty instance is always created (as admin). |
 | `BLAEU_OIDC_MATCH_USERNAME` | `false` | At a first SSO login, link to the existing account with the same username. Only enable this when users can't choose their own username at the provider. |
 | `BLAEU_OIDC_DISABLE_PASSWORD_LOGIN` | `false` | Hide the password form and allow only single sign-on. Link existing accounts first. |
-| `BLAEU_OIDC_REDIRECT_URI` | *Derived* | Overrides the callback URL. By default it's `https://<your host>/api/auth/oidc/callback`; behind a reverse proxy set `BLAEU_BEHIND_PROXY=true` so the host and scheme are right. |
+| `BLAEU_OIDC_REDIRECT_URI` | *Derived* | Overrides the callback URL. By default it's `https://<your host>/api/auth/oidc/callback` (`http` only when `SESSION_COOKIE_SECURE=false`); behind a reverse proxy set `BLAEU_BEHIND_PROXY=true` so the host is right. |
 | `CARTO_API_KEY` | *None* | API key for the CARTO Dark Matter basemap tiles. Required since CARTO's September 2026 basemap terms; without it every tile shows "API KEY REQUIRED". Request a free key at [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey). |
 | `BLAEU_OVERPASS_URL` | `https://overpass-api.de/api` | Overpass API endpoint used by OSMnx to fetch poster map data. Point it at another Overpass instance if the public one is overloaded. |
 | `BLAEU_OVERPASS_TIMEOUT` | `180` | Timeout in seconds for Overpass queries when generating poster maps. |

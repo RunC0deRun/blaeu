@@ -120,8 +120,23 @@ def test_login_redirects_with_pkce(client, provider):
     assert url.geturl().startswith(DISCOVERY['authorization_endpoint'])
     assert params['client_id'] == [CLIENT_ID]
     assert params['code_challenge_method'] == ['S256']
-    assert params['redirect_uri'] == ['http://localhost/api/auth/oidc/callback']
+    assert params['redirect_uri'] == ['https://localhost/api/auth/oidc/callback']
     assert 'openid' in params['scope'][0]
+
+
+def test_redirect_uri_scheme(client, provider, monkeypatch):
+    def redirect_uri(**kwargs):
+        res = client.get('/api/auth/oidc/login', **kwargs)
+        return parse_qs(urlparse(res.headers['Location']).query)['redirect_uri'][0]
+
+    # A TLS-terminating proxy without a trusted X-Forwarded-Proto still gets an HTTPS callback
+    assert redirect_uri(base_url='http://blaeu.example.test') == 'https://blaeu.example.test/api/auth/oidc/callback'
+
+    monkeypatch.setitem(client.application.config, 'SESSION_COOKIE_SECURE', False)
+    assert redirect_uri(base_url='http://blaeu.example.test') == 'http://blaeu.example.test/api/auth/oidc/callback'
+
+    monkeypatch.setenv('BLAEU_OIDC_REDIRECT_URI', 'https://sso.example.test/callback')
+    assert redirect_uri() == 'https://sso.example.test/callback'
 
 
 def test_first_login_on_empty_instance_creates_admin(client, provider):

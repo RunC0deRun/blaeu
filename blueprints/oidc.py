@@ -21,7 +21,7 @@ from urllib.parse import urlencode
 
 import jwt
 import requests
-from flask import Blueprint, request, jsonify, session, redirect, url_for
+from flask import Blueprint, request, jsonify, session, redirect, url_for, current_app
 
 from db import (
     count_users, get_user_by_id, get_user_by_username, get_user_by_oidc_username, add_user,
@@ -129,7 +129,12 @@ def _jwks_client(jwks_uri):
 
 
 def _redirect_uri(config):
-    return config['redirect_uri'] or url_for('oidc.sso_callback', _external=True)
+    if config['redirect_uri']:
+        return config['redirect_uri']
+    # With secure session cookies (the default) Blaeu only works over HTTPS, even when a
+    # reverse proxy hands it plain HTTP without a trusted X-Forwarded-Proto
+    scheme = 'https' if current_app.config.get('SESSION_COOKIE_SECURE') else None
+    return url_for('oidc.sso_callback', _external=True, _scheme=scheme)
 
 
 def _pkce_challenge(verifier):
